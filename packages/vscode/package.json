@@ -1,0 +1,14 @@
+{
+  "name": "tildenote-vscode",
+  "private": true,
+  "version": "0.0.0",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/extension.js",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "dependencies": {
+    "@tildenote/core": "0.0.0"
+  }
+}

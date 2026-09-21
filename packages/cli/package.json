@@ -1,0 +1,15 @@
+{
+  "name": "tildenote",
+  "version": "0.0.0",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "tildenote": "./dist/main.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@tildenote/core": "0.0.0"
+  }
+}

@@ -65,7 +65,9 @@ the sidecar), from the harness hook adapters after each edit, and on demand.
 
 ## Spike findings (2026-09-20)
 
-Measured with `spikes/git-filter-roundtrip/run.sh` on Windows, git 2.55, `core.autocrlf=true`.
+Measured with a throwaway regex filter and shell script on Windows, git 2.55,
+`core.autocrlf=true`. Slice A1 deleted the spike once
+`packages/cli/test/roundtrip.test.ts` and `hooks.test.ts` covered every scenario below.
 
 1. The round trip holds: `git diff` in a smudged worktree shows only bare markers, blobs
    stay collapsed, the owner's checkout gets bare markers on merge, and smudged worktrees
@@ -89,7 +91,54 @@ Measured with `spikes/git-filter-roundtrip/run.sh` on Windows, git 2.55, `core.a
 7. The filter sees CRLF in working-tree content under `autocrlf`. All rewriting must
    preserve each line's terminator.
 
+## Rules settled in A1 (2026-09-21)
+
+Each is pinned by a test in `packages/core/test/` or `packages/cli/test/`.
+
+- **Blocks.** A block is an own-line sigil comment that has text, plus the id-less own-line
+  sigil lines directly below it at the same indent. A line with an id, a different indent,
+  a gap, or a trailing comment ends it. A bare marker never absorbs the line below: in a
+  collapsed checkout that would let a neighboring new comment overwrite its stored body.
+- **Terminators.** `clean` replaces one span, from the sigil to the end of the block's last
+  comment, so the last line's terminator survives. `smudge` repeats the marker line's
+  terminator between generated lines, and falls back to the file's dominant terminator
+  only for a marker on an unterminated last line.
+- **Trailing markers** have one line, so a multi-line body shows with its lines joined by
+  a space. `sync` and the id rules compare in that flattened form, so viewing a body that
+  way is never read as an edit.
+- **Duplicate ids.** A pasted marker keeps its id while its text matches. Once the copy's
+  text is edited it is re-identified as a new comment, by `clean` and `sync` alike.
+- **Sync before any rewrite.** `expand` and `collapse` run `sync` first, so a rewrite never
+  drops a body that exists only inline and never meets a comment without an id.
+- **Sidecar format.** `## <id>`, then an optional `<!-- key=value ... -->` metadata line
+  (values URI-encoded; reserved for A6 and A7), then the body. Existing entries keep their
+  order and new ones append. A body line that would read back as structure is written
+  with a leading backslash. The tool writes LF, and `init` marks the folder
+  `text eol=lf` so `autocrlf` never has anything to convert.
+- **Hook install.** `init` writes `pre-commit` into the effective hooks directory, renames
+  a hook already there to `pre-commit.<brand>-chained`, and runs it after `sync`. The
+  managed hook does nothing unless `filter.<brand>.clean` is set, because a global
+  `core.hooksPath` directory is shared by every repository on the machine.
+- **Non-UTF-8 input** passes through the filter byte for byte.
+- **`filter.<brand>.required` stays unset.** Git treats a required driver with no smudge
+  command as a failure, which would force a smudge process per file onto the owner's
+  checkout. A failing `clean` therefore falls back to unfiltered content with git's
+  warning; `check` (A9) is what stops an expanded comment from reaching a blob.
+
+One-shot `clean` latency on Windows, Node 24, median of 7 runs: 61 ms for a file with no
+sigil (the grammar is never loaded), 80 ms with one marker, 113 ms for a 1,200-line file
+with 800 markers, against 36 ms for bare `node -e 0`. That is under A1's 300 ms kill
+criterion, so A4 keeps its place in the plan.
+
 ## Known gaps to design in later slices
+
+- **Writing into a shared hooks directory.** With a global `core.hooksPath`, `init` renames
+  and replaces a hook file that serves every repository. The managed hook is inert
+  elsewhere, but `init --dry-run` and `uninstall` (A9) should make the change reviewable
+  and reversible.
+- **Native install script.** `tree-sitter-python` runs `node-gyp-build` on install although
+  only its `.wasm` is used. It worked with the script skipped (npm 11.19 on Linux);
+  publishing (A9) should bundle the grammar WASM instead of depending on the package.
 
 - **Filter startup cost.** One Node process per file is too slow for large checkouts.
   The long-running filter process protocol fixes it (slice A4).
