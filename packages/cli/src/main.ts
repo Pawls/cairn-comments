@@ -1,10 +1,12 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { BRAND } from "@slopstash/core";
 import { collapseFiles, expandFiles, filterContent, selectFiles, syncFiles } from "./files.js";
 import { repoRoot } from "./git.js";
 import { init } from "./init.js";
 import { serveFilterProcess } from "./process.js";
+import { applyReview, formatApply, formatReview, markAll, parseReview, scan } from "./scan.js";
 import { addWorktree } from "./worktree.js";
 
 const USAGE = `usage: ${BRAND} <command>
@@ -17,6 +19,11 @@ const USAGE = `usage: ${BRAND} <command>
                                 move comment bodies into sidecars and stamp new ids
   expand [files...]             show full comments in working files
   collapse [files...]           reduce working files to bare markers
+  scan [--json] [--all] [files...]
+                                list likely AI comments; --all adds detectors that ship disabled
+  scan --apply <review.json|->  convert the accepted comments of a reviewed \`scan --json\` list to
+                                sigil comments and ignore the rejected ones, then sync
+  scan --mark-all [files...]    convert every unprotected comment, detectors or not
   clean <path>, smudge <path>   one-shot git filter endpoints (stdin to stdout)
   filter-process [--smudge]     git long-running filter process (filter.<driver>.process)
 `;
@@ -59,6 +66,31 @@ async function main(argv: string[]): Promise<void> {
       const root = repoRoot();
       const files = selectFiles(root, { files: rest, staged: false });
       return command === "expand" ? expandFiles(root, files) : collapseFiles(root, files);
+    }
+    case "scan": {
+      const { values, positionals } = parseArgs({
+        args: rest,
+        allowPositionals: true,
+        options: {
+          json: { type: "boolean", default: false },
+          all: { type: "boolean", default: false },
+          apply: { type: "string" },
+          "mark-all": { type: "boolean", default: false },
+        },
+      });
+      const root = repoRoot();
+      if (values.apply !== undefined) {
+        const text = values.apply === "-" ? (await readStdin()).toString("utf8") : readFileSync(values.apply, "utf8");
+        process.stdout.write(formatApply(await applyReview(root, parseReview(text))));
+        return;
+      }
+      if (values["mark-all"]) {
+        process.stdout.write(formatApply(await markAll(root, positionals)));
+        return;
+      }
+      const review = await scan(root, positionals, { all: values.all });
+      process.stdout.write(values.json ? JSON.stringify(review, null, 2) + "\n" : formatReview(review));
+      return;
     }
     case "init": {
       const { values } = parseArgs({

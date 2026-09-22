@@ -10,3 +10,6 @@ export const FILTER_DRIVER = BRAND;
 
 /** Tracked sidecar folder; brand-independent so a rename never moves user data. */
 export const SIDECAR_ROOT = ".agents/comments";
+
+/** Tracked list of comments `scan` must not propose again; brand-independent like the sidecars. */
+export const SCAN_IGNORE = ".agents/scan-ignore";

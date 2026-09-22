@@ -1,5 +1,5 @@
 import type { LanguageSpec } from "./languages.js";
-import { splitLines, type Line } from "./lines.js";
+import { lineIndexAt, splitLines } from "./lines.js";
 import { findComments } from "./parser.js";
 
 export const ID_PATTERN = "[0-9a-z]{4}";
@@ -33,17 +33,6 @@ interface SigilComment {
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function lineIndexAt(lines: Line[], offset: number): number {
-  let lo = 0;
-  let hi = lines.length - 1;
-  while (lo < hi) {
-    const mid = (lo + hi + 1) >> 1;
-    if (lines[mid]!.start <= offset) lo = mid;
-    else hi = mid - 1;
-  }
-  return lo;
 }
 
 /**

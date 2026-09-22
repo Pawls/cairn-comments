@@ -23,6 +23,18 @@ export function splitLines(source: string): Line[] {
   return lines;
 }
 
+/** Index of the line holding `offset`. */
+export function lineIndexAt(lines: Line[], offset: number): number {
+  let lo = 0;
+  let hi = lines.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (lines[mid]!.start <= offset) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
 /** The terminator most lines use; LF when the text has none. */
 export function dominantEol(source: string): "\n" | "\r\n" {
   let crlf = 0;

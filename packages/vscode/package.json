@@ -54,8 +54,28 @@
         "command": "slopstash.editComment",
         "title": "Edit AI Comment",
         "category": "Slopstash"
+      },
+      {
+        "command": "slopstash.scan",
+        "title": "Scan for AI Comments",
+        "category": "Slopstash",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "slopstash.applyReview",
+        "title": "Apply AI Comment Review",
+        "category": "Slopstash",
+        "icon": "$(check-all)"
       }
     ],
+    "views": {
+      "explorer": [
+        {
+          "id": "slopstash.review",
+          "name": "AI Comment Review"
+        }
+      ]
+    },
     "keybindings": [
       {
         "command": "slopstash.toggleOverlay",
@@ -64,6 +84,18 @@
       }
     ],
     "menus": {
+      "view/title": [
+        {
+          "command": "slopstash.scan",
+          "when": "view == slopstash.review",
+          "group": "navigation@1"
+        },
+        {
+          "command": "slopstash.applyReview",
+          "when": "view == slopstash.review",
+          "group": "navigation@2"
+        }
+      ],
       "commandPalette": [
         {
           "command": "slopstash.editComment",

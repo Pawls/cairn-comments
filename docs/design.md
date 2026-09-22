@@ -257,7 +257,88 @@ Verified in VS Code 1.138 on Windows with screenshots taken by the e2e suite
   path so the grammar WASM still resolves through `node_modules`. `web-tree-sitter` stays
   external because it locates its own WASM next to its module file.
 
+## Scan detectors (A5, 2026-09-22)
+
+Implemented in `packages/core/src/scan.ts` (grouping, protection, conversion) and
+`detectors.ts`; the CLI flow is `packages/cli/src/scan.ts` and the review tree
+`packages/vscode/src/reviewTree.ts`.
+
+- **Unit of review.** A candidate is a comment group formed the way a sigil block forms:
+  consecutive own-line line comments at one indent, or one block comment, or one trailing
+  comment. Blank comment lines at a group's edges stay out of it. Existing sigil comments
+  are skipped.
+- **Protected classes are decided before any detector runs** and are never candidates:
+  doc comments (`/** */`, `///`, `//!`), pragmas and suppression directives (a fixed
+  opener list plus `noqa`, `type: ignore`, `@ts-expect-error`, `NOSONAR`, and similar
+  anywhere in the text; shebang and encoding lines; `/*!` banners), license headers (license
+  words before the first line of code, or `SPDX-License-Identifier`/`copyright` anywhere),
+  ticketed TODOs (`TODO(...)`, `TODO: ABC-123`, `#123`, a URL, `@user`), and
+  commented-out code. A pragma line splits a group. A group with any line that has code
+  punctuation or a leading keyword *and* parses cleanly in the file's own grammar is
+  commented-out code, prose lines included, which is conservative on purpose. A block
+  comment with code after it on its line (an inline argument, JSX) is `unconvertible`,
+  because no line-sigil form can hold it.
+- **Conversion.** A line comment becomes `<sigil> text` in place. An own-line block
+  comment becomes one sigil line per text line at its indent, reusing its first line's
+  terminator; a trailing one becomes one sigil comment with its lines joined. Then
+  `sync` stamps ids and writes sidecars, and outside an agent worktree (no effective
+  `filter.<driver>.smudge`) `collapse` reduces the file to bare markers, so `git status`
+  shows the marker edits, the sidecars, and the ignore file.
+- **Finding a comment again.** `scan --json` entries carry a fingerprint (the first 8 hex
+  characters of a SHA-256 over the whitespace-collapsed text). `--apply` re-parses the
+  file and takes the unprotected group with that fingerprint nearest the listed line, so
+  edits that shift lines still apply. An entry whose text changed is reported and skipped.
+- **Ignore file.** `.agents/scan-ignore`, tracked, one `path TAB fingerprint TAB preview`
+  line per rejected comment, append only. `init` marks it `merge=union text eol=lf`.
+- **Mark-all.** `scan --mark-all` converts every unprotected, non-ignored comment whether
+  or not a detector fires: the "these are all slop" mode from § Decisions. Applying every
+  detector candidate unreviewed is `scan --json | scan --apply -`.
+- **The extension shells out to the CLI** recorded in `filter.<driver>.clean` for scan and
+  apply, so the flow and the ignore rules live in one place. A repository without `init`
+  gets a message in the view instead of a tree.
+
+**Measured precision.** The labeled corpus (`packages/core/test/corpus/`, 90 AI, 105
+human, 42 protected cases across the five languages) sets each detector's `score` and
+`enabled` flag, and `scan.corpus.test.ts` fails if either drifts from the numbers.
+Enabled detectors find 58 of the 90 AI cases (85 with the disabled two included): the
+disabled restatements are most of the difference, which is the price of the precision
+gate. `--mark-all` is the answer for repositories where restatements dominate.
+
+| Detector | TP | FP | Precision | Ships |
+| --- | --- | --- | --- | --- |
+| restates-code | 26 | 12 | 0.68 | disabled |
+| narrates-steps | 22 | 5 | 0.81 | enabled |
+| change-history | 15 | 0 | 1.00 | enabled |
+| emoji | 9 | 0 | 1.00 | enabled |
+| filler-opener | 9 | 14 | 0.39 | disabled |
+| hedging | 12 | 1 | 0.92 | enabled |
+
+The first version of the corpus measured 100% for every detector, because its human
+cases did not look like real human comments. Scanning real, pre-AI human code gave the
+correction. With every detector on, CPython 3.14's stdlib (568 files, 36,861 groups) and
+ESLint's `lib` (387 files, 6,032 groups) drew hundreds of hits: terse restatements ("load
+config file", "Add it to the buffer."), "Note that" and "Ensure that" openers,
+"We need to", and even RFC-numbered "Step 1:" in `encodings/idna.py`. Those patterns went
+into the corpus as human cases (paraphrased), the plainly loose patterns were tightened
+(one-word restatements, imperative "Fix the", bare "placeholder", "we can"), and the kill
+criterion disabled the two detectors that stayed under 80%. With only the enabled
+detectors, the same trees draw 43 hits in the stdlib (0.12% of groups) and 12 in ESLint
+(0.20%), nearly all narration. `scan --all` runs the disabled detectors too.
+
+The corpus is author-labeled and the AI cases are typical agent output rather than
+harvested text, so its precision is an estimate on synthetic-but-representative text.
+Real precision depends on how much of a repository an agent wrote. Treat the numbers as
+a floor-setting gate, not a guarantee; review is always the step before apply.
+
 ## Known gaps to design in later slices
+
+- **A converted comment directly below an expanded sigil block joins it.** Inside an agent
+  worktree, a scanned comment at the same indent right under `#~ab12 text` becomes that
+  block's continuation line, so its text merges into the existing body. A bare marker never
+  absorbs lines, so this cannot happen in the owner's checkout, where scan is meant to run.
+- **Scan precision on real repositories.** The corpus gate (§ Scan detectors) is synthetic.
+  Recording hit counts from `scan` on a few agent-written repositories would show whether
+  narrates-steps, at 0.81, is worth keeping on by default.
 
 - **Writing into a shared hooks directory.** With a global `core.hooksPath`, `init` renames
   and replaces a hook file that serves every repository. The managed hook is inert

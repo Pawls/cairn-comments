@@ -14,6 +14,7 @@ import {
   type SidecarEntry,
 } from "@slopstash/core";
 import { findSidecarRoot, hoverMarkdown, planOverlay, type OverlayMode, type PlannedDecoration } from "./overlay.js";
+import { registerReviewTree, type ReviewApi } from "./reviewTree.js";
 
 export const COMMANDS = {
   toggle: `${BRAND}.toggleOverlay`,
@@ -31,6 +32,7 @@ export interface TestApi {
   mode(): OverlayMode;
   /** Recomputes and applies the overlay for one editor, returning what was applied. */
   refresh(editor: vscode.TextEditor): Promise<Applied>;
+  review: ReviewApi;
 }
 
 export interface Applied {
@@ -193,7 +195,7 @@ export function activate(context: vscode.ExtensionContext): TestApi {
     ),
   );
   refreshAll();
-  return { mode, refresh };
+  return { mode, refresh, review: registerReviewTree(context) };
 }
 
 export function deactivate(): void {}

@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { BRAND, FILTER_DRIVER, LANGUAGES, SIDECAR_ROOT } from "@slopstash/core";
+import { BRAND, FILTER_DRIVER, LANGUAGES, SCAN_IGNORE, SIDECAR_ROOT } from "@slopstash/core";
 import { git } from "./git.js";
 
 const HOOK_TAG = `managed by ${BRAND} init`;
@@ -34,6 +34,8 @@ function ensureAttributes(root: string): string[] {
     ...LANGUAGES.flatMap((l) => l.extensions.map((ext) => `*${ext} filter=${FILTER_DRIVER}`)),
     // eol=lf: the tool writes sidecars as LF, so autocrlf never has anything to convert.
     `${SIDECAR_ROOT}/** merge=union text eol=lf`,
+    // Append-only lines, so a union merge keeps both branches' rejections.
+    `${SCAN_IGNORE} merge=union text eol=lf`,
   ];
   const missing = wanted.filter((l) => !present.has(l));
   if (missing.length) {

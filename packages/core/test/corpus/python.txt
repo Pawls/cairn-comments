@@ -1,0 +1,502 @@
+Labeled scan corpus: one comment group per case. Headers: `=== ai`, `=== human`, or
+`=== protected <class>`. Human cases include the phrasings people really use, so the
+precision numbers are not flattered. See packages/core/test/scan.corpus.test.ts.
+The later human cases in each file are modeled on patterns measured in CPython's stdlib
+and ESLint's lib (design.md § Scan detectors): people restate code, number steps, and
+write "Note that" and "Ensure that" too.
+
+=== ai
+def load(path):
+    # Step 1: Read the file contents
+    with open(path) as f:
+        return f.read()
+
+=== ai
+count = 0
+for item in items:
+    # Increment the counter
+    count += 1
+
+=== ai
+def total(values):
+    # Return the result
+    return sum(values)
+
+=== ai
+# Import the necessary modules
+import os
+import sys
+
+=== ai
+def connect(url):
+    # Updated to use the new session API
+    session = Session(url)
+    return session
+
+=== ai
+def parse(raw):
+    # Fixed the issue where empty strings caused a crash
+    if not raw:
+        return None
+    return json.loads(raw)
+
+=== ai
+def run():
+    # ✅ Validate the configuration before starting
+    validate(config)
+
+=== ai
+def run():
+    config = load_config()  # 🚀 Load config
+
+=== ai
+# NEW: support for retries
+def fetch(url, retries=3):
+    pass
+
+=== ai
+def handler(event):
+    # This ensures that the event is always processed exactly once
+    dedupe(event)
+
+=== ai
+def save(user):
+    # In a real application, you would hash the password here
+    user.password = password
+
+=== ai
+def process(rows):
+    # Now we iterate over each row and transform it
+    for row in rows:
+        transform(row)
+
+=== ai
+def process(rows):
+    # Let's create a dictionary to store the results
+    results = {}
+
+=== ai
+def get_user(user_id):
+    # Note that this function assumes the user exists
+    return db.users[user_id]
+
+=== ai
+def main():
+    # Initialize the logger
+    logger = logging.getLogger(__name__)
+
+=== ai
+def export(data, path):
+    # You may want to adjust the batch size depending on your data
+    batch_size = 100
+
+=== ai
+def cache_key(request):
+    # For simplicity, we just use the URL as the cache key
+    return request.url
+
+=== ai
+def retry(fn):
+    # Changed to exponential backoff instead of the old fixed delay
+    delay = base * 2 ** attempt
+
+=== ai
+def cleanup():
+    # Finally, we close the connection
+    conn.close()
+
+=== ai
+def score(a, b):
+    # Calculate the score
+    score = a * weight + b
+    return score
+
+=== ai
+def ingest(frame):
+    # IMPORTANT: Make sure to drop duplicates before merging
+    frame = frame.drop_duplicates()
+
+=== ai
+def send(message):
+    # This should work for most cases, but you might need to handle timeouts
+    client.post(message)
+
+=== ai
+def parse_date(text):
+    # Added error handling for invalid dates
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+=== ai
+class Config:
+    def __init__(self):
+        # Set the default timeout
+        self.timeout = 30
+
+=== ai
+def render(template):
+    # This function renders the template with the given context
+    return engine.render(template, context)
+
+=== ai
+def normalize(name):
+    # Convert the name to lowercase
+    return name.lower()
+
+=== ai
+def upload(file):
+    # Placeholder: replace with your actual S3 bucket name
+    bucket = "my-bucket"
+
+=== ai
+def main():
+    # Check if the file exists
+    if os.path.exists(path):
+        run(path)
+
+=== ai
+def build(items):
+    # First, we sort the items by priority
+    items.sort(key=priority)
+
+=== ai
+def merge(a, b):
+    # Removed the redundant copy since dict unpacking already creates a new dict
+    return {**a, **b}
+
+=== ai
+def summarize(rows):
+    # 📊 Aggregate statistics
+    return stats(rows)
+
+=== ai
+def load_model(path):
+    # Load the model
+    model = torch.load(path)
+
+=== ai
+def handler(request):
+    # Handle the case where the request body is empty
+    if not request.body:
+        return Response(status=400)
+
+=== ai
+def compute(values):
+    # Essentially, we're just computing a running average here
+    return running_mean(values)
+
+=== human
+def rotate(log):
+    # XXX: this breaks when the log is on a network drive
+    os.rename(log, log + ".1")
+
+=== human
+def parse_header(line):
+    # see RFC 7230 section 3.2: field names are case-insensitive
+    name, _, value = line.partition(":")
+
+=== human
+def register(plugins):
+    # Note: order matters here, later plugins override earlier ones
+    for plugin in plugins:
+        REGISTRY.update(plugin.hooks)
+
+=== human
+def decode(data):
+    # for now we only support utf-8; latin-1 files are rare in practice
+    return data.decode("utf-8")
+
+=== human
+def connect(host):
+    # retry once; the proxy drops the first connection after idle
+    try:
+        return socket.create_connection(host)
+    except ConnectionResetError:
+        return socket.create_connection(host)
+
+=== human
+def compile_all(paths):
+    # First pass collects names so forward references resolve in the second.
+    names = {p.stem for p in paths}
+
+=== human
+BUFSIZE = 8192  # fixed-size buffer, never reallocated in the read loop
+
+=== human
+def fspath(p):
+    # Added in 3.6; older interpreters fall back to str()
+    return os.fspath(p)
+
+=== human
+def legacy_mode():
+    # py2 compat, remove when we drop 2.7
+    return sys.version_info < (3,)
+
+=== human
+def schedule(job):
+    # the scheduler's clock is monotonic, so wall-clock jumps don't reorder jobs
+    heapq.heappush(queue, (job.due, job))
+
+=== human
+def resolve(name):
+    # Windows paths can't be resolved relative to a drive-less cwd
+    return os.path.abspath(name)
+
+=== human
+def chunks(seq, n):
+    # yields lists, not tuples, because callers mutate them
+    for i in range(0, len(seq), n):
+        yield seq[i:i + n]
+
+=== human
+def close(self):
+    # idempotent: close() is called from __del__ too
+    if self._closed:
+        return
+
+=== human
+def quote(s):
+    # shlex.quote is not safe for cmd.exe, hence the manual escaping
+    return '"' + s.replace('"', '\\"') + '"'
+
+=== human
+def read_config():
+    # env vars win over the file so CI can override without editing it
+    cfg = load_file()
+    cfg.update(from_env())
+
+=== human
+def seed():
+    # deterministic on purpose: the golden files depend on this order
+    random.seed(1234)
+
+=== human
+TIMEOUT = 30  # seconds; the load balancer kills idle requests at 60
+
+=== human
+def flush(self):
+    # Must hold the lock: the writer thread appends while we drain.
+    with self._lock:
+        data, self._buf = self._buf, []
+
+=== human
+def parse_version(v):
+    # "1.2rc1" sorts before "1.2", which is what pip does too
+    return packaging.version.parse(v)
+
+=== human
+def lookup(key):
+    # This is O(n) but n is at most a dozen entries.
+    for k, v in TABLE:
+        if k == key:
+            return v
+
+=== human
+def encode(obj):
+    # Then again, datetimes need special handling anyway
+    return json.dumps(obj, default=str)
+
+=== human
+def main():
+    # Removed from the public API in 2.0; kept for old scripts
+    legacy_entry()
+
+=== human
+def mtime(path):
+    # Can be None on filesystems that don't record it (e.g. some FUSE mounts)
+    return os.stat(path).st_mtime
+
+=== human
+def get(url):
+    # Increment before sending: the server rejects a reused sequence number
+    self.seq += 1
+    return self._send(url, self.seq)
+
+=== human
+def draw(canvas):
+    # y grows downward in screen space
+    canvas.line(x0, h - y0, x1, h - y1)
+
+=== human
+def spawn(cmd):
+    # close_fds is the default on POSIX but not on Windows before 3.7
+    return subprocess.Popen(cmd, close_fds=True)
+
+=== human
+def cleanup():
+    # best effort; the temp dir may already be gone
+    shutil.rmtree(tmp, ignore_errors=True)
+
+=== human
+def save(model):
+    # pickle protocol 4 so 3.6 workers can still load it
+    pickle.dump(model, f, protocol=4)
+
+=== human
+def loop():
+    # Then the event loop takes over; nothing below runs until shutdown.
+    asyncio.run(serve())
+
+=== protected pragma
+import foo  # noqa: F401
+
+=== protected pragma
+x = cast(Any, y)  # type: ignore[assignment]
+
+=== protected pragma
+def debug():  # pragma: no cover
+    pass
+
+=== protected pragma
+# pylint: disable=too-many-arguments
+def build(a, b, c, d, e, f):
+    pass
+
+=== protected pragma
+#!/usr/bin/env python3
+import sys
+
+=== protected pragma
+# -*- coding: utf-8 -*-
+import sys
+
+=== protected pragma
+# fmt: off
+MATRIX = [
+    1, 0,
+    0, 1,
+]
+
+=== protected license
+# Copyright (c) 2021 Example Corp.
+# Licensed under the MIT License. See LICENSE for details.
+import os
+
+=== protected license
+# SPDX-License-Identifier: Apache-2.0
+import os
+
+=== protected ticketed-todo
+def migrate():
+    # TODO(PROJ-412): Update to the new schema once the backfill lands
+    pass
+
+=== protected ticketed-todo
+def migrate():
+    # FIXME #231: Fixed the issue only for the default locale
+    pass
+
+=== protected commented-out-code
+def main():
+    # print("debug", value)
+    run()
+
+=== protected commented-out-code
+def main():
+    # result = compute(x)
+    # return result
+    run()
+
+=== protected commented-out-code
+def main():
+    # import pdb; pdb.set_trace()
+    run()
+
+=== human
+def write(self, data):
+    # Add it to the buffer.
+    self._buffer.extend(data)
+
+=== human
+def dump(task):
+    # Get task info
+    info = get_task_info(task)
+
+=== human
+def race(results):
+    # Store winner's results
+    winner_result = results[winner]
+
+=== human
+def encode(label):
+    # Step 1: try ASCII
+    try:
+        return label.encode("ascii")
+    except UnicodeError:
+        pass
+
+=== human
+def decode(label):
+    # Step 3: Check for ACE prefix
+    if label.startswith(ACE_PREFIX):
+        label = label[len(ACE_PREFIX):]
+
+=== human
+class JSONDecodeError(ValueError):
+    # Note that this exception is raised from the C accelerator too
+    pass
+
+=== human
+def write(self, data):
+    # Ensure that what we buffer is immutable.
+    data = bytes(data)
+
+=== human
+def dump(conn):
+    # Make sure we get predictable results.
+    conn.execute("PRAGMA reverse_unordered_selects = OFF")
+
+=== human
+def sorted_items(d):
+    # handle case where values are not orderable
+    try:
+        return sorted(d.items())
+    except TypeError:
+        return list(d.items())
+
+=== human
+def _encode(b, chars):
+    # Helper function for a85encode and b85encode
+    return bytes(chars[i] for i in b)
+
+=== human
+# IMPORTANT: Whenever making changes to this module, rebuild the frozen copy
+import sys
+
+=== human
+def call_exception_handler(context):
+    # Let's try the default handler.
+    default_exception_handler(context)
+
+=== human
+def init_paths():
+    # This ensures that the initial path contains only absolute paths
+    sys.path[:] = [os.path.abspath(p) for p in sys.path]
+
+=== human
+class Handler:
+    # The server software version.  You may want to override this.
+    server_version = "BaseHTTP/0.6"
+
+=== human
+class Handler:
+    # Essentially static class variables
+    protocol_version = "HTTP/1.0"
+
+=== human
+def submit(self, fn):
+    # Please note that we do not take the lock here: the queue is thread safe
+    self._queue.put(fn)
+
+=== human
+def poll(self):
+    # We have to handle str specially to support stringified annotations.
+    if isinstance(value, str):
+        return value
+
+=== human
+def fold(self, lines):
+    # We can't use splitlines here because it splits on more than \r and \n.
+    return lines.split("\n")

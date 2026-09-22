@@ -1,0 +1,219 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import {
+  BRAND,
+  DETECTORS,
+  FILTER_DRIVER,
+  SCAN_IGNORE,
+  SIDECAR_ROOT,
+  analyzeSource,
+  appendIgnore,
+  convertComments,
+  languageForPath,
+  parseIgnore,
+  scanSource,
+  type IgnoreEntry,
+  type ScannedComment,
+} from "@slopstash/core";
+import { collapseFiles, decodeExact, syncFiles } from "./files.js";
+import { git, managedFiles, toRepoPath, trackedFiles } from "./git.js";
+
+/** One entry of `scan --json`; `scan --apply` reads the same shape back. */
+export interface ReviewEntry {
+  file: string;
+  line: number;
+  endLine: number;
+  fingerprint: string;
+  score: number;
+  detectors: string[];
+  text: string;
+  /** false rejects the comment: `--apply` records it in the ignore file instead. */
+  accept: boolean;
+}
+
+export interface Review {
+  version: 1;
+  comments: ReviewEntry[];
+}
+
+export interface ApplyReport {
+  converted: ReviewEntry[];
+  ignored: ReviewEntry[];
+  /** Listed comments no longer found as written, so left alone. */
+  stale: ReviewEntry[];
+  files: string[];
+}
+
+function readIgnore(root: string): Map<string, Set<string>> {
+  const file = path.join(root, SCAN_IGNORE);
+  return parseIgnore(existsSync(file) ? readFileSync(file, "utf8") : "");
+}
+
+/** Named files, or every tracked file in a scanned language outside the tool's own folder. */
+export function scanTargets(root: string, files: string[]): string[] {
+  const candidates = files.length ? files.map((f) => toRepoPath(root, f)) : trackedFiles(root);
+  return candidates.filter(
+    (f) => languageForPath(f) && !f.startsWith(`${path.posix.dirname(SIDECAR_ROOT)}/`) && existsSync(path.join(root, f)),
+  );
+}
+
+function readSource(root: string, file: string): string | undefined {
+  return decodeExact(readFileSync(path.join(root, file)));
+}
+
+function toEntry(file: string, c: ScannedComment): ReviewEntry {
+  return {
+    file,
+    line: c.line,
+    endLine: c.endLine,
+    fingerprint: c.fingerprint,
+    score: Math.round(c.score * 100) / 100,
+    detectors: c.findings.map((f) => f.detector),
+    text: c.text,
+    accept: true,
+  };
+}
+
+/** Likely AI comments, minus the ones already rejected. `all` also runs the detectors that ship disabled. */
+export async function scan(root: string, files: string[], options: { all?: boolean } = {}): Promise<Review> {
+  const ignored = readIgnore(root);
+  const comments: ReviewEntry[] = [];
+  for (const file of scanTargets(root, files)) {
+    const source = readSource(root, file);
+    if (source === undefined) continue;
+    for (const c of await scanSource(file, source, options.all ? { detectors: DETECTORS } : {})) {
+      if (!ignored.get(file)?.has(c.fingerprint)) comments.push(toEntry(file, c));
+    }
+  }
+  return { version: 1, comments };
+}
+
+export function formatReview(review: Review): string {
+  const lines = review.comments.map(
+    (c) => `${c.file}:${c.line}  ${c.score.toFixed(2)}  ${c.detectors.join(",")}  ${c.text.split("\n")[0]}`,
+  );
+  const files = new Set(review.comments.map((c) => c.file)).size;
+  lines.push(`${review.comments.length} likely AI comment(s) in ${files} file(s)`);
+  return lines.join("\n") + "\n";
+}
+
+function requireManaged(root: string, files: string[]): void {
+  const managed = new Set(managedFiles(root, files));
+  const missing = files.filter((f) => !managed.has(f));
+  if (missing.length) {
+    throw new Error(`not under the ${FILTER_DRIVER} filter (run \`${BRAND} init\` first): ${missing.join(", ")}`);
+  }
+}
+
+/** An agent worktree shows full comments; everywhere else a working file holds bare markers. */
+function smudges(root: string): boolean {
+  try {
+    return git(["config", "--get", `filter.${FILTER_DRIVER}.smudge`], { cwd: root }).trim() !== "";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Converts each file's chosen comments to sigil comments, then runs `sync` (and, outside
+ * an agent worktree, `collapse`), so bodies land in sidecars and `git status` shows only
+ * the marker edits, the sidecars, and the ignore file.
+ */
+async function convertAndSync(root: string, chosen: Map<string, ScannedComment[]>): Promise<string[]> {
+  const written: string[] = [];
+  for (const [file, comments] of chosen) {
+    if (!comments.length) continue;
+    const absolute = path.join(root, file);
+    const source = decodeExact(readFileSync(absolute))!;
+    writeFileSync(absolute, convertComments(file, source, comments));
+    written.push(file);
+  }
+  if (smudges(root)) await syncFiles(root, written, { add: false });
+  else await collapseFiles(root, written);
+  return written;
+}
+
+function recordIgnored(root: string, entries: IgnoreEntry[]): void {
+  if (!entries.length) return;
+  const file = path.join(root, SCAN_IGNORE);
+  const existing = existsSync(file) ? readFileSync(file, "utf8") : "";
+  const next = appendIgnore(existing, entries);
+  if (next === existing) return;
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, next);
+}
+
+export function parseReview(text: string): Review {
+  const review = JSON.parse(text) as Partial<Review>;
+  if (review.version !== 1 || !Array.isArray(review.comments)) throw new Error("not a scan review: expected {version: 1, comments: [...]}");
+  for (const c of review.comments) {
+    if (typeof c.file !== "string" || typeof c.fingerprint !== "string" || typeof c.line !== "number") {
+      throw new Error(`review entry needs file, line, and fingerprint: ${JSON.stringify(c)}`);
+    }
+    if (path.isAbsolute(c.file) || path.posix.normalize(c.file.replaceAll("\\", "/")).startsWith("../")) {
+      throw new Error(`review entry points outside the repository: ${c.file}`);
+    }
+  }
+  return review as Review;
+}
+
+/** Applies a reviewed list: accepted entries become sigil comments, rejected ones are ignored from now on. */
+export async function applyReview(root: string, review: Review): Promise<ApplyReport> {
+  const report: ApplyReport = { converted: [], ignored: [], stale: [], files: [] };
+  const byFile = new Map<string, ReviewEntry[]>();
+  for (const e of review.comments) byFile.set(e.file, [...(byFile.get(e.file) ?? []), e]);
+  const accepting = [...byFile].filter(([, es]) => es.some((e) => e.accept !== false)).map(([f]) => f);
+  requireManaged(root, accepting);
+
+  const chosen = new Map<string, ScannedComment[]>();
+  const ignored: IgnoreEntry[] = [];
+  for (const [file, entries] of byFile) {
+    const source = existsSync(path.join(root, file)) ? readSource(root, file) : undefined;
+    const available = source === undefined ? [] : (await analyzeSource(file, source)).filter((c) => !c.protected);
+    const picks: ScannedComment[] = [];
+    for (const entry of entries) {
+      // Same text, nearest to the listed line: identical comments in one file stay distinct.
+      const match = available
+        .filter((c) => c.fingerprint === entry.fingerprint && !picks.includes(c))
+        .sort((a, b) => Math.abs(a.line - entry.line) - Math.abs(b.line - entry.line))[0];
+      if (!match) {
+        report.stale.push(entry);
+      } else if (entry.accept === false) {
+        ignored.push({ file, fingerprint: entry.fingerprint, preview: match.text });
+        report.ignored.push(entry);
+      } else {
+        picks.push(match);
+        report.converted.push(entry);
+      }
+    }
+    chosen.set(file, picks);
+  }
+  recordIgnored(root, ignored);
+  report.files = await convertAndSync(root, chosen);
+  return report;
+}
+
+/** Every unprotected comment that is not already rejected, detectors or not. */
+export async function markAll(root: string, files: string[]): Promise<ApplyReport> {
+  const targets = scanTargets(root, files);
+  requireManaged(root, targets);
+  const ignored = readIgnore(root);
+  const report: ApplyReport = { converted: [], ignored: [], stale: [], files: [] };
+  const chosen = new Map<string, ScannedComment[]>();
+  for (const file of targets) {
+    const source = readSource(root, file);
+    if (source === undefined) continue;
+    const picks = (await analyzeSource(file, source)).filter((c) => !c.protected && !ignored.get(file)?.has(c.fingerprint));
+    chosen.set(file, picks);
+    report.converted.push(...picks.map((c) => toEntry(file, c)));
+  }
+  report.files = await convertAndSync(root, chosen);
+  return report;
+}
+
+export function formatApply(report: ApplyReport): string {
+  const out = [`converted ${report.converted.length} comment(s) in ${report.files.length} file(s)`];
+  if (report.ignored.length) out.push(`ignored ${report.ignored.length} comment(s) in ${SCAN_IGNORE}`);
+  for (const s of report.stale) out.push(`skipped ${s.file}:${s.line}: no longer matches the reviewed text`);
+  return out.join("\n") + "\n";
+}

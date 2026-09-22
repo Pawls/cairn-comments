@@ -1,4 +1,16 @@
-export { BRAND, BRAND_TITLE, FILTER_DRIVER, SIDECAR_ROOT } from "./brand.js";
+export { BRAND, BRAND_TITLE, FILTER_DRIVER, SCAN_IGNORE, SIDECAR_ROOT } from "./brand.js";
+export { DETECTORS, detectorNamed, type Detector, type DetectorInput } from "./detectors.js";
+export { appendIgnore, parseIgnore, type IgnoreEntry } from "./ignore.js";
+export {
+  analyzeSource,
+  convertComments,
+  fingerprintOf,
+  scanSource,
+  type Finding,
+  type ProtectedClass,
+  type ScanOptions,
+  type ScannedComment,
+} from "./scan.js";
 export { clean, smudge, sync, type SyncResult } from "./filter.js";
 export { resolveIds } from "./ids.js";
 export { LANGUAGES, languageForPath, type LanguageSpec } from "./languages.js";

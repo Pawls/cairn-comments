@@ -1,0 +1,218 @@
+Labeled scan corpus for JavaScript; format in python.txt.
+
+=== ai
+function main() {
+  // Create a new Express application
+  const app = express();
+}
+
+=== ai
+function listen(app) {
+  // Start the server on port 3000
+  app.listen(3000);
+}
+
+=== ai
+function read(path) {
+  // Updated to use async/await instead of callbacks
+  return fs.promises.readFile(path, "utf8");
+}
+
+=== ai
+function handler(req, res) {
+  // 👉 Send the response back to the client
+  res.send(result);
+}
+
+=== ai
+function parse(argv) {
+  // Here we parse the command line arguments
+  return minimist(argv);
+}
+
+=== ai
+function connect() {
+  // This is a simplified example; in production you should use a connection pool
+  return new Client(config);
+}
+
+=== ai
+function onClick() {
+  // Finally, we update the UI to reflect the new state
+  render();
+}
+
+=== ai
+function add(a, b) {
+  return a + b; // Return the sum of a and b
+}
+
+=== ai
+function load() {
+  // Added a fallback in case the config file is missing
+  return readConfig() ?? defaults;
+}
+
+=== ai
+function init() {
+  /* This function initializes the application */
+  setup();
+}
+
+=== ai
+function fetchAll(ids) {
+  /*
+   * Step 1: Fetch all records in parallel
+   * Step 2: Filter out the failures
+   */
+  return Promise.allSettled(ids.map(fetchOne));
+}
+
+=== human
+function throttle(fn) {
+  // rAF instead of a timer so we never paint twice per frame
+  requestAnimationFrame(fn);
+}
+
+=== human
+function isNode() {
+  // Deno and Bun both define process too, so check versions.node
+  return typeof process !== "undefined" && !!process.versions?.node;
+}
+
+=== human
+function escape(s) {
+  // Note: & first, or the other replacements get double-escaped
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+}
+
+=== human
+function size(buf) {
+  // byteLength, not length: this is a Uint8Array view over a shared buffer
+  return buf.byteLength;
+}
+
+=== human
+function loadPlugins(dir) {
+  // sync on purpose: this runs once at startup before the event loop matters
+  return fs.readdirSync(dir);
+}
+
+=== human
+function now() {
+  // performance.now() is monotonic; Date.now() jumps with NTP corrections
+  return performance.now();
+}
+
+=== human
+function close(server) {
+  // keep-alive sockets keep the server open, so destroy them explicitly
+  for (const s of sockets) s.destroy();
+}
+
+=== human
+function parse(json) {
+  // Removed in 2019; the endpoint still exists for old clients
+  return legacyParse(json);
+}
+
+=== protected pragma
+/* eslint-disable no-console */
+console.log("ready");
+
+=== protected pragma
+/* global window, document */
+init(window, document);
+
+=== protected pragma
+// istanbul ignore next
+function unreachable() {}
+
+=== protected doc
+/**
+ * @param {string} name
+ * @returns {Greeting}
+ */
+function greet(name) {}
+
+=== protected license
+/*!
+ * mylib v1.2.3
+ * (c) 2020 Some Author
+ * Released under the MIT License.
+ */
+module.exports = mylib;
+
+=== protected commented-out-code
+function main() {
+  // app.use(morgan("dev"));
+  app.listen(port);
+}
+
+=== protected unconvertible
+function call() {
+  return request(/* retries */ 3, url);
+}
+
+=== human
+function lint(dir) {
+  // find the config file
+  const configFile = findConfigFile(dir);
+}
+
+=== human
+function lint(dir) {
+  // load config file
+  const config = loadConfigFile(configPath);
+}
+
+=== human
+function summarize(results) {
+  // Iterate over results to get totals
+  results.forEach((result) => {
+    totalErrors += result.errorCount;
+  });
+}
+
+=== human
+function enter(scope) {
+  // Create the code path of this scope.
+  codePath = new CodePath(scope);
+}
+
+=== human
+function run(rule) {
+  // add all the selectors from the rule as listeners
+  Object.keys(ruleListeners).forEach(addListener);
+}
+
+=== human
+function lintFiles(files) {
+  // Now we can get down to linting
+  return files.map(lintFile);
+}
+
+=== human
+function check(node) {
+  // First we check the declaration type and then depending on
+  // whether it is a destructuring declaration, report each identifier
+  if (node.type === "VariableDeclaration") report(node);
+}
+
+=== human
+function verify(node) {
+  // Ensure that the children of every node are indented at least as much as the first token.
+  offsets.setDesiredOffsets(node.range, firstToken, 0);
+}
+
+=== human
+function format(results) {
+  // We can't use a single call here: nested styles reset each other.
+  return styleText("bold", text);
+}
+
+=== human
+function fix(fixes) {
+  // Make output to this fix.
+  output += text.slice(lastPos, fix.range[0]);
+}
