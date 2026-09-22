@@ -4,8 +4,8 @@ import path from "node:path";
 import * as vscode from "vscode";
 import type { Applied, TestApi } from "../src/extension.js";
 
-const EXTENSION_ID = "tildenote.tildenote-vscode";
-const COMMANDS = { toggle: "tildenote.toggleOverlay", edit: "tildenote.editComment" };
+const EXTENSION_ID = "slopstash.slopstash-vscode";
+const COMMANDS = { toggle: "slopstash.toggleOverlay", edit: "slopstash.editComment" };
 
 const folder = () => vscode.workspace.workspaceFolders![0]!.uri;
 const fixtureFile = (...parts: string[]) => vscode.Uri.joinPath(folder(), ...parts);
@@ -30,7 +30,7 @@ const labels = (applied: Applied, kind: keyof Applied) =>
   applied[kind].map((o) => [o.range.start.line, o.renderOptions?.after?.contentText]);
 
 function screenshot(name: string): void {
-  const dir = process.env.TILDENOTE_SCREENSHOTS;
+  const dir = process.env.SLOPSTASH_SCREENSHOTS;
   if (!dir || process.platform !== "win32") return;
   const script = path.join(__dirname, "../../e2e/screenshot.ps1");
   // Window pixels of the editor's first lines under the tab bar in the test window.
@@ -102,7 +102,7 @@ suite("overlay", () => {
     const text = hovers.flatMap((h) => h.contents.map((c) => (c as vscode.MarkdownString).value)).join("\n");
     assert.match(text, /retries are safe: ledger write is idempotent\n\nthe ledger dedupes/);
     assert.match(text, /\*model: fable 5\.1\*/);
-    assert.match(text, /\[Edit comment\]\(command:tildenote\.editComment\?/);
+    assert.match(text, /\[Edit comment\]\(command:slopstash\.editComment\?/);
     const none = await vscode.commands.executeCommand<vscode.Hover[]>("vscode.executeHoverProvider", editor.document.uri, new vscode.Position(2, 2));
     assert.equal(none.length, 0, "code before a trailing marker gets no hover");
   });

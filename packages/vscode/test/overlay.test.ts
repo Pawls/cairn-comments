@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { findMarkers, languageForPath, parseSidecar, type SidecarEntry } from "@tildenote/core";
+import { findMarkers, languageForPath, parseSidecar, type SidecarEntry } from "@slopstash/core";
 import { findSidecarRoot, hoverMarkdown, labelFor, planOverlay } from "../src/overlay.js";
 
 const python = languageForPath("x.py")!;
@@ -65,7 +65,7 @@ describe("findSidecarRoot", () => {
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
   it("stops at the nearest sidecar folder even inside a larger repository", () => {
-    dir = mkdtempSync(path.join(os.tmpdir(), "tildenote-root-"));
+    dir = mkdtempSync(path.join(os.tmpdir(), "slopstash-root-"));
     mkdirSync(path.join(dir, ".git"));
     mkdirSync(path.join(dir, "ws/.agents/comments"), { recursive: true });
     mkdirSync(path.join(dir, "ws/src"), { recursive: true });
@@ -74,7 +74,7 @@ describe("findSidecarRoot", () => {
   });
 
   it("uses the git root when no sidecar folder exists yet, and the fallback outside any repo", () => {
-    dir = mkdtempSync(path.join(os.tmpdir(), "tildenote-root-"));
+    dir = mkdtempSync(path.join(os.tmpdir(), "slopstash-root-"));
     mkdirSync(path.join(dir, "repo/.git/x"), { recursive: true });
     mkdirSync(path.join(dir, "repo/pkg"), { recursive: true });
     expect(findSidecarRoot(path.join(dir, "repo/pkg"), "fallback")).toBe(path.join(dir, "repo"));

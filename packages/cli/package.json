@@ -1,15 +1,15 @@
 {
-  "name": "tildenote",
+  "name": "slopstash",
   "version": "0.0.0",
   "license": "MIT",
   "type": "module",
   "bin": {
-    "tildenote": "./dist/main.js"
+    "slopstash": "./dist/main.js"
   },
   "files": [
     "dist"
   ],
   "dependencies": {
-    "@tildenote/core": "0.0.0"
+    "@slopstash/core": "0.0.0"
   }
 }

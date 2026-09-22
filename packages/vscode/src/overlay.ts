@@ -1,7 +1,7 @@
 // Pure overlay planning: no `vscode` import, so vitest covers it (test/overlay.test.ts).
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { SIDECAR_ROOT, type Marker, type SidecarEntry } from "@tildenote/core";
+import { SIDECAR_ROOT, type Marker, type SidecarEntry } from "@slopstash/core";
 
 export type OverlayMode = "off" | "on";
 

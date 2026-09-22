@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import path from "node:path";
-import { FILTER_DRIVER } from "@tildenote/core";
+import { FILTER_DRIVER } from "@slopstash/core";
 
 export function git(args: string[], options: { cwd?: string; input?: string } = {}): string {
   return execFileSync("git", args, {

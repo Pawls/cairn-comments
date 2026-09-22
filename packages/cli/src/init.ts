@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { BRAND, FILTER_DRIVER, LANGUAGES, SIDECAR_ROOT } from "@tildenote/core";
+import { BRAND, FILTER_DRIVER, LANGUAGES, SIDECAR_ROOT } from "@slopstash/core";
 import { git } from "./git.js";
 
 const HOOK_TAG = `managed by ${BRAND} init`;

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
-import { BRAND } from "@tildenote/core";
+import { BRAND } from "@slopstash/core";
 import { collapseFiles, expandFiles, filterContent, selectFiles, syncFiles } from "./files.js";
 import { repoRoot } from "./git.js";
 import { init } from "./init.js";

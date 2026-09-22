@@ -38,7 +38,7 @@ function session(options: { root: string; delayBudget?: number }) {
 
 /** A worktree root holding one sidecar, `src/a.py` → id ab12. */
 function sidecarRoot(): string {
-  const root = mkdtempSync(path.join(os.tmpdir(), "tildenote-proc-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "slopstash-proc-"));
   mkdirSync(path.join(root, ".agents/comments/src"), { recursive: true });
   writeFileSync(path.join(root, ".agents/comments/src/a.py.md"), "## ab12\nwhy one\n");
   return root;
@@ -191,7 +191,7 @@ describe("filter process protocol", () => {
   });
 
   it("hands back the unfiltered blob when a delayed smudge fails, since git would drop the file", async () => {
-    const root = mkdtempSync(path.join(os.tmpdir(), "tildenote-proc-"));
+    const root = mkdtempSync(path.join(os.tmpdir(), "slopstash-proc-"));
     // A directory where the sidecar should be makes the read fail with something other than ENOENT.
     mkdirSync(path.join(root, ".agents/comments/a.py.md"), { recursive: true });
     const s = session({ root });
@@ -283,8 +283,8 @@ describe("a filter process crash mid-stream", () => {
   it("during checkout: git fails loudly, no file is a fragment, and rerunning the command recovers", () => {
     const wt = box.path("wt");
     box.git(main, "worktree", "add", "-q", "--no-checkout", wt);
-    box.git(wt, "config", "--worktree", "filter.tildenote.smudge", "unused");
-    box.git(wt, "config", "--worktree", "filter.tildenote.process", `${crashing} --smudge`);
+    box.git(wt, "config", "--worktree", "filter.slopstash.smudge", "unused");
+    box.git(wt, "config", "--worktree", "filter.slopstash.process", `${crashing} --smudge`);
     const result = box.gitResult(wt, "reset", "--hard", "--quiet");
     expect(result.status).not.toBe(0);
     expect(result.stderr).toMatch(/^error: external filter '.*crash\.mjs" --smudge' failed$/m);
@@ -297,8 +297,8 @@ describe("a filter process crash mid-stream", () => {
       expect(whole, `${f}: ${JSON.stringify(text)}`).toBe(true);
     }
 
-    const real = box.git(main, "config", "--get", "filter.tildenote.process").trim();
-    box.git(wt, "config", "--worktree", "filter.tildenote.process", `${real} --smudge`);
+    const real = box.git(main, "config", "--get", "filter.slopstash.process").trim();
+    box.git(wt, "config", "--worktree", "filter.slopstash.process", `${real} --smudge`);
     box.git(wt, "reset", "--hard", "--quiet");
     for (const f of FILES) expect(box.read(box.path("wt", f))).toMatch(new RegExp(`^${f[0]} = 1 {2}#~[0-9a-z]{4} why ${f[0]}\\n$`));
     expect(box.status(wt)).toBe("");
@@ -306,7 +306,7 @@ describe("a filter process crash mid-stream", () => {
 
   it("during add: git names the failed filter and the index holds whole content, never a fragment", () => {
     for (const f of FILES) box.write(box.path("main", f), `${f[0]} = 2  #~ changed ${f[0]}\n`);
-    box.git(main, "config", "filter.tildenote.process", crashing);
+    box.git(main, "config", "filter.slopstash.process", crashing);
     try {
       const result = box.gitResult(main, "add", "-A");
       expect(result.status).toBe(0);

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { bodiesOf, clean, parseSidecar, serializeSidecar, sidecarPathFor, smudge, sync } from "@tildenote/core";
+import { bodiesOf, clean, parseSidecar, serializeSidecar, sidecarPathFor, smudge, sync } from "@slopstash/core";
 import { managedFiles, restat, stage, stagedFiles, toRepoPath, trackedFiles } from "./git.js";
 
 /** Text of a buffer, or undefined when it is not UTF-8 that re-encodes to the same bytes. */

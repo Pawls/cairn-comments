@@ -1,4 +1,4 @@
-// VS Code loads extensions as CommonJS, so the ESM sources (and `@tildenote/core`) are
+// VS Code loads extensions as CommonJS, so the ESM sources (and `@slopstash/core`) are
 // bundled here; `tsc -b` only type-checks this package. `web-tree-sitter` stays external
 // because it locates its own `.wasm` next to its module file.
 /* global URL */

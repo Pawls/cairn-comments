@@ -12,7 +12,7 @@ import {
   type Marker,
   type Sidecar,
   type SidecarEntry,
-} from "@tildenote/core";
+} from "@slopstash/core";
 import { findSidecarRoot, hoverMarkdown, planOverlay, type OverlayMode, type PlannedDecoration } from "./overlay.js";
 
 export const COMMANDS = {

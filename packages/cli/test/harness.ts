@@ -17,7 +17,7 @@ export interface SandboxOptions {
  * every machine and never reads or writes the developer's real config or hooks.
  */
 export class Sandbox {
-  readonly dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "tildenote-it-")));
+  readonly dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "slopstash-it-")));
   readonly eol: string;
   private readonly env: NodeJS.ProcessEnv;
 

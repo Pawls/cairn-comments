@@ -1,6 +1,7 @@
-# tildenote (working title)
+# Slopstash
 
-Keep AI-written comments out of your code without losing them.
+Stash the slop, keep the context. Keep AI-written comments out of your code without
+losing them.
 
 Agents mark their comments with a sigil (`#~`, `//~`). Committed code keeps only a short
 ID marker; the comment bodies live in tracked markdown under `.agents/comments/`. A git
@@ -26,16 +27,16 @@ follow. Hover shows the full body; the line under the cursor shows the raw marke
 
 ![Overlay on](docs/images/overlay-on.png)
 
-Toggle with the `AI comments` status bar item, the `tildenote: Toggle AI Comment Overlay`
+Toggle with the `AI comments` status bar item, the `Slopstash: Toggle AI Comment Overlay`
 command, or `Ctrl+Alt+`` ` (`Cmd+Alt+`` ` on macOS). The state is remembered per
-workspace. `tildenote: Edit AI Comment` opens the sidecar at the entry for the marker on
+workspace. `Slopstash: Edit AI Comment` opens the sidecar at the entry for the marker on
 the current line, creating the entry if it is missing.
 
 To run it from this checkout, open the repository in VS Code and launch an Extension
 Development Host on `packages/vscode` (the `main` entry is `dist/extension.cjs`, built by
 `npm run build`). `npm run test:vscode` downloads a VS Code build on first use and runs
 the extension's integration tests against `packages/vscode/e2e/fixture`; set
-`TILDENOTE_SCREENSHOTS=<dir>` on Windows to regenerate the images above.
+`SLOPSTASH_SCREENSHOTS=<dir>` on Windows to regenerate the images above.
 
 ## Try it from a checkout
 
@@ -44,8 +45,8 @@ Needs git and Node 20 or later.
 ```sh
 npm install && npm run build                # in this checkout
 cd /path/to/your/repo
-node /path/to/tildenote/packages/cli/dist/main.js init
-node /path/to/tildenote/packages/cli/dist/main.js worktree add ../agent -b agent
+node /path/to/slopstash/packages/cli/dist/main.js init
+node /path/to/slopstash/packages/cli/dist/main.js worktree add ../agent -b agent
 ```
 
 Comments written as `#~ like this` in the `agent` worktree commit as bare `#~id` markers,

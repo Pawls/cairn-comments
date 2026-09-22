@@ -1,5 +1,5 @@
 // `npm run test:vscode`: downloads a VS Code build on first use and runs dist/e2e in it
-// against the fixture workspace. Set TILDENOTE_SCREENSHOTS=<dir> to also capture the two
+// against the fixture workspace. Set SLOPSTASH_SCREENSHOTS=<dir> to also capture the two
 // overlay states (Windows only) for the README.
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,7 +17,7 @@ try {
     extensionDevelopmentPath: packageRoot,
     extensionTestsPath: path.join(packageRoot, "dist/e2e/index.cjs"),
     launchArgs: [fixture, "--disable-extensions"],
-    extensionTestsEnv: { TILDENOTE_SCREENSHOTS: process.env.TILDENOTE_SCREENSHOTS ?? "" },
+    extensionTestsEnv: { SLOPSTASH_SCREENSHOTS: process.env.SLOPSTASH_SCREENSHOTS ?? "" },
   });
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));

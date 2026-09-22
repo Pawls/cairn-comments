@@ -1,9 +1,9 @@
 {
-  "name": "tildenote-vscode",
-  "displayName": "tildenote: Hide AI Comments",
-  "description": "Keep AI-written comments out of your code without losing them. Shows agent comments as a toggleable overlay over the bare markers left in committed code.",
+  "name": "slopstash-vscode",
+  "displayName": "Slopstash: Hide AI Comments",
+  "description": "Stash the slop, keep the context. Keeps AI-written comments out of your code without losing them, and shows them as a toggleable overlay over the bare markers left in committed code.",
   "version": "0.0.0",
-  "publisher": "tildenote",
+  "publisher": "slopstash",
   "license": "MIT",
   "private": true,
   "type": "module",
@@ -18,6 +18,9 @@
     "ai comments",
     "hide ai comments",
     "remove ai comments",
+    "ai slop",
+    "remove ai slop",
+    "deslop",
     "hide comments",
     "comments",
     "comment overlay",
@@ -43,19 +46,19 @@
   "contributes": {
     "commands": [
       {
-        "command": "tildenote.toggleOverlay",
+        "command": "slopstash.toggleOverlay",
         "title": "Toggle AI Comment Overlay",
-        "category": "tildenote"
+        "category": "Slopstash"
       },
       {
-        "command": "tildenote.editComment",
+        "command": "slopstash.editComment",
         "title": "Edit AI Comment",
-        "category": "tildenote"
+        "category": "Slopstash"
       }
     ],
     "keybindings": [
       {
-        "command": "tildenote.toggleOverlay",
+        "command": "slopstash.toggleOverlay",
         "key": "ctrl+alt+`",
         "mac": "cmd+alt+`"
       }
@@ -63,15 +66,15 @@
     "menus": {
       "commandPalette": [
         {
-          "command": "tildenote.editComment",
+          "command": "slopstash.editComment",
           "when": "editorLangId == python || editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact || editorLangId == csharp || editorLangId == java"
         }
       ]
     },
     "configuration": {
-      "title": "tildenote",
+      "title": "Slopstash",
       "properties": {
-        "tildenote.overlayColor": {
+        "slopstash.overlayColor": {
           "type": "string",
           "default": "",
           "markdownDescription": "CSS color for overlay text. Empty uses the theme's `editorCodeLens.foreground`; no theme color exposes the comment token color to decorations."
@@ -84,7 +87,7 @@
     "e2e": "node out/e2e/run.js"
   },
   "dependencies": {
-    "@tildenote/core": "0.0.0"
+    "@slopstash/core": "0.0.0"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",

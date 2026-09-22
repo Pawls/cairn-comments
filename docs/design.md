@@ -1,6 +1,6 @@
 # Design
 
-Working title: `tildenote`. The name is tentative, see [Naming](#naming).
+Name: Slopstash (`slopstash`), chosen 2026-09-22. See [Naming](#naming).
 
 ## Problem
 
@@ -244,7 +244,7 @@ Verified in VS Code 1.138 on Windows with screenshots taken by the e2e suite
   line the selection touches is shown as typed with the label after it.
 - **Comment color is not reachable.** Decoration colors come from `ThemeColor` ids, and no
   theme id exposes the comment token color. The overlay uses `editorCodeLens.foreground`
-  in italics by default, with a `tildenote.overlayColor` CSS override.
+  in italics by default, with a `slopstash.overlayColor` CSS override.
 - **Hover is a provider, not a decoration message.** A `display: none` span has no width,
   so the mouse never rests on it and `hoverMessage` would never fire. The hover provider
   answers for any position from the sigil to the end of its line and carries an
@@ -253,7 +253,7 @@ Verified in VS Code 1.138 on Windows with screenshots taken by the e2e suite
   ancestor holding `.agents/comments` or `.git`, whichever appears first walking up, so a
   fixture or nested workspace inside a larger repository keeps its own sidecars.
 - **Packaging.** VS Code loads extensions as CommonJS; esbuild bundles the ESM sources and
-  `@tildenote/core` into `dist/extension.cjs`, with `import.meta.url` shimmed to the bundle
+  `@slopstash/core` into `dist/extension.cjs`, with `import.meta.url` shimmed to the bundle
   path so the grammar WASM still resolves through `node_modules`. `web-tree-sitter` stays
   external because it locates its own WASM next to its module file.
 
@@ -314,7 +314,16 @@ but the `displayName` must contain the literal words: for example
 Keep the brand in one constant (filter driver name, config namespace, CLI binary) so a
 rename before publishing is a one-line change. The sigil `~` is independent of the name.
 
-Candidates free on npm with no Marketplace collision as of 2026-09-20: `comment-stash`,
-`quiet-comments`, `undernote`, `tildenote`, `slopstash`, `undertext`, `hushnote`.
-Avoid: Ghost\* (crowded), Comment Lens, Agent Notes, Agent Comments, Shadow Comments,
-Aside Comments, Sideband, Sidemark (all taken).
+**Decision (2026-09-22): Slopstash.** Tagline: "Stash the slop, keep the context." No
+other short word reads as "made by AI" as fast as "slop", which is also a live search term
+("ai slop" returned 12,570 Marketplace results, led by delete-the-slop tools like DeSlop).
+The name gives up the "agent comments have value" message, so the tagline and description
+carry it: the pitch against those tools is that nothing is deleted. `slopstash` was free on
+npm, the Marketplace, and GitHub when chosen. The closest existing extension, HumanEye
+(folds `@agent-context` annotations), had 2 installs.
+
+Other candidates considered, free on npm with no Marketplace collision as of 2026-09-20:
+`comment-stash`, `quiet-comments`, `undernote`, `undercomment`, `tildenote` (the working
+title), `undertext`, `hushnote`, `tuckaway`. Avoid: Ghost\* (crowded), Comment Lens,
+Agent Notes, Agent Comments, Shadow Comments, Aside Comments, Sideband, Sidemark,
+Marginalia, Deslop, Unslop (all taken).

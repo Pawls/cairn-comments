@@ -1,4 +1,4 @@
-export { BRAND, FILTER_DRIVER, SIDECAR_ROOT } from "./brand.js";
+export { BRAND, BRAND_TITLE, FILTER_DRIVER, SIDECAR_ROOT } from "./brand.js";
 export { clean, smudge, sync, type SyncResult } from "./filter.js";
 export { resolveIds } from "./ids.js";
 export { LANGUAGES, languageForPath, type LanguageSpec } from "./languages.js";
