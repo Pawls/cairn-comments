@@ -50,9 +50,23 @@ describe("planOverlay", () => {
 });
 
 describe("hoverMarkdown", () => {
-  it("renders the body and any provenance the entry carries", () => {
-    const entry: SidecarEntry = { id: "a1b2", meta: new Map([["model", "fable 5.1"], ["session", "abc"]]), body: "line one\n\nline two" };
-    expect(hoverMarkdown("a1b2", entry, ".agents/comments/x.py.md")).toBe("line one\n\nline two\n\n*model: fable 5.1 · session: abc*");
+  it("renders the body and the provenance tag recorded", () => {
+    const meta = new Map([
+      ["by", "claude-code"],
+      ["model", "claude-opus-5-5"],
+      ["session", "f6bed7e6-3bc6-42d8-97d2-f936a01f4077"],
+      ["at", "2026-09-22T20:25:55Z"],
+      ["hash", "ignored"],
+    ]);
+    const entry: SidecarEntry = { id: "a1b2", meta, body: "line one\n\nline two" };
+    expect(hoverMarkdown("a1b2", entry, ".agents/comments/x.py.md")).toBe(
+      "line one\n\nline two\n\n*claude-code · claude-opus-5-5 · 2026-09-22 20:25 UTC · session f6bed7e6*",
+    );
+  });
+
+  it("shows no provenance line for an entry without any", () => {
+    const entry: SidecarEntry = { id: "a1b2", meta: new Map([["hash", "x"]]), body: "body" };
+    expect(hoverMarkdown("a1b2", entry, ".agents/comments/x.py.md")).toBe("body");
   });
 
   it("says where the missing body should live", () => {

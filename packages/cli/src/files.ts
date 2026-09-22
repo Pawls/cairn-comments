@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { bodiesOf, clean, parseSidecar, serializeSidecar, sidecarPathFor, smudge, sync } from "@slopstash/core";
+import { bodiesOf, clean, parseSidecar, serializeSidecar, sidecarPathFor, smudge, sync, type SyncOptions } from "@slopstash/core";
 import { managedFiles, restat, stage, stagedFiles, toRepoPath, trackedFiles } from "./git.js";
 
 /** Text of a buffer, or undefined when it is not UTF-8 that re-encodes to the same bytes. */
@@ -53,7 +53,7 @@ type Rewrite = (file: string, source: string, bodies: Map<string, string>) => Pr
  * with the guarded re-stat. Sync always runs first so a rewrite never drops a body that
  * exists only inline, and never meets a comment that still lacks an id.
  */
-async function rewriteFiles(root: string, files: string[], rewrite?: Rewrite): Promise<string[]> {
+async function rewriteFiles(root: string, files: string[], rewrite?: Rewrite, options: SyncOptions = {}): Promise<string[]> {
   const done: string[] = [];
   for (const file of files) {
     const absolute = path.join(root, file);
@@ -61,7 +61,7 @@ async function rewriteFiles(root: string, files: string[], rewrite?: Rewrite): P
     if (original === undefined) continue;
     const sidecarFile = path.join(root, sidecarPathFor(file));
     const stored = parseSidecar(existsSync(sidecarFile) ? readFileSync(sidecarFile, "utf8") : "");
-    const synced = await sync(file, original, stored);
+    const synced = await sync(file, original, stored, options);
     if (synced.sidecarChanged) {
       mkdirSync(path.dirname(sidecarFile), { recursive: true });
       writeFileSync(sidecarFile, serializeSidecar(synced.sidecar));
@@ -74,8 +74,8 @@ async function rewriteFiles(root: string, files: string[], rewrite?: Rewrite): P
   return done;
 }
 
-export async function syncFiles(root: string, files: string[], options: { add: boolean }): Promise<void> {
-  const done = await rewriteFiles(root, files);
+export async function syncFiles(root: string, files: string[], options: SyncOptions & { add: boolean }): Promise<void> {
+  const done = await rewriteFiles(root, files, undefined, options);
   if (options.add) stage(root, done.map(sidecarPathFor).filter((s) => existsSync(path.join(root, s))));
 }
 
@@ -83,6 +83,6 @@ export async function expandFiles(root: string, files: string[]): Promise<void> 
   await rewriteFiles(root, files, smudge);
 }
 
-export async function collapseFiles(root: string, files: string[]): Promise<void> {
-  await rewriteFiles(root, files, (file, source) => clean(file, source));
+export async function collapseFiles(root: string, files: string[], options: SyncOptions = {}): Promise<void> {
+  await rewriteFiles(root, files, (file, source) => clean(file, source), options);
 }

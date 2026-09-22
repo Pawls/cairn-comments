@@ -48,12 +48,30 @@ export function planOverlay(
   return planned;
 }
 
-/** Hover markdown: the body, then any provenance the sidecar carries (filled by A6). */
+/**
+ * One line of provenance from an entry's metadata (`tag` writes by, model, session, at):
+ * `claude-code · claude-opus-5-5 · 2026-09-22 20:25 UTC · session f6bed7e6`. Keys it does
+ * not know, such as A7's hash, are left out.
+ */
+export function provenanceLine(meta: ReadonlyMap<string, string>): string | undefined {
+  const at = meta.get("at")?.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/);
+  const session = meta.get("session");
+  const parts = [
+    meta.get("by"),
+    meta.get("model"),
+    at ? `${at[1]} ${at[2]} UTC` : meta.get("at"),
+    session && `session ${session.slice(0, 8)}`,
+  ].filter(Boolean);
+  return parts.length ? parts.join(" · ") : undefined;
+}
+
+/** Hover markdown: the body, then the entry's provenance when it has any. */
 export function hoverMarkdown(id: string, entry: SidecarEntry | undefined, sidecarPath: string): string {
   const parts: string[] = [];
   if (entry?.body) parts.push(entry.body);
   else parts.push(`$(warning) **${MISSING_LABEL}** for \`${id}\` in \`${sidecarPath}\``);
-  if (entry?.meta.size) parts.push("*" + [...entry.meta].map(([k, v]) => `${k}: ${v}`).join(" · ") + "*");
+  const provenance = entry && provenanceLine(entry.meta);
+  if (provenance) parts.push(`*${provenance}*`);
   return parts.join("\n\n");
 }
 

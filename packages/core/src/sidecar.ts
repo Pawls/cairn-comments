@@ -84,13 +84,18 @@ export function parseSidecar(text: string): Sidecar {
   return { preamble: normalizeBody(preamble.join("\n")), entries: [...byId.values()] };
 }
 
+/** URI-encoded, except the characters of timestamps, model names, and paths, so the line stays readable. */
+function encodeMetaValue(value: string): string {
+  return encodeURIComponent(value).replace(/%(?:3A|2F|40|2C)/g, decodeURIComponent);
+}
+
 export function serializeSidecar(sidecar: Sidecar): string {
   const blocks: string[] = [];
   if (sidecar.preamble) blocks.push(sidecar.preamble + "\n");
   for (const entry of sidecar.entries) {
     let block = `## ${entry.id}\n`;
     if (entry.meta.size) {
-      const pairs = [...entry.meta].map(([k, v]) => `${k}=${encodeURIComponent(v)}`);
+      const pairs = [...entry.meta].map(([k, v]) => `${k}=${encodeMetaValue(v)}`);
       block += `<!-- ${pairs.join(" ")} -->\n`;
     }
     const body = entry.body.split("\n").map((l) => (NEEDS_ESCAPE.test(l) ? "\\" + l : l));

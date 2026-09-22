@@ -12,7 +12,8 @@ code stays clean, and a VS Code extension toggles the comments on as an overlay.
 **Status:** the round trip works through the CLI and git filter for Python,
 TypeScript/JavaScript, C#, and Java (plan slices A1, A3, A4), the VS Code overlay renders
 comment bodies over the markers in your checkout (A2), and `scan` finds existing AI
-comments to stash (A5). Publishing is still ahead; nothing is on npm or the Marketplace
+comments to stash (A5), and hooks for Claude Code, Codex, and Cursor tag the comments an
+agent writes and record who wrote them (A6). Publishing is still ahead; nothing is on npm or the Marketplace
 yet.
 
 - [Design, decisions, and spike findings](docs/design.md)
@@ -73,6 +74,23 @@ slopstash scan --mark-all               # or stash every unprotected comment wit
 Rejections are recorded in the tracked `.agents/scan-ignore`. In VS Code, the
 **AI Comment Review** view in the Explorer runs the same flow: scan, uncheck what to keep
 (per comment or per file), and apply.
+
+## Tagging agent comments automatically
+
+Agents do not have to know about the sigil. A post-edit hook runs `tag` on each file an
+agent edits: comments that are new since the index become sigil comments, and each
+sidecar entry records the harness, model, session, and time. The overlay hover shows it.
+
+```sh
+slopstash init --hooks claude-code,codex,cursor   # any subset
+slopstash init --agents-md                        # optional: teach the sigil in AGENTS.md
+slopstash tag --changed                           # the same, by hand or from any other tool
+```
+
+Hooks go into `.claude/settings.local.json`, `.codex/hooks.json`, and
+`.cursor/hooks.json`. Codex asks you to trust a project hook (`/hooks`) before it runs.
+Edits an agent makes through a shell command are not reported to hooks; run `tag` on
+those files.
 
 ## License
 

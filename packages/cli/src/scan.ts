@@ -16,7 +16,7 @@ import {
   type ScannedComment,
 } from "@slopstash/core";
 import { collapseFiles, decodeExact, syncFiles } from "./files.js";
-import { git, managedFiles, toRepoPath, trackedFiles } from "./git.js";
+import { managedFiles, smudges, toRepoPath, trackedFiles } from "./git.js";
 
 /** One entry of `scan --json`; `scan --apply` reads the same shape back. */
 export interface ReviewEntry {
@@ -102,15 +102,6 @@ function requireManaged(root: string, files: string[]): void {
   const missing = files.filter((f) => !managed.has(f));
   if (missing.length) {
     throw new Error(`not under the ${FILTER_DRIVER} filter (run \`${BRAND} init\` first): ${missing.join(", ")}`);
-  }
-}
-
-/** An agent worktree shows full comments; everywhere else a working file holds bare markers. */
-function smudges(root: string): boolean {
-  try {
-    return git(["config", "--get", `filter.${FILTER_DRIVER}.smudge`], { cwd: root }).trim() !== "";
-  } catch {
-    return false;
   }
 }
 

@@ -3,17 +3,22 @@ import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { BRAND } from "@slopstash/core";
 import { collapseFiles, expandFiles, filterContent, selectFiles, syncFiles } from "./files.js";
-import { repoRoot } from "./git.js";
-import { init } from "./init.js";
+import { ADAPTERS } from "./adapters.js";
+import { repoRoot, toRepoPath } from "./git.js";
+import { runHook } from "./hook.js";
+import { agentsSnippet, init } from "./init.js";
 import { serveFilterProcess } from "./process.js";
 import { applyReview, formatApply, formatReview, markAll, parseReview, scan } from "./scan.js";
+import { tag, tagTargets } from "./tag.js";
 import { addWorktree } from "./worktree.js";
 
 const USAGE = `usage: ${BRAND} <command>
 
-  init [--command <cli>] [--one-shot]
+  init [--command <cli>] [--one-shot] [--hooks <harness,...>] [--agents-md]
                                 configure the filter, .gitattributes, and pre-commit hook;
-                                --one-shot runs a process per file instead of one per git command
+                                --one-shot runs a process per file instead of one per git command;
+                                --hooks installs post-edit adapters (${Object.keys(ADAPTERS).join(", ")});
+                                --agents-md writes the sigil convention into AGENTS.md
   worktree add <git args...>    add a worktree whose checkout shows full comments
   sync [--staged] [--add] [files...]
                                 move comment bodies into sidecars and stamp new ids
@@ -24,6 +29,11 @@ const USAGE = `usage: ${BRAND} <command>
   scan --apply <review.json|->  convert the accepted comments of a reviewed \`scan --json\` list to
                                 sigil comments and ignore the rejected ones, then sync
   scan --mark-all [files...]    convert every unprotected comment, detectors or not
+  tag [--changed] [--by <harness>] [--model <m>] [--session <id>] [files...]
+                                turn comments new since the index into sigil comments and sync,
+                                recording the provenance given; --changed adds every edited file
+  hook <harness>                run a harness's post-edit hook payload (stdin) through \`tag\`
+  agents-md                     print the sigil convention snippet for an agent instruction file
   clean <path>, smudge <path>   one-shot git filter endpoints (stdin to stdout)
   filter-process [--smudge]     git long-running filter process (filter.<driver>.process)
 `;
@@ -92,12 +102,44 @@ async function main(argv: string[]): Promise<void> {
       process.stdout.write(values.json ? JSON.stringify(review, null, 2) + "\n" : formatReview(review));
       return;
     }
+    case "tag": {
+      const { values, positionals } = parseArgs({
+        args: rest,
+        allowPositionals: true,
+        options: {
+          changed: { type: "boolean", default: false },
+          by: { type: "string" },
+          model: { type: "string" },
+          session: { type: "string" },
+        },
+      });
+      const root = repoRoot();
+      const named = positionals.map((f) => toRepoPath(root, f));
+      const report = await tag(root, tagTargets(root, named, values.changed), values);
+      console.log(`tagged ${report.tagged} comment(s); synced ${report.files.length} file(s)`);
+      return;
+    }
+    case "hook": {
+      if (!rest[0]) throw new Error(`hook needs a harness: ${Object.keys(ADAPTERS).join(", ")}`);
+      await runHook(rest[0], (await readStdin()).toString("utf8"));
+      return;
+    }
+    case "agents-md":
+      process.stdout.write(agentsSnippet());
+      return;
     case "init": {
       const { values } = parseArgs({
         args: rest,
-        options: { command: { type: "string" }, "one-shot": { type: "boolean", default: false } },
+        options: {
+          command: { type: "string" },
+          "one-shot": { type: "boolean", default: false },
+          hooks: { type: "string" },
+          "agents-md": { type: "boolean", default: false },
+        },
       });
-      for (const line of init(repoRoot(), { command: values.command, oneShot: values["one-shot"] })) console.log(line);
+      const hooks = values.hooks?.split(",").map((h) => h.trim()).filter(Boolean);
+      const options = { command: values.command, oneShot: values["one-shot"], hooks, agentsMd: values["agents-md"] };
+      for (const line of init(repoRoot(), options)) console.log(line);
       return;
     }
     case "worktree": {

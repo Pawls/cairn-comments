@@ -55,11 +55,16 @@ export interface SyncResult {
   sidecarChanged: boolean;
 }
 
+export interface SyncOptions {
+  /** Provenance merged into the metadata of every entry this sync creates or rewrites. */
+  meta?: ReadonlyMap<string, string>;
+}
+
 /**
  * Moves comment bodies from an expanded working file into its sidecar and stamps ids
  * onto new comments. Entries whose marker is gone are kept; `check` owns orphans (A9).
  */
-export async function sync(path: string, source: string, sidecar: Sidecar): Promise<SyncResult> {
+export async function sync(path: string, source: string, sidecar: Sidecar, options: SyncOptions = {}): Promise<SyncResult> {
   const unchanged = { source, sidecar, sourceChanged: false, sidecarChanged: false };
   const spec = languageForPath(path);
   if (!spec) return unchanged;
@@ -67,7 +72,7 @@ export async function sync(path: string, source: string, sidecar: Sidecar): Prom
   if (!markers.length) return unchanged;
   const ids = resolveIds(path, markers);
 
-  const entries = sidecar.entries.map((e) => ({ ...e }));
+  const entries = sidecar.entries.map((e) => ({ ...e, meta: new Map(e.meta) }));
   const stored = bodiesOf(sidecar);
   let sidecarChanged = false;
   const splices: Splice[] = [];
@@ -82,9 +87,11 @@ export async function sync(path: string, source: string, sidecar: Sidecar): Prom
     const known = stored.get(id);
     // A multi-line body flattened onto a trailing marker is not an edit.
     if (known !== undefined && inlineText(m, known) === text) return;
-    const entry = entries.find((e) => e.id === id);
-    if (entry) entry.body = text;
-    else entries.push({ id, meta: new Map(), body: text });
+    let entry = entries.find((e) => e.id === id);
+    if (!entry) entries.push((entry = { id, meta: new Map(), body: text }));
+    entry.body = text;
+    // Provenance names the last writer of the body, so an edit replaces it.
+    for (const [k, v] of options.meta ?? []) entry.meta.set(k, v);
     stored.set(id, text);
     sidecarChanged = true;
   });

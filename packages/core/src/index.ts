@@ -5,13 +5,14 @@ export {
   analyzeSource,
   convertComments,
   fingerprintOf,
+  newComments,
   scanSource,
   type Finding,
   type ProtectedClass,
   type ScanOptions,
   type ScannedComment,
 } from "./scan.js";
-export { clean, smudge, sync, type SyncResult } from "./filter.js";
+export { clean, smudge, sync, type SyncOptions, type SyncResult } from "./filter.js";
 export { resolveIds } from "./ids.js";
 export { LANGUAGES, languageForPath, type LanguageSpec } from "./languages.js";
 export { findMarkers, type Marker, type MarkerKind } from "./markers.js";

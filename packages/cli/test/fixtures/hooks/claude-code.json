@@ -1,0 +1,27 @@
+{
+  "session_id": "4f5ee155-6738-4fd8-b6bc-110299f93d24",
+  "transcript_path": "{{transcript}}",
+  "cwd": "{{root}}",
+  "scratchpad_dir": "{{scratch}}",
+  "prompt_id": "32404f36-e22e-4319-959e-9249ec50fae3",
+  "permission_mode": "acceptEdits",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "{{root}}/src/app.py",
+    "old_string": "def total(items):\n    return sum(i.price for i in items)",
+    "new_string": "def total(items):\n    # Prices are already tax-inclusive\n    return sum(i.price for i in items)",
+    "replace_all": false
+  },
+  "tool_response": {
+    "filePath": "{{root}}/src/app.py",
+    "oldString": "def total(items):\n    return sum(i.price for i in items)",
+    "newString": "def total(items):\n    # Prices are already tax-inclusive\n    return sum(i.price for i in items)",
+    "originalFile": "def total(items):\n    return sum(i.price for i in items)\n",
+    "structuredPatch": [],
+    "userModified": false,
+    "replaceAll": false
+  },
+  "tool_use_id": "toolu_012fXVrCL8FA2cimFLd36K7e",
+  "duration_ms": 17
+}

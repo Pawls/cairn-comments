@@ -115,8 +115,8 @@ Each is pinned by a test in `packages/core/test/` or `packages/cli/test/`.
 - **Sync before any rewrite.** `expand` and `collapse` run `sync` first, so a rewrite never
   drops a body that exists only inline and never meets a comment without an id.
 - **Sidecar format.** `## <id>`, then an optional `<!-- key=value ... -->` metadata line
-  (values URI-encoded; reserved for A6 and A7), then the body. Existing entries keep their
-  order and new ones append. A body line that would read back as structure is written
+  (values URI-encoded; provenance from A6, see § Hook adapters, and staleness from A7),
+  then the body. Existing entries keep their order and new ones append. A body line that would read back as structure is written
   with a leading backslash. The tool writes LF, and `init` marks the folder
   `text eol=lf` so `autocrlf` never has anything to convert.
 - **Hook install.** `init` writes `pre-commit` into the effective hooks directory, renames
@@ -330,12 +330,64 @@ harvested text, so its precision is an estimate on synthetic-but-representative 
 Real precision depends on how much of a repository an agent wrote. Treat the numbers as
 a floor-setting gate, not a guarantee; review is always the step before apply.
 
+## Hook adapters (A6, 2026-09-22)
+
+Implemented in `packages/cli/src/tag.ts` (the generic command), `adapters.ts` (payload
+parsing and install per harness), and `hook.ts`; the comment diff is `newComments` in
+`packages/core/src/scan.ts`. Tests: `packages/core/test/tag.test.ts` and
+`packages/cli/test/tag.test.ts`.
+
+- **What counts as new.** `tag` compares a working file's comments with its staged blob
+  (empty for an untracked file), using the same grouping and protection as `scan`. A line
+  comment is matched line by line, so a line an agent appends to a human comment becomes
+  a sigil comment of its own and the human lines stay as written. An edited line or block
+  counts as new, and matching is a multiset, so a duplicated comment is new once. A group
+  that turns protected (it now holds commented-out code) is left alone whole.
+- **Then sync, and collapse outside agent worktrees.** Every target file syncs, tagged or
+  not, because an agent may have written sigil comments itself. In the owner's checkout
+  the file is collapsed right away, as `scan --apply` does, so a harness that tracks file
+  state (Claude Code) sees the file changed and re-reads it before its next edit.
+- **Provenance** goes on the metadata line of each entry the run creates or whose body it
+  changes: `by` (harness), `model`, `session`, `at` (UTC, to the second), in that order.
+  It names the last writer, so an edit overwrites these keys and keeps any others (A7's).
+  Metadata values stay URI-encoded, except `:`, `/`, `@`, and `,`, so the line reads as
+  `<!-- by=claude-code model=claude-haiku-4-5-20251001 session=… at=2026-09-22T20:33:22Z -->`.
+- **Adapters take the file from the payload, never `--changed`.** In a shared checkout,
+  `--changed` would also tag the owner's own uncommitted comments. A payload that names no
+  file (a Codex patch that did not parse) falls back to `--changed` in the hook's cwd. An
+  edit outside a repository, or in one without `init`, is silently skipped, so a hook can
+  be installed user-wide.
+- **Hook output.** The hook prints nothing on success. Errors exit 1, which every harness
+  below treats as a non-blocking failure shown to the user.
+
+| Harness | Event and install target | File | Session | Model |
+| --- | --- | --- | --- | --- |
+| Claude Code | `PostToolUse`, matcher `Edit\|Write\|MultiEdit`, in `.claude/settings.local.json` (local: the command holds this machine's CLI path) | `tool_input.file_path` | `session_id` | Not in the payload; read from the last assistant record of `transcript_path` (last 256 KB only), skipping `<synthetic>` |
+| Codex CLI | `PostToolUse`, matcher `apply_patch\|Edit\|Write`, in `.codex/hooks.json` | Parsed from the `*** Add File:` / `Update File:` / `Move to:` lines of the patch | `session_id` | `model` |
+| Cursor | `afterFileEdit` in `.cursor/hooks.json` (`version: 1`) | `file_path` | `conversation_id` | `model` |
+
+What no adapter captures: edits made through a shell (`sed`, a script, a formatter),
+because each harness reports only its own edit tools. Sigil comments written that way still
+reach the sidecar through the pre-commit `sync`; plain comments stay untagged until
+`tag` runs on the file. Codex also asks the user to trust a project hook through `/hooks`
+before it runs.
+
+**Evidence.** Claude Code 2.1.280 ran live on Windows (`claude -p` with Haiku 4.5 adding
+one comment in the owner's checkout): the hook tagged and collapsed it, and the entry
+recorded the model from the transcript. `packages/cli/test/fixtures/hooks/claude-code.json`
+is that payload with paths replaced. Codex and Cursor are not installed on the development
+machine, so their fixtures follow the payloads in each harness's hook documentation
+(learn.chatgpt.com/docs/hooks and cursor.com/docs/agent/hooks, read 2026-09-22) and have
+not been checked against a live run.
+
 ## Known gaps to design in later slices
 
+- **Live runs for the Codex and Cursor adapters.** See § Hook adapters, Evidence.
 - **A converted comment directly below an expanded sigil block joins it.** Inside an agent
-  worktree, a scanned comment at the same indent right under `#~ab12 text` becomes that
-  block's continuation line, so its text merges into the existing body. A bare marker never
-  absorbs lines, so this cannot happen in the owner's checkout, where scan is meant to run.
+  worktree, a scanned or hook-tagged comment at the same indent right under `#~ab12 text`
+  becomes that block's continuation line, so its text merges into the existing body (and,
+  from a hook, takes over its provenance). A bare marker never absorbs lines, so this
+  cannot happen in the owner's checkout.
 - **Scan precision on real repositories.** The corpus gate (§ Scan detectors) is synthetic.
   Recording hit counts from `scan` on a few agent-written repositories would show whether
   narrates-steps, at 0.81, is worth keeping on by default.
@@ -370,8 +422,9 @@ a floor-setting gate, not a guarantee; review is always the step before apply.
   it on some seeds, so `npm test` fails intermittently until the grammar resolves the
   ambiguity (for example, `clean` normalizing a text-less id-less sigil line).
 - **Marker ambiguity.** A new comment written without the space and exactly four
-  alphanumerics (`#~todo`) parses as an id. Hook tagging normalizes; `check` flags ids
-  with no body.
+  alphanumerics (`#~todo`) parses as an id. Hook tagging does not fix it (the comment is
+  already a sigil comment, so `tag` never sees it); the AGENTS.md snippet warns against
+  it, and `check` (A9) flags ids with no body.
 
 ## Prior art (VS Code Marketplace, surveyed 2026-09-20)
 

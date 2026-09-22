@@ -57,6 +57,11 @@ export class Sandbox {
     return execFileSync(process.execPath, [CLI, ...args], { cwd, env: this.env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   }
 
+  /** Runs the CLI with `input` on stdin, as a harness hook would. */
+  cliWithInput(cwd: string, input: string, ...args: string[]): string {
+    return execFileSync(process.execPath, [CLI, ...args], { cwd, env: this.env, encoding: "utf8", input, stdio: ["pipe", "pipe", "pipe"] });
+  }
+
   /** Writes LF-authored text with this sandbox's working-tree terminator. */
   write(file: string, lf: string): void {
     mkdirSync(path.dirname(file), { recursive: true });

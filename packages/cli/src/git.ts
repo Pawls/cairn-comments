@@ -17,6 +17,15 @@ function nulSeparated(output: string): string[] {
   return output.split("\0").filter(Boolean);
 }
 
+/** Output of a git command, or undefined when it fails; git's stderr is dropped. */
+export function gitQuiet(args: string[], cwd: string): string | undefined {
+  try {
+    return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  } catch {
+    return undefined;
+  }
+}
+
 export function repoRoot(cwd = process.cwd()): string {
   return realpathSync.native(git(["rev-parse", "--show-toplevel"], { cwd }).trim());
 }
@@ -65,6 +74,32 @@ export function restat(root: string, files: string[]): void {
   const hashes = git(["hash-object", "--stdin-paths"], { cwd: root, input: tracked.join("\n") + "\n" }).trim().split("\n");
   const identical = tracked.filter((f, i) => hashes[i] === indexed.get(f));
   if (identical.length) git(["update-index", "-z", "--stdin"], { cwd: root, input: identical.join("\0") + "\0" });
+}
+
+/** An agent worktree shows full comments; everywhere else a working file holds bare markers. */
+export function smudges(root: string): boolean {
+  try {
+    return git(["config", "--get", `filter.${FILTER_DRIVER}.smudge`], { cwd: root }).trim() !== "";
+  } catch {
+    return false;
+  }
+}
+
+/** Working-tree edits against the index, plus untracked files git does not ignore. */
+export function changedFiles(root: string): string[] {
+  return [
+    ...nulSeparated(git(["diff", "--name-only", "--diff-filter=AM", "-z"], { cwd: root })),
+    ...nulSeparated(git(["ls-files", "--others", "--exclude-standard", "-z"], { cwd: root })),
+  ];
+}
+
+/** The staged blob of `file`, or undefined when the index has no stage-0 entry for it. */
+export function indexBlob(root: string, file: string): Buffer | undefined {
+  try {
+    return execFileSync("git", ["cat-file", "blob", `:${file}`], { cwd: root, stdio: ["ignore", "pipe", "ignore"], maxBuffer: 1 << 28 });
+  } catch {
+    return undefined;
+  }
 }
 
 export function stage(root: string, files: string[]): void {

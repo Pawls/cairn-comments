@@ -2,6 +2,8 @@ import { createRequire } from "node:module";
 
 export interface LanguageSpec {
   id: string;
+  /** Human-readable name; TSX shares TypeScript's. */
+  name: string;
   extensions: readonly string[];
   /** Line-comment sigil, e.g. `#~`. */
   lineSigil: string;
@@ -14,6 +16,7 @@ export interface LanguageSpec {
 export const LANGUAGES: readonly LanguageSpec[] = [
   {
     id: "python",
+    name: "Python",
     extensions: [".py", ".pyi"],
     lineSigil: "#~",
     commentTypes: ["comment"],
@@ -21,6 +24,7 @@ export const LANGUAGES: readonly LanguageSpec[] = [
   },
   {
     id: "typescript",
+    name: "TypeScript",
     extensions: [".ts", ".mts", ".cts"],
     lineSigil: "//~",
     commentTypes: ["comment"],
@@ -28,6 +32,7 @@ export const LANGUAGES: readonly LanguageSpec[] = [
   },
   {
     id: "tsx",
+    name: "TypeScript",
     extensions: [".tsx"],
     lineSigil: "//~",
     commentTypes: ["comment"],
@@ -35,6 +40,7 @@ export const LANGUAGES: readonly LanguageSpec[] = [
   },
   {
     id: "javascript",
+    name: "JavaScript",
     extensions: [".js", ".jsx", ".mjs", ".cjs"],
     lineSigil: "//~",
     commentTypes: ["comment"],
@@ -42,6 +48,7 @@ export const LANGUAGES: readonly LanguageSpec[] = [
   },
   {
     id: "csharp",
+    name: "C#",
     extensions: [".cs"],
     lineSigil: "//~",
     commentTypes: ["comment"],
@@ -49,6 +56,7 @@ export const LANGUAGES: readonly LanguageSpec[] = [
   },
   {
     id: "java",
+    name: "Java",
     extensions: [".java"],
     lineSigil: "//~",
     commentTypes: ["line_comment", "block_comment"],

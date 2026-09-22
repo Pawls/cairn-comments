@@ -245,6 +245,62 @@ export async function scanSource(path: string, source: string, options: ScanOpti
   return (await analyzeSource(path, source, options)).filter((c) => !c.protected && c.findings.length);
 }
 
+/** Units a comment is matched by: one per line of a line-comment group, the whole text of a block. */
+function unitsOf(c: ScannedComment): string[] {
+  return c.style === "line" ? c.text.split("\n").map((l) => `line\0${l}`) : [`block\0${c.text}`];
+}
+
+/**
+ * Unprotected comments in `source` that `baseline` (the same file as last staged) does
+ * not have: what `tag` turns into sigil comments. A line comment is matched line by line,
+ * so a line an agent appends to a human comment is new on its own and the human lines
+ * stay as written; an edited line or block counts as new. Matching is a multiset, so a
+ * duplicated comment is new once.
+ */
+export async function newComments(path: string, source: string, baseline: string): Promise<ScannedComment[]> {
+  const known = new Map<string, number>();
+  for (const c of await analyzeSource(path, baseline, { detectors: [] })) {
+    for (const unit of unitsOf(c)) known.set(unit, (known.get(unit) ?? 0) + 1);
+  }
+  const seen = (unit: string): boolean => {
+    const n = known.get(unit) ?? 0;
+    if (n) known.set(unit, n - 1);
+    return n > 0;
+  };
+
+  const out: ScannedComment[] = [];
+  for (const c of await analyzeSource(path, source, { detectors: [] })) {
+    const fresh = unitsOf(c).map((u) => !seen(u));
+    if (c.protected || !fresh.some(Boolean)) continue;
+    if (fresh.every(Boolean)) {
+      out.push(c);
+      continue;
+    }
+    // Runs of new lines inside an existing group become comments of their own.
+    const lines = c.text.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      if (!fresh[i] || !lines[i]) continue;
+      let j = i;
+      while (j + 1 < lines.length && fresh[j + 1]) j++;
+      while (!lines[j]) j--;
+      const text = lines.slice(i, j + 1).join("\n");
+      const spans = c.spans.slice(i, j + 1);
+      out.push({
+        ...c,
+        start: spans[0]!.start,
+        end: spans[spans.length - 1]!.end,
+        line: c.line + i,
+        endLine: c.line + j,
+        text,
+        fingerprint: fingerprintOf(text),
+        spans,
+      });
+      i = j;
+    }
+  }
+  return out;
+}
+
 /**
  * Rewrites `comments` as new sigil comments (`<sigil> text`), which `sync` then stamps
  * with ids. Every byte outside the rewritten tokens, including each terminator, is kept;

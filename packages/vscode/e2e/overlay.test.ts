@@ -101,7 +101,7 @@ suite("overlay", () => {
     );
     const text = hovers.flatMap((h) => h.contents.map((c) => (c as vscode.MarkdownString).value)).join("\n");
     assert.match(text, /retries are safe: ledger write is idempotent\n\nthe ledger dedupes/);
-    assert.match(text, /\*model: fable 5\.1\*/);
+    assert.match(text, /\*claude-code · claude-fable-5-1 · 2026-09-22 20:33 UTC · session 4f5ee155\*/);
     assert.match(text, /\[Edit comment\]\(command:slopstash\.editComment\?/);
     const none = await vscode.commands.executeCommand<vscode.Hover[]>("vscode.executeHoverProvider", editor.document.uri, new vscode.Position(2, 2));
     assert.equal(none.length, 0, "code before a trailing marker gets no hover");
