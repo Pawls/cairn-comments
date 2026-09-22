@@ -15,8 +15,11 @@ const EXPANDED = new RegExp(
 );
 
 // Both settings run on every platform: autocrlf=true puts CRLF in the working tree even
-// on Linux, which is the Windows half of the plan's sign-off.
-describe.each([{ autocrlf: true }, { autocrlf: false }])("round trip through git (autocrlf=$autocrlf)", ({ autocrlf }) => {
+// on Linux, which is the Windows half of the plan's sign-off. Each runs through the
+// long-running filter process and through the one-shot fallback.
+const MODES = [true, false].flatMap((autocrlf) => [false, true].map((oneShot) => ({ autocrlf, oneShot })));
+describe.each(MODES)("round trip through git (autocrlf=$autocrlf, oneShot=$oneShot)", ({ autocrlf, oneShot }) => {
+  const initArgs = oneShot ? ["init", "--one-shot"] : ["init"];
   let box: Sandbox;
   let main: string;
   let wt1: string;
@@ -31,7 +34,7 @@ describe.each([{ autocrlf: true }, { autocrlf: false }])("round trip through git
     wt3 = box.path("wt3");
     box.write(box.path("main", SOURCE), BASE);
     box.git(box.dir, "init", "-q", "main");
-    box.cli(main, "init");
+    box.cli(main, ...initArgs);
     box.git(main, "add", "-A");
     box.git(main, "commit", "-qm", "base");
   });
@@ -41,7 +44,7 @@ describe.each([{ autocrlf: true }, { autocrlf: false }])("round trip through git
 
   it("init is idempotent and leaves the owner checkout without a smudge filter", () => {
     const attributes = readFileSync(box.path("main", ".gitattributes"), "utf8");
-    box.cli(main, "init");
+    box.cli(main, ...initArgs);
     expect(readFileSync(box.path("main", ".gitattributes"), "utf8")).toBe(attributes);
     expect(attributes).toContain("*.py filter=tildenote");
     expect(attributes).toContain("*.ts filter=tildenote");
@@ -51,12 +54,15 @@ describe.each([{ autocrlf: true }, { autocrlf: false }])("round trip through git
     expect(attributes).toContain("*.java filter=tildenote");
     expect(attributes).toContain(".agents/comments/** merge=union text eol=lf");
     expect(() => box.git(main, "config", "--get", "filter.tildenote.smudge")).toThrow();
+    if (oneShot) expect(() => box.git(main, "config", "--get", "filter.tildenote.process")).toThrow();
+    else expect(box.git(main, "config", "--get", "filter.tildenote.process").trim()).toMatch(/ filter-process$/);
     expect(box.status(main)).toBe("");
   });
 
   it("an agent worktree diffs as bare markers only", () => {
     box.cli(main, "worktree", "add", "-q", wt1, "-b", "agent");
     expect(box.git(wt1, "config", "--worktree", "--get", "filter.tildenote.smudge")).toContain("smudge %f");
+    if (!oneShot) expect(box.git(wt1, "config", "--get", "filter.tildenote.process").trim()).toMatch(/ filter-process --smudge$/);
     box.write(box.path("wt1", SOURCE), AGENT_EDIT);
     const added = box
       .git(wt1, "diff", "--no-color")

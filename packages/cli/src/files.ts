@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { bodiesOf, clean, parseSidecar, serializeSidecar, sidecarPathFor, smudge, sync } from "@tildenote/core";
 import { managedFiles, restat, stage, stagedFiles, toRepoPath, trackedFiles } from "./git.js";
@@ -9,9 +10,25 @@ export function decodeExact(bytes: Buffer): string | undefined {
   return Buffer.from(text, "utf8").equals(bytes) ? text : undefined;
 }
 
-export function readBodies(root: string, file: string): Map<string, string> {
-  const sidecar = path.join(root, sidecarPathFor(file));
-  return existsSync(sidecar) ? bodiesOf(parseSidecar(readFileSync(sidecar, "utf8"))) : new Map();
+/** Async and a single open: on Windows each open costs ~0.45 ms, and the filter process overlaps them. */
+export async function readBodies(root: string, file: string): Promise<Map<string, string>> {
+  try {
+    return bodiesOf(parseSidecar(await readFile(path.join(root, sidecarPathFor(file)), "utf8")));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return new Map();
+    throw error;
+  }
+}
+
+/**
+ * One file through a filter endpoint, for the one-shot commands and the filter process
+ * alike. Returns `input` itself when nothing changes, so non-UTF-8 passes byte for byte.
+ */
+export async function filterContent(mode: "clean" | "smudge", root: string, file: string, input: Buffer): Promise<Buffer> {
+  const text = decodeExact(input);
+  if (text === undefined) return input;
+  const result = mode === "clean" ? await clean(file, text) : await smudge(file, text, await readBodies(root, file));
+  return result === text ? input : Buffer.from(result, "utf8");
 }
 
 export interface Selection {

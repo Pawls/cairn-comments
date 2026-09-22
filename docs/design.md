@@ -63,6 +63,10 @@ the sidecar), from the harness hook adapters after each edit, and on demand.
 `git worktree add` checks out before per-worktree config can be set, so the CLI wraps it:
 `--no-checkout`, set config, then check out.
 
+**One filter process per git command.** `init` also sets `filter.<name>.process`, which
+git prefers over the one-shot `clean`/`smudge` commands; an agent worktree overrides it
+with `--smudge` in its per-worktree config. See § Filter process.
+
 ## Spike findings (2026-09-20)
 
 Measured with a throwaway regex filter and shell script on Windows, git 2.55,
@@ -171,6 +175,60 @@ C#, and Java, in addition to Python.
   `LANGUAGES`' own extension-keyed ids, since VS Code assigns JSX/TSX files a distinct
   language id from plain JS/TS).
 
+## Filter process (A4, 2026-09-22)
+
+Implemented in `packages/cli/src/process.ts` (protocol) and `pktline.ts` (framing);
+conformance and crash tests in `packages/cli/test/process.test.ts`.
+
+- **Config.** `init` sets `filter.<name>.process = <cli> filter-process` repo-wide, and
+  `worktree add` sets `<cli> filter-process --smudge` in the worktree's own config. Only
+  the `--smudge` process advertises smudge, so the owner's checkout stays collapsed as
+  before. `clean` stays configured: git ignores it while `process` is set, and the hook and
+  `configuredCommand` key on it. `init --one-shot` removes `process` for a per-file
+  fallback; the round-trip suite runs in both modes.
+- **Delay.** A checkout lets the filter answer `status=delayed`, so the process starts the
+  smudge (sidecar read, parse) and returns at once; git fetches results after
+  `list_available_blobs`. This hides the sidecar read, which costs ~0.45 ms per open on
+  Windows whether the file is fresh or not. Delayed content is capped at 64 MB, and past
+  the cap requests are answered in line. A larger libuv threadpool (16 vs 4) measured no
+  difference and was not kept.
+- **Failures.** A per-file error in line answers `status=error`, and git falls back to the
+  unfiltered content with `error: external filter '<cmd>' failed`, as in one-shot mode. A
+  failed delayed smudge hands back the unfiltered blob and logs to stderr, because git
+  treats a delayed path that never arrives as missing. A crash mid-stream during checkout
+  fails the git command: git prints `'<path>' was not filtered properly` for each delayed
+  path and `Could not reset index file`, and the delayed paths are not written. Rerunning
+  the command recovers, and no file is ever written with partial content. git-lfs has the
+  same failure mode under delay. A crash during `add` falls back to the unfiltered file
+  for that path, which A1's rule already covers (`check`, A9).
+- **Racy entries.** Git for Windows compares mtimes at second granularity. A `git status`
+  within the same second as a checkout re-cleans every entry the checkout wrote, and so
+  can the next one. The benchmark measures "warm" status only after a status issued more
+  than a second later.
+
+Measured with `npm run bench`: 2,000 files, half Python and half TypeScript, 6 markers
+and a sidecar each, `autocrlf=false`. Checkout is `git reset --hard` into a fresh
+smudging worktree. Medians of 3 runs (one-shot: 1 run).
+
+| Platform | Mode | Checkout | vs off | Warm status |
+| --- | --- | --- | --- | --- |
+| Windows 11, git 2.55, Node 24 | off | 947 ms | | 38 ms |
+| | one-shot | 219,797 ms | +23,122% | 38 ms |
+| | process, no delay | 3,037 ms | +201% | 38 ms |
+| | process | 1,788 ms | +89% | 37 ms |
+| WSL Ubuntu, git 2.43, Node 26 | off | 138 ms | | 5 ms |
+| | one-shot | 117,096 ms | +85,017% | 5 ms |
+| | process | 657 ms | +378% | 5 ms |
+
+**Budget:** warm `git status` passes (no added cost; with a settled index git runs no
+filter). The +20% checkout budget fails on both platforms, so the kill criterion applies:
+the numbers are recorded here, and the next steps are in § Known gaps. Where the Windows
+checkout time goes, from a probe on one run of 1,788 ms: ~560 ms for git to write the
+sidecars before the filter starts, 526 ms of git sending requests, and ~650 ms of git
+fetching results and writing files. With parse and smudge deferred, the request phase is
+154 ms (0.077 ms per request). The other ~370 ms is parse and smudge sharing the protocol
+loop's thread. In process, `smudge` is 0.05 ms per file and a sidecar parse 0.007 ms.
+
 ## Overlay rendering (A2 spike, 2026-09-22)
 
 Verified in VS Code 1.138 on Windows with screenshots taken by the e2e suite
@@ -209,8 +267,14 @@ Verified in VS Code 1.138 on Windows with screenshots taken by the e2e suite
   only its `.wasm` is used. It worked with the script skipped (npm 11.19 on Linux);
   publishing (A9) should bundle the grammar WASM instead of depending on the package.
 
-- **Filter startup cost.** One Node process per file is too slow for large checkouts.
-  The long-running filter process protocol fixes it (slice A4).
+- **Checkout overhead in Node (design note, opened by A4's kill criterion).** Process mode
+  misses the +20% checkout budget; § Filter process has the numbers and where the time
+  goes. Two ways forward, in order of cost: move parse and smudge onto `worker_threads`
+  so the protocol loop answers git without waiting on them (estimated floor about +30%,
+  set by two pipe round trips per delayed file), or a native filter binary (Rust or Go
+  with a tree-sitter C binding) speaking the same protocol, which removes Node's
+  per-request event-loop cost but not git's own writes. Neither blocks v1: the overhead is
+  per marked file, only in agent worktrees, and warm `git status` is unaffected.
 - **Renames.** Sidecar paths mirror source paths, so `git mv` orphans a sidecar. `check`
   detects markers without bodies and relocates by id (slice A9).
 - **Sidecar merges.** Entries are keyed by random ids and the folder uses `merge=union`
@@ -218,6 +282,12 @@ Verified in VS Code 1.138 on Windows with screenshots taken by the e2e suite
   driver if union proves too blunt (revisit in A9).
 - **Clones without the filter.** Expanded comments could be committed. `check` in CI and
   pre-commit rejects expanded sigil comments in blobs (slice A9).
+- **A lone sigil line below a bare marker (found in A4, not fixed).** In `#~zz99\n#~`, the
+  bare `#~` stays put under `clean`. Once `zz99` expands, though, that `#~` reads as the
+  block's empty continuation line, so `clean(smudge(x))` returns `#~zz99` and the line is
+  lost. The `clean undoes smudge` property in `packages/core/test/filter.test.ts` catches
+  it on some seeds, so `npm test` fails intermittently until the grammar resolves the
+  ambiguity (for example, `clean` normalizing a text-less id-less sigil line).
 - **Marker ambiguity.** A new comment written without the space and exactly four
   alphanumerics (`#~todo`) parses as an id. Hook tagging normalizes; `check` flags ids
   with no body.

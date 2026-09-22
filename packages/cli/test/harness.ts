@@ -1,10 +1,10 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../dist/main.js");
+export const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../dist/main.js");
 
 export interface SandboxOptions {
   autocrlf: boolean;
@@ -45,6 +45,12 @@ export class Sandbox {
 
   git(cwd: string, ...args: string[]): string {
     return execFileSync("git", args, { cwd, env: this.env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  }
+
+  /** Runs git without throwing, for scenarios where git is expected to report a failure. */
+  gitResult(cwd: string, ...args: string[]): { status: number | null; stdout: string; stderr: string } {
+    const { status, stdout, stderr } = spawnSync("git", args, { cwd, env: this.env, encoding: "utf8" });
+    return { status, stdout, stderr };
   }
 
   cli(cwd: string, ...args: string[]): string {

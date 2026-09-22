@@ -75,11 +75,39 @@ function ensureHook(root: string, command: string): string {
   return `${hook}: ${note}`;
 }
 
-export function init(root: string, command = defaultCommand()): string[] {
+/** The repository-wide filter process, or undefined in one-shot mode. */
+export function configuredProcess(cwd: string): string | undefined {
+  try {
+    // --local: an agent worktree's own override (`--smudge`) must not answer for the repo.
+    return git(["config", "--local", "--get", `filter.${FILTER_DRIVER}.process`], { cwd }).trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export interface InitOptions {
+  command?: string;
+  /** Leave git on a process per file; the long-running process is the default. */
+  oneShot?: boolean;
+}
+
+/**
+ * The one-shot `clean` is always configured: git ignores it while `process` is set, and
+ * it is what the hook and `configuredCommand` key on. Process mode is repo-wide for clean;
+ * `worktree add` turns on smudge per worktree (design.md § Filter process).
+ */
+export function init(root: string, options: InitOptions = {}): string[] {
+  const command = options.command ?? defaultCommand();
   const report: string[] = [];
   git(["config", "extensions.worktreeConfig", "true"], { cwd: root });
   git(["config", `filter.${FILTER_DRIVER}.clean`, `${command} clean %f`], { cwd: root });
-  report.push(`git config: extensions.worktreeConfig, filter.${FILTER_DRIVER}.clean`);
+  if (options.oneShot) {
+    if (configuredProcess(root)) git(["config", "--local", "--unset", `filter.${FILTER_DRIVER}.process`], { cwd: root });
+    report.push(`git config: extensions.worktreeConfig, filter.${FILTER_DRIVER}.clean (one-shot)`);
+  } else {
+    git(["config", `filter.${FILTER_DRIVER}.process`, `${command} filter-process`], { cwd: root });
+    report.push(`git config: extensions.worktreeConfig, filter.${FILTER_DRIVER}.clean, filter.${FILTER_DRIVER}.process`);
+  }
   const added = ensureAttributes(root);
   report.push(added.length ? `.gitattributes: added ${added.length} line(s)` : ".gitattributes: already up to date");
   report.push(ensureHook(root, command));
