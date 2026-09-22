@@ -130,6 +130,34 @@ sigil (the grammar is never loaded), 80 ms with one marker, 113 ms for a 1,200-l
 with 800 markers, against 36 ms for bare `node -e 0`. That is under A1's 300 ms kill
 criterion, so A4 keeps its place in the plan.
 
+## Overlay rendering (A2 spike, 2026-09-22)
+
+Verified in VS Code 1.138 on Windows with screenshots taken by the e2e suite
+(`docs/images/overlay-*.png`); no CodeLens fallback was needed.
+
+- **Hiding the token.** A `TextEditorDecorationType` with
+  `textDecoration: "none; display: none"` removes the `#~a1b2` span from the rendered
+  line. The label is an `after` attachment, which VS Code draws as a sibling of the hidden
+  span, so it lands exactly where the token was and the indentation before it survives.
+  This is the same injection the Inline Fold extension relies on; if a VS Code release
+  ever sanitizes it, the fallback is `opacity: 0` with a negative `letterSpacing`.
+- **Cursor line stays raw.** A hidden token cannot be edited by sight, so the marker on any
+  line the selection touches is shown as typed with the label after it.
+- **Comment color is not reachable.** Decoration colors come from `ThemeColor` ids, and no
+  theme id exposes the comment token color. The overlay uses `editorCodeLens.foreground`
+  in italics by default, with a `tildenote.overlayColor` CSS override.
+- **Hover is a provider, not a decoration message.** A `display: none` span has no width,
+  so the mouse never rests on it and `hoverMessage` would never fire. The hover provider
+  answers for any position from the sigil to the end of its line and carries an
+  `Edit comment` command link.
+- **Sidecar root.** The extension resolves a source file's sidecar against the nearest
+  ancestor holding `.agents/comments` or `.git`, whichever appears first walking up, so a
+  fixture or nested workspace inside a larger repository keeps its own sidecars.
+- **Packaging.** VS Code loads extensions as CommonJS; esbuild bundles the ESM sources and
+  `@tildenote/core` into `dist/extension.cjs`, with `import.meta.url` shimmed to the bundle
+  path so the grammar WASM still resolves through `node_modules`. `web-tree-sitter` stays
+  external because it locates its own WASM next to its module file.
+
 ## Known gaps to design in later slices
 
 - **Writing into a shared hooks directory.** With a global `core.hooksPath`, `init` renames

@@ -12,11 +12,12 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "tsc -b",
+    "build": "tsc -b && npm run bundle -w packages/vscode",
     "lint": "eslint .",
     "test": "npm run build && vitest run",
-    "test:unit": "vitest run packages/core",
-    "test:integration": "npm run build && vitest run packages/cli"
+    "test:unit": "vitest run packages/core packages/vscode",
+    "test:integration": "npm run build && vitest run packages/cli",
+    "test:vscode": "npm run build && npm run e2e -w packages/vscode"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

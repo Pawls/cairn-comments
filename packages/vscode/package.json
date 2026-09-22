@@ -1,14 +1,90 @@
 {
   "name": "tildenote-vscode",
-  "private": true,
+  "displayName": "tildenote: Hide AI Comments",
+  "description": "Keep AI-written comments out of your code without losing them. Shows agent comments as a toggleable overlay over the bare markers left in committed code.",
   "version": "0.0.0",
+  "publisher": "tildenote",
   "license": "MIT",
+  "private": true,
   "type": "module",
-  "main": "./dist/extension.js",
+  "main": "./dist/extension.cjs",
   "engines": {
     "vscode": "^1.90.0"
   },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "ai comments",
+    "hide ai comments",
+    "remove ai comments",
+    "hide comments",
+    "comments",
+    "comment overlay",
+    "agent",
+    "coding agent",
+    "claude code",
+    "codex",
+    "cursor",
+    "copilot",
+    "sidecar",
+    "git filter",
+    "clean code"
+  ],
+  "activationEvents": [
+    "onLanguage:python"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "tildenote.toggleOverlay",
+        "title": "Toggle AI Comment Overlay",
+        "category": "tildenote"
+      },
+      {
+        "command": "tildenote.editComment",
+        "title": "Edit AI Comment",
+        "category": "tildenote"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "tildenote.toggleOverlay",
+        "key": "ctrl+alt+`",
+        "mac": "cmd+alt+`"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "tildenote.editComment",
+          "when": "editorLangId == python"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "tildenote",
+      "properties": {
+        "tildenote.overlayColor": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "CSS color for overlay text. Empty uses the theme's `editorCodeLens.foreground`; no theme color exposes the comment token color to decorations."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "bundle": "node esbuild.mjs",
+    "e2e": "node out/e2e/run.js"
+  },
   "dependencies": {
     "@tildenote/core": "0.0.0"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/vscode": "1.90.0",
+    "@vscode/test-electron": "^3.1.0",
+    "esbuild": "^0.28.2",
+    "mocha": "^12.0.2"
   }
 }
