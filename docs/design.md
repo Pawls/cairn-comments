@@ -40,7 +40,7 @@ Committed blob / owner checkout          Agent worktree (smudged)
 | Human view | Virtual overlay in VS Code | Files on disk stay collapsed. The marker line itself is the render site, so own-line comments display in place (no CodeLens needed); long bodies show the first line plus a hover or comment thread. |
 | Detection | Sigil is the source of truth; harness hooks auto-tag unmarked comments an agent just wrote; a repeatable `scan` finds existing AI comments by heuristic tells, with a mark-all mode | Covers users who never write agent instructions. |
 | Implementation | TypeScript everywhere, `web-tree-sitter` for parsing | One codebase for the CLI, the git filter, the hook adapters, and the extension. |
-| Languages in v1 | Python, TypeScript/JavaScript, C#, Kotlin/Java | Doc comments (docstrings, JSDoc, `///`, KDoc/Javadoc), pragmas, license headers, and suppression directives are never stripped. |
+| Languages in v1 | Python, TypeScript/JavaScript, C#, Java | Doc comments (docstrings, JSDoc, `///`, Javadoc), pragmas, license headers, and suppression directives are never stripped. Kotlin was dropped in A3: no published package ships a `web-tree-sitter`-compatible grammar WASM (see A3 rules below). |
 | Hook adapters in v1 | Claude Code, Codex CLI, Cursor, generic post-edit command | The sigil convention (AGENTS.md snippet) and the git filter work for every harness regardless. |
 | Audience | Public open source, MIT | Marketplace extension + npm CLI. |
 
@@ -129,6 +129,47 @@ One-shot `clean` latency on Windows, Node 24, median of 7 runs: 61 ms for a file
 sigil (the grammar is never loaded), 80 ms with one marker, 113 ms for a 1,200-line file
 with 800 markers, against 36 ms for bare `node -e 0`. That is under A1's 300 ms kill
 criterion, so A4 keeps its place in the plan.
+
+## Rules settled in A3 (2026-09-22)
+
+Visible change: the round trip and marker grammar work in TypeScript, TSX, JavaScript,
+C#, and Java, in addition to Python.
+
+- **`languages.ts` needed no refactor.** `clean`/`smudge`/`sync`/`findMarkers` were already
+  fully parameterized by `LanguageSpec`; A3 only added table entries plus the grammar
+  packages, confirming the abstraction chosen in A1 holds for a C-family sigil (`//~`).
+- **Protection is structural, not a separate node-type list.** `findMarkers` only ever
+  matches a comment node whose full text is `^<sigil>(id)?( text)?$`. JSDoc/KDoc-style
+  `/** ... */` blocks, `///` doc comments, `#pragma`, `@ts-ignore`, and license headers
+  never match that shape, so no `protectedTypes` field was added to `LanguageSpec`; the
+  fixture tests in `markers.test.ts` pin this per language instead of asserting a type list.
+- **`commentTypes` differs per grammar and must be verified, not assumed.** Confirmed via
+  each grammar's `node-types.json` (or, absent one, by parsing a probe file and walking
+  the tree): Python, TypeScript, TSX, JavaScript, and C# each expose one `comment` node
+  type; Java's grammar splits `line_comment` and `block_comment`. `LanguageSpec.commentTypes`
+  lists both for Java.
+- **Grammar sources.** `tree-sitter-typescript` ships two dialects as separate WASM files
+  (`tree-sitter-typescript.wasm` for `.ts`/`.mts`/`.cts`, `tree-sitter-tsx.wasm` for `.tsx`);
+  plain `.ts` cannot parse JSX. `tree-sitter-javascript`'s grammar parses JSX natively, so
+  one dialect covers `.js`/`.jsx`/`.mjs`/`.cjs`. `tree-sitter-c-sharp` publishes its WASM as
+  `tree-sitter-c_sharp.wasm` (underscore, not a hyphen).
+- **Kotlin dropped for v1 (kill criterion).** No published npm package ships a Kotlin
+  grammar WASM compatible with `web-tree-sitter@0.27`: `tree-sitter-kotlin` ships only
+  native `node-gyp-build` bindings, and the community `tree-sitter-wasms` bundle's
+  `tree-sitter-kotlin.wasm` fails `Language.load` (`web-tree-sitter` requires a `dylink.0`
+  custom section; that WASM does not carry one, so it was very likely built against an
+  older/incompatible Emscripten toolchain). Building a compatible WASM from
+  `tree-sitter-kotlin`'s grammar source with the `tree-sitter` CLI was out of scope for
+  this slice. The A3 kill criterion ("a grammar that cannot [be used] reliably gets
+  dropped from v1") applies at the load step as much as the parse step. Kotlin/Java in
+  the plan's language list is Java only until a compatible WASM is sourced or built.
+- **`init` needed no changes**: `ensureAttributes` already iterates `LANGUAGES`. The VS
+  Code overlay did: `activationEvents`, the command-palette `when` clause, and the hover
+  provider's `DocumentSelector` were hardcoded to `language: "python"`
+  (`packages/vscode/package.json`, `packages/vscode/src/extension.ts`) and now list every
+  v1 language's VS Code language id (`typescriptreact`/`javascriptreact` in addition to
+  `LANGUAGES`' own extension-keyed ids, since VS Code assigns JSX/TSX files a distinct
+  language id from plain JS/TS).
 
 ## Overlay rendering (A2 spike, 2026-09-22)
 

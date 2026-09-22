@@ -44,6 +44,11 @@ describe.each([{ autocrlf: true }, { autocrlf: false }])("round trip through git
     box.cli(main, "init");
     expect(readFileSync(box.path("main", ".gitattributes"), "utf8")).toBe(attributes);
     expect(attributes).toContain("*.py filter=tildenote");
+    expect(attributes).toContain("*.ts filter=tildenote");
+    expect(attributes).toContain("*.tsx filter=tildenote");
+    expect(attributes).toContain("*.js filter=tildenote");
+    expect(attributes).toContain("*.cs filter=tildenote");
+    expect(attributes).toContain("*.java filter=tildenote");
     expect(attributes).toContain(".agents/comments/** merge=union text eol=lf");
     expect(() => box.git(main, "config", "--get", "filter.tildenote.smudge")).toThrow();
     expect(box.status(main)).toBe("");

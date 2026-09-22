@@ -23,6 +23,9 @@ export const COMMANDS = {
 const STATE_KEY = "overlay.on";
 const DEBOUNCE_MS = 100;
 
+/** VS Code's built-in language ids for every extension `LANGUAGES` covers. */
+const VSCODE_LANGUAGE_IDS = ["python", "typescript", "typescriptreact", "javascript", "javascriptreact", "csharp", "java"];
+
 /** What the e2e test (and a debugger) can reach through `activate`'s return value. */
 export interface TestApi {
   mode(): OverlayMode;
@@ -182,9 +185,11 @@ export function activate(context: vscode.ExtensionContext): TestApi {
       refreshAll();
     }),
     vscode.commands.registerCommand(COMMANDS.edit, (arg?: { file: string; id: string }) => editComment(arg)),
-    vscode.languages.registerHoverProvider(
-      { scheme: "file", language: "python" },
-      { provideHover: (document, position) => provideHover(store, document, position) },
+    ...VSCODE_LANGUAGE_IDS.map((language) =>
+      vscode.languages.registerHoverProvider(
+        { scheme: "file", language },
+        { provideHover: (document, position) => provideHover(store, document, position) },
+      ),
     ),
   );
   refreshAll();

@@ -32,7 +32,13 @@
     "clean code"
   ],
   "activationEvents": [
-    "onLanguage:python"
+    "onLanguage:python",
+    "onLanguage:typescript",
+    "onLanguage:typescriptreact",
+    "onLanguage:javascript",
+    "onLanguage:javascriptreact",
+    "onLanguage:csharp",
+    "onLanguage:java"
   ],
   "contributes": {
     "commands": [
@@ -58,7 +64,7 @@
       "commandPalette": [
         {
           "command": "tildenote.editComment",
-          "when": "editorLangId == python"
+          "when": "editorLangId == python || editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact || editorLangId == csharp || editorLangId == java"
         }
       ]
     },

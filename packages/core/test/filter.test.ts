@@ -128,6 +128,45 @@ describe("line terminators", () => {
   }
 });
 
+describe("round trip per language", () => {
+  const cases: [string, string, string][] = [
+    [
+      "TypeScript",
+      "src/settle.ts",
+      ["function settle(order) {", "    //~ retries are safe", "    ledger.write(order.id);  //~ keyed on order.id", '    log("//~ not a comment");', "}", ""].join("\n"),
+    ],
+    [
+      "JavaScript",
+      "src/settle.js",
+      ["function settle(order) {", "    //~ retries are safe", "    ledger.write(order.id);  //~ keyed on order.id", "}", ""].join("\n"),
+    ],
+    [
+      "C#",
+      "src/Settle.cs",
+      ["void Settle(Order order) {", "    //~ retries are safe", "    ledger.Write(order.Id);  //~ keyed on order.id", "}", ""].join("\n"),
+    ],
+    [
+      "Java",
+      "src/Settle.java",
+      ["void settle(Order order) {", "    //~ retries are safe", "    ledger.write(order.id);  //~ keyed on order.id", "}", ""].join("\n"),
+    ],
+  ];
+
+  for (const [name, path, expanded] of cases) {
+    it(`${name}: clean collapses, smudge expands, sync agrees with clean`, async () => {
+      const stamped = await sync(path, expanded, EMPTY);
+      expect(stamped.sourceChanged).toBe(true);
+      expect(stamped.sidecarChanged).toBe(true);
+      const cleaned = await clean(path, stamped.source);
+      expect(cleaned).toMatch(/\/\/~[0-9a-z]{4}/);
+      const smudged = await smudge(path, cleaned, bodiesOf(stamped.sidecar));
+      expect(await clean(path, smudged)).toBe(cleaned);
+      const again = await sync(path, smudged, stamped.sidecar);
+      expect(again.sourceChanged || again.sidecarChanged).toBe(false);
+    });
+  }
+});
+
 describe("properties", () => {
   const line = fc.oneof(
     fc.constantFrom("x = 1", "def f():", "    return x", "", 's = "#~ in a string"', "# plain comment", "y = [1,"),

@@ -87,3 +87,92 @@ describe("marker grammar (Python)", () => {
     expect(markers.map((m) => m.text)).toEqual(["note"]);
   });
 });
+
+const typescript = languageForPath("x.ts")!;
+const findTs = (source: string) => findMarkers(typescript, source);
+
+describe("marker grammar (TypeScript)", () => {
+  it("parses a new own-line comment and an expanded trailing comment", async () => {
+    const [m] = await findTs("if (x) {\n    //~ retries are safe\n}\n");
+    expect(m).toMatchObject({ kind: "new", placement: "own-line", text: "retries are safe" });
+    const [t] = await findTs("write(order.id);  //~c3d4 keyed on order.id\n");
+    expect(t).toMatchObject({ kind: "expanded", placement: "trailing", id: "c3d4", text: "keyed on order.id" });
+  });
+
+  it("ignores sigils inside strings and template literals, but not JSDoc or pragmas", async () => {
+    const source = [
+      'const s = "//~ not a comment";',
+      "const t = '//~a1b2';",
+      "const u = `template //~ still not a comment ${x}`;",
+      "/** JSDoc line //~ still not a marker */",
+      "// @ts-ignore //~ still not a marker",
+      "const w = 1;  //~ real",
+      "",
+    ].join("\n");
+    const markers = await findTs(source);
+    expect(markers.map((m) => m.text)).toEqual(["real"]);
+  });
+
+  it("ignores ordinary comments", async () => {
+    expect(await findTs("// plain\n/* block */\n/** jsdoc */\n")).toEqual([]);
+  });
+});
+
+const tsx = languageForPath("x.tsx")!;
+const findTsx = (source: string) => findMarkers(tsx, source);
+
+describe("marker grammar (TSX)", () => {
+  it("finds a marker beside JSX and ignores sigils inside JSX text", async () => {
+    const source = ["function App() {", "  //~ render note", "  return <div>{/* //~ not a marker */}</div>;", "}", ""].join("\n");
+    const markers = await findTsx(source);
+    expect(markers.map((m) => m.text)).toEqual(["render note"]);
+  });
+});
+
+const javascript = languageForPath("x.js")!;
+const findJs = (source: string) => findMarkers(javascript, source);
+
+describe("marker grammar (JavaScript)", () => {
+  it("parses markers and ignores sigils inside strings and template literals", async () => {
+    const source = ['const s = "//~ nope";', "const t = `//~ nope ${x}`;", "const w = 1;  //~ real", ""].join("\n");
+    const markers = await findJs(source);
+    expect(markers.map((m) => m.text)).toEqual(["real"]);
+  });
+});
+
+const csharp = languageForPath("x.cs")!;
+const findCs = (source: string) => findMarkers(csharp, source);
+
+describe("marker grammar (C#)", () => {
+  it("parses markers and ignores sigils inside verbatim and raw strings, and XML doc comments", async () => {
+    const source = [
+      'string s = "//~ nope";',
+      'string v = @"//~ nope";',
+      'string r = """//~ nope""";',
+      "/// <summary>//~ nope</summary>",
+      "int w = 1;  //~ real",
+      "",
+    ].join("\n");
+    const markers = await findCs(source);
+    expect(markers.map((m) => m.text)).toEqual(["real"]);
+  });
+});
+
+const java = languageForPath("x.java")!;
+const findJava = (source: string) => findMarkers(java, source);
+
+describe("marker grammar (Java)", () => {
+  it("parses markers and ignores sigils inside strings, text blocks, and Javadoc", async () => {
+    const source = [
+      'String s = "//~ nope";',
+      'String t = """',
+      "    //~ nope",
+      '    """;',
+      "/** Javadoc //~ nope */",
+      "int x = 1;  //~ real",
+      "",
+    ].join("\n");
+    const markers = await findJava(source);
+    expect(markers.map((m) => m.text)).toEqual(["real"]);
+  });
+});
