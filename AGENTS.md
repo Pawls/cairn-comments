@@ -2,7 +2,8 @@
 
 Slopstash keeps AI-written comments out of committed code: sigil comments collapse to id
 markers through a git filter, bodies live in `.agents/comments/`. Start with
-[docs/design.md](docs/design.md) (decisions and every settled rule).
+[docs/design.md](docs/design.md) (decisions and every settled rule) and
+[docs/plans/v1.md](docs/plans/v1.md) (vertical slices; all v1 work lands on branch `v1`).
 
 ## Commands
 
