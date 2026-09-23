@@ -7,6 +7,13 @@ import { bodiesOf, normalizeBody, type Sidecar, type SidecarEntry } from "./side
 /** Metadata key holding the anchor hash recorded when the body was last written or confirmed. */
 export const ANCHOR_KEY = "anchor";
 
+/** The terminator ending the line at `offset`, or `fallback` on an unterminated last line. */
+function eolAt(source: string, offset: number, fallback: string): string {
+  if (source.startsWith("\r\n", offset)) return "\r\n";
+  if (source[offset] === "\n") return "\n";
+  return fallback;
+}
+
 /** How a stored body appears inline: a trailing comment has one line to live on. */
 function inlineText(marker: Marker, body: string): string {
   return marker.placement === "trailing" ? body.split("\n").join(" ") : body;
@@ -72,9 +79,10 @@ export async function smudge(
     if (!body) continue;
     const [first, ...rest] = inlineText(m, body).split("\n");
     // New lines reuse the marker line's own terminator, so clean restores it exactly.
-    const eol = source.startsWith("\r\n", m.end) ? "\r\n" : source[m.end] === "\n" ? "\n" : fallbackEol;
+    const eol = eolAt(source, m.end, fallbackEol);
     const continuation = rest.map((l) => eol + m.indent + spec.lineSigil + (l ? " " + l : ""));
-    splices.push({ start: m.start, end: m.end, text: `${spec.lineSigil}${m.id!} ${tag}${first!}${continuation.join("")}` });
+    const text = `${spec.lineSigil}${m.id!} ${tag}${first!}${continuation.join("")}`;
+    splices.push({ start: m.start, end: m.end, text });
   }
   return applySplices(source, splices);
 }
@@ -105,7 +113,12 @@ function setAnchor(entry: SidecarEntry, anchor: string | null | undefined): bool
  * it stale once the code moves on. Entries whose marker is gone are kept; `check` owns
  * orphans.
  */
-export async function sync(path: string, source: string, sidecar: Sidecar, options: SyncOptions = {}): Promise<SyncResult> {
+export async function sync(
+  path: string,
+  source: string,
+  sidecar: Sidecar,
+  options: SyncOptions = {},
+): Promise<SyncResult> {
   const unchanged = { source, sidecar, sourceChanged: false, sidecarChanged: false };
   const spec = languageForPath(path);
   if (!spec) return unchanged;
@@ -117,7 +130,7 @@ export async function sync(path: string, source: string, sidecar: Sidecar, optio
   const stored = bodiesOf(sidecar);
   let sidecarChanged = false;
   const splices: Splice[] = [];
-  markers.forEach((m, i) => {
+  for (const [i, m] of markers.entries()) {
     const id = ids[i]!;
     if (m.id !== id) {
       const idStart = m.start + spec.lineSigil.length;
@@ -125,21 +138,29 @@ export async function sync(path: string, source: string, sidecar: Sidecar, optio
     }
     const known = stored.get(id);
     const text = m.text === undefined ? undefined : normalizeBody(m.text);
+    const existing = entries.find((e) => e.id === id);
     // A multi-line body flattened onto a trailing marker is not an edit.
-    if (text === undefined || (known !== undefined && inlineText(m, known) === text)) {
-      const entry = entries.find((e) => e.id === id);
-      if (entry?.body && typeof m.anchor === "string" && !entry.meta.has(ANCHOR_KEY)) sidecarChanged = setAnchor(entry, m.anchor) || sidecarChanged;
-      return;
+    const unedited = text === undefined || (known !== undefined && inlineText(m, known) === text);
+    if (unedited) {
+      // An entry written before anchors existed gets the current one.
+      if (existing?.body && typeof m.anchor === "string" && !existing.meta.has(ANCHOR_KEY)) {
+        existing.meta.set(ANCHOR_KEY, m.anchor);
+        sidecarChanged = true;
+      }
+      continue;
     }
-    let entry = entries.find((e) => e.id === id);
-    if (!entry) entries.push((entry = { id, meta: new Map(), body: text }));
+    let entry = existing;
+    if (!entry) {
+      entry = { id, meta: new Map(), body: text };
+      entries.push(entry);
+    }
     entry.body = text;
     // Provenance names the last writer of the body, so an edit replaces it.
     for (const [k, v] of options.meta ?? []) entry.meta.set(k, v);
     setAnchor(entry, m.anchor);
     stored.set(id, text);
     sidecarChanged = true;
-  });
+  }
 
   return {
     source: applySplices(source, splices),
@@ -173,7 +194,8 @@ export async function staleMarkers(path: string, source: string, sidecar: Sideca
   const bodies = bodiesOf(sidecar);
   const stale: StaleMarker[] = [];
   for (const m of await findMarkers(spec, source, { anchors: true })) {
-    if (m.id && isStale(m, anchors.get(m.id), bodies.get(m.id))) stale.push({ id: m.id, marker: m, body: bodies.get(m.id)! });
+    const body = m.id === undefined ? undefined : bodies.get(m.id);
+    if (m.id && body && isStale(m, anchors.get(m.id), body)) stale.push({ id: m.id, marker: m, body });
   }
   return stale;
 }
@@ -189,7 +211,12 @@ export interface ConfirmResult {
  * Accepts the current code as what each named comment describes: records its anchor,
  * which clears the stale flag without touching the body.
  */
-export async function confirm(path: string, source: string, sidecar: Sidecar, ids: readonly string[]): Promise<ConfirmResult> {
+export async function confirm(
+  path: string,
+  source: string,
+  sidecar: Sidecar,
+  ids: readonly string[],
+): Promise<ConfirmResult> {
   const spec = languageForPath(path);
   const markers = spec ? await findMarkers(spec, source, { anchors: true }) : [];
   const entries = sidecar.entries.map((e) => ({ ...e, meta: new Map(e.meta) }));
@@ -199,7 +226,7 @@ export async function confirm(path: string, source: string, sidecar: Sidecar, id
     const marker = markers.find((m) => m.id === id);
     const entry = entries.find((e) => e.id === id);
     if (!marker || !entry) missing.push(id);
-    else changed = setAnchor(entry, marker.anchor) || changed;
+    else if (setAnchor(entry, marker.anchor)) changed = true;
   }
   return { sidecar: { preamble: sidecar.preamble, entries }, changed, missing };
 }
@@ -218,7 +245,12 @@ export interface PromoteResult {
  * unsynced edit is what gets promoted. Inverse of `convertComments` for a line comment
  * written `<prefix> text` (design.md § Promote and demote).
  */
-export async function promote(path: string, source: string, sidecar: Sidecar, ids: readonly string[]): Promise<PromoteResult> {
+export async function promote(
+  path: string,
+  source: string,
+  sidecar: Sidecar,
+  ids: readonly string[],
+): Promise<PromoteResult> {
   const spec = languageForPath(path);
   const markers = spec ? await findMarkers(spec, source) : [];
   const stored = bodiesOf(sidecar);
@@ -234,12 +266,14 @@ export async function promote(path: string, source: string, sidecar: Sidecar, id
       continue;
     }
     const prefix = spec.lineSigil.slice(0, -1);
-    const as = (line: string) => (line ? `${prefix} ${line}` : prefix);
-    const eol = source.startsWith("\r\n", m.end) ? "\r\n" : source[m.end] === "\n" ? "\n" : fallbackEol;
-    const text = inlineText(m, body).split("\n").map(as).join(eol + m.indent);
+    const toComment = (line: string) => (line ? `${prefix} ${line}` : prefix);
+    const eol = eolAt(source, m.end, fallbackEol);
+    const text = inlineText(m, body).split("\n").map(toComment).join(eol + m.indent);
     splices.push({ start: m.start, end: m.end, text });
     promoted.add(id);
   }
-  const entries = sidecar.entries.filter((e) => !promoted.has(e.id)).map((e) => ({ ...e, meta: new Map(e.meta) }));
+  const entries = sidecar.entries
+    .filter((e) => !promoted.has(e.id))
+    .map((e) => ({ ...e, meta: new Map(e.meta) }));
   return { source: applySplices(source, splices), sidecar: { preamble: sidecar.preamble, entries }, missing };
 }
