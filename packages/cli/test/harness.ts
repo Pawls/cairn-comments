@@ -57,6 +57,12 @@ export class Sandbox {
     return execFileSync(process.execPath, [CLI, ...args], { cwd, env: this.env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   }
 
+  /** Runs the CLI without throwing, for commands whose exit code is the result. */
+  cliResult(cwd: string, ...args: string[]): { status: number | null; stdout: string; stderr: string } {
+    const { status, stdout, stderr } = spawnSync(process.execPath, [CLI, ...args], { cwd, env: this.env, encoding: "utf8" });
+    return { status, stdout, stderr };
+  }
+
   /** Runs the CLI with `input` on stdin, as a harness hook would. */
   cliWithInput(cwd: string, input: string, ...args: string[]): string {
     return execFileSync(process.execPath, [CLI, ...args], { cwd, env: this.env, encoding: "utf8", input, stdio: ["pipe", "pipe", "pipe"] });

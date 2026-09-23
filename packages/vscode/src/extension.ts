@@ -4,6 +4,7 @@ import * as vscode from "vscode";
 import {
   BRAND,
   SIDECAR_ROOT,
+  confirm,
   findMarkers,
   languageForPath,
   parseSidecar,
@@ -13,12 +14,15 @@ import {
   type Sidecar,
   type SidecarEntry,
 } from "@slopstash/core";
-import { findSidecarRoot, hoverMarkdown, planOverlay, type OverlayMode, type PlannedDecoration } from "./overlay.js";
+import { entryIsStale, findSidecarRoot, hoverMarkdown, planOverlay, type OverlayMode, type PlannedDecoration } from "./overlay.js";
+import { findRepo, runCli, type StaleComment } from "./review.js";
 import { registerReviewTree, type ReviewApi } from "./reviewTree.js";
 
 export const COMMANDS = {
   toggle: `${BRAND}.toggleOverlay`,
   edit: `${BRAND}.editComment`,
+  confirm: `${BRAND}.confirmComment`,
+  reviewStale: `${BRAND}.reviewStale`,
 } as const;
 
 const STATE_KEY = "overlay.on";
@@ -33,6 +37,8 @@ export interface TestApi {
   /** Recomputes and applies the overlay for one editor, returning what was applied. */
   refresh(editor: vscode.TextEditor): Promise<Applied>;
   review: ReviewApi;
+  /** What the stale comment list offers, from `check --stale --json`; a string explains an empty list. */
+  staleComments(): Promise<StaleComment[] | string>;
 }
 
 export interface Applied {
@@ -82,7 +88,7 @@ function locate(document: vscode.TextDocument): Located | undefined {
 }
 
 async function markersIn(document: vscode.TextDocument, located: Located): Promise<Marker[]> {
-  return findMarkers(languageForPath(located.file)!, document.getText());
+  return findMarkers(languageForPath(located.file)!, document.getText(), { anchors: true });
 }
 
 export function activate(context: vscode.ExtensionContext): TestApi {
@@ -186,7 +192,12 @@ export function activate(context: vscode.ExtensionContext): TestApi {
       renderStatus();
       refreshAll();
     }),
-    vscode.commands.registerCommand(COMMANDS.edit, (arg?: { file: string; id: string }) => editComment(arg)),
+    vscode.commands.registerCommand(COMMANDS.edit, (arg?: CommentRef) => editComment(arg)),
+    vscode.commands.registerCommand(COMMANDS.confirm, async (arg?: CommentRef) => {
+      await confirmComment(arg);
+      refreshAll();
+    }),
+    vscode.commands.registerCommand(COMMANDS.reviewStale, () => reviewStale()),
     ...VSCODE_LANGUAGE_IDS.map((language) =>
       vscode.languages.registerHoverProvider(
         { scheme: "file", language },
@@ -195,7 +206,7 @@ export function activate(context: vscode.ExtensionContext): TestApi {
     ),
   );
   refreshAll();
-  return { mode, refresh, review: registerReviewTree(context) };
+  return { mode, refresh, review: registerReviewTree(context), staleComments };
 }
 
 export function deactivate(): void {}
@@ -211,7 +222,7 @@ function toOptions(document: vscode.TextDocument, p: PlannedDecoration, color: s
   const text = p.kind === "hidden" ? p.label : `  ${p.label}`;
   const after: vscode.ThemableDecorationAttachmentRenderOptions = {
     contentText: text,
-    color: p.kind === "missing" ? new vscode.ThemeColor("editorWarning.foreground") : color,
+    color: p.kind === "missing" || p.stale ? new vscode.ThemeColor("editorWarning.foreground") : color,
     fontStyle: "italic",
   };
   return { range, renderOptions: { after } };
@@ -239,36 +250,89 @@ async function provideHover(store: SidecarStore, document: vscode.TextDocument, 
   if (!hit) return undefined;
   const { marker, located } = hit;
   const entry = store.entries(located.sidecar).get(marker.id!);
+  const stale = entryIsStale(marker, entry);
   const args = encodeURIComponent(JSON.stringify({ file: document.fileName, id: marker.id }));
-  const markdown = new vscode.MarkdownString(
-    `${hoverMarkdown(marker.id!, entry, sidecarPathFor(located.file))}\n\n[Edit comment](command:${COMMANDS.edit}?${args})`,
-    true,
-  );
-  markdown.isTrusted = { enabledCommands: [COMMANDS.edit] };
+  const links = [`[Edit comment](command:${COMMANDS.edit}?${args})`];
+  if (stale) links.push(`[Confirm: still accurate](command:${COMMANDS.confirm}?${args})`);
+  const markdown = new vscode.MarkdownString(`${hoverMarkdown(marker.id!, entry, sidecarPathFor(located.file), stale)}\n\n${links.join(" · ")}`, true);
+  markdown.isTrusted = { enabledCommands: [COMMANDS.edit, COMMANDS.confirm] };
   const range = new vscode.Range(document.positionAt(marker.start), document.positionAt(marker.end));
   return new vscode.Hover(markdown, range);
 }
 
-/** Opens the sidecar at `## <id>`, creating the file or the entry when either is missing. */
-async function editComment(arg?: { file: string; id: string }): Promise<void> {
-  let located: Located | undefined;
-  let id: string | undefined;
+/** A marker named by a hover link (absolute source path) or by the cursor when absent. */
+interface CommentRef {
+  file: string;
+  id: string;
+}
+
+async function resolveRef(arg?: CommentRef): Promise<{ document: vscode.TextDocument; located: Located; id: string } | undefined> {
   if (arg) {
     const document = await vscode.workspace.openTextDocument(arg.file);
-    located = locate(document);
-    id = arg.id;
-  } else {
-    const editor = vscode.window.activeTextEditor;
-    if (!editor) return;
-    const hit = await markerAt(editor.document, editor.selection.active.line);
-    if (!hit) {
-      void vscode.window.showInformationMessage("No AI comment marker on this line.");
-      return;
-    }
-    located = hit.located;
-    id = hit.marker.id;
+    const located = locate(document);
+    return located && { document, located, id: arg.id };
   }
-  if (!located || !id) return;
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) return undefined;
+  const hit = await markerAt(editor.document, editor.selection.active.line);
+  if (!hit) {
+    void vscode.window.showInformationMessage("No AI comment marker on this line.");
+    return undefined;
+  }
+  return { document: editor.document, located: hit.located, id: hit.marker.id! };
+}
+
+/**
+ * Records the anchor the open document shows now, so a stale comment reads as current
+ * again. Runs in process rather than through `confirm`, which would hash the saved file.
+ */
+async function confirmComment(arg?: CommentRef): Promise<void> {
+  const ref = await resolveRef(arg);
+  if (!ref || !existsSync(ref.located.sidecar)) return;
+  const uri = vscode.Uri.file(ref.located.sidecar);
+  const sidecarDocument = await vscode.workspace.openTextDocument(uri);
+  const result = await confirm(ref.located.file, ref.document.getText(), parseSidecar(sidecarDocument.getText()), [ref.id]);
+  if (!result.changed) return;
+  const edit = new vscode.WorkspaceEdit();
+  edit.replace(uri, new vscode.Range(sidecarDocument.positionAt(0), sidecarDocument.positionAt(sidecarDocument.getText().length)), serializeSidecar(result.sidecar));
+  await vscode.workspace.applyEdit(edit);
+  await sidecarDocument.save();
+}
+
+/** Stale comments across the repository through the CLI, as CI would see them. */
+async function staleComments(): Promise<StaleComment[] | string> {
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  const repo = folder ? await findRepo(folder.uri.fsPath) : undefined;
+  if (!repo?.cli) return repo ? `Run \`${BRAND} init\` in this repository to check for stale comments.` : "Open a git repository to check for stale comments.";
+  // Exit 1 means stale comments were found; the list is still on stdout.
+  const found = JSON.parse(await runCli(repo.cli, "check --stale --json", repo.root, undefined, [0, 1])) as StaleComment[];
+  return found.map((c) => ({ ...c, file: path.join(repo.root, c.file) }));
+}
+
+async function reviewStale(): Promise<void> {
+  const found = await staleComments();
+  if (typeof found === "string" || !found.length) {
+    void vscode.window.showInformationMessage(typeof found === "string" ? found : "No stale AI comments.");
+    return;
+  }
+  const picked = await vscode.window.showQuickPick(
+    found.map((c) => ({
+      label: `$(warning) ${c.text.split("\n")[0]}`,
+      description: `${vscode.workspace.asRelativePath(c.file)}:${c.line}`,
+      comment: c,
+    })),
+    { title: "Stale AI comments: the code changed after the comment was written", matchOnDescription: true },
+  );
+  if (!picked) return;
+  const at = new vscode.Position(picked.comment.line - 1, 0);
+  await vscode.window.showTextDocument(vscode.Uri.file(picked.comment.file), { selection: new vscode.Range(at, at) });
+}
+
+/** Opens the sidecar at `## <id>`, creating the file or the entry when either is missing. */
+async function editComment(arg?: CommentRef): Promise<void> {
+  const ref = await resolveRef(arg);
+  if (!ref) return;
+  const { located, id } = ref;
 
   const uri = vscode.Uri.file(located.sidecar);
   if (!existsSync(located.sidecar)) await vscode.workspace.fs.writeFile(uri, new Uint8Array());

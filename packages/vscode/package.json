@@ -56,6 +56,16 @@
         "category": "Slopstash"
       },
       {
+        "command": "slopstash.confirmComment",
+        "title": "Confirm AI Comment Is Still Accurate",
+        "category": "Slopstash"
+      },
+      {
+        "command": "slopstash.reviewStale",
+        "title": "Review Stale AI Comments",
+        "category": "Slopstash"
+      },
+      {
         "command": "slopstash.scan",
         "title": "Scan for AI Comments",
         "category": "Slopstash",
@@ -99,6 +109,10 @@
       "commandPalette": [
         {
           "command": "slopstash.editComment",
+          "when": "editorLangId == python || editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact || editorLangId == csharp || editorLangId == java"
+        },
+        {
+          "command": "slopstash.confirmComment",
           "when": "editorLangId == python || editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact || editorLangId == csharp || editorLangId == java"
         }
       ]

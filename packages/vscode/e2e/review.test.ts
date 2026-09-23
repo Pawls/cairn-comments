@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import * as vscode from "vscode";
 import type { TestApi } from "../src/extension.js";
@@ -55,7 +55,7 @@ suite("scan review", () => {
 
     assert.match(read("src/app.py"), /^def load\(path\):\n {4}#~[0-9a-z]{4}\n {4}with open/);
     assert.match(read("src/app.py"), /return data {2}# Updated to return the raw text\n/);
-    assert.match(read(".agents/comments/src/app.py.md"), /^## [0-9a-z]{4}\nStep 1: Read the file contents\n$/);
+    assert.match(read(".agents/comments/src/app.py.md"), /^## [0-9a-z]{4}\n<!-- anchor=[0-9a-f]{8} -->\nStep 1: Read the file contents\n$/);
     const ignore = read(".agents/scan-ignore");
     assert.match(ignore, /\nsrc\/app\.py\t[0-9a-f]{8}\tUpdated to return the raw text\n/);
     assert.match(ignore, /\nsrc\/util\.ts\t[0-9a-f]{8}\t🚀 Add the numbers\n/);
@@ -64,5 +64,22 @@ suite("scan review", () => {
 
     assert.deepEqual(a.review.files(), []);
     assert.equal(a.review.message(), "No likely AI comments found.");
+  });
+
+  test("the stale list names a comment whose code changed, through `check --stale`", async () => {
+    const a = await api();
+    assert.deepEqual(await a.staleComments(), []);
+    const file = path.join(repo(), "src/app.py");
+    const original = readFileSync(file, "utf8");
+    try {
+      writeFileSync(file, original.replace("with open(path) as f:", "with open(path, 'rb') as f:"));
+      const found = await a.staleComments();
+      assert.ok(Array.isArray(found));
+      assert.deepEqual(found.map((c) => [path.relative(repo(), c.file).split(path.sep).join("/"), c.line, c.text]), [
+        ["src/app.py", 2, "Step 1: Read the file contents"],
+      ]);
+    } finally {
+      writeFileSync(file, original);
+    }
   });
 });

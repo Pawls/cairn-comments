@@ -1,7 +1,21 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { bodiesOf, clean, parseSidecar, serializeSidecar, sidecarPathFor, smudge, sync, type SyncOptions } from "@slopstash/core";
+import {
+  anchorsOf,
+  bodiesOf,
+  clean,
+  confirm,
+  parseSidecar,
+  serializeSidecar,
+  sidecarPathFor,
+  smudge,
+  staleMarkers,
+  sync,
+  type Sidecar,
+  type StaleMarker,
+  type SyncOptions,
+} from "@slopstash/core";
 import { managedFiles, restat, stage, stagedFiles, toRepoPath, trackedFiles } from "./git.js";
 
 /** Text of a buffer, or undefined when it is not UTF-8 that re-encodes to the same bytes. */
@@ -11,13 +25,18 @@ export function decodeExact(bytes: Buffer): string | undefined {
 }
 
 /** Async and a single open: on Windows each open costs ~0.45 ms, and the filter process overlaps them. */
-export async function readBodies(root: string, file: string): Promise<Map<string, string>> {
+export async function readSidecar(root: string, file: string): Promise<Sidecar> {
   try {
-    return bodiesOf(parseSidecar(await readFile(path.join(root, sidecarPathFor(file)), "utf8")));
+    return parseSidecar(await readFile(path.join(root, sidecarPathFor(file)), "utf8"));
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return new Map();
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { preamble: "", entries: [] };
     throw error;
   }
+}
+
+function readSidecarSync(root: string, file: string): Sidecar {
+  const sidecarFile = path.join(root, sidecarPathFor(file));
+  return parseSidecar(existsSync(sidecarFile) ? readFileSync(sidecarFile, "utf8") : "");
 }
 
 /**
@@ -27,7 +46,12 @@ export async function readBodies(root: string, file: string): Promise<Map<string
 export async function filterContent(mode: "clean" | "smudge", root: string, file: string, input: Buffer): Promise<Buffer> {
   const text = decodeExact(input);
   if (text === undefined) return input;
-  const result = mode === "clean" ? await clean(file, text) : await smudge(file, text, await readBodies(root, file));
+  let result: string;
+  if (mode === "clean") result = await clean(file, text);
+  else {
+    const sidecar = await readSidecar(root, file);
+    result = await smudge(file, text, bodiesOf(sidecar), anchorsOf(sidecar));
+  }
   return result === text ? input : Buffer.from(result, "utf8");
 }
 
@@ -46,7 +70,7 @@ export function selectFiles(root: string, selection: Selection): string[] {
   return managedFiles(root, candidates).filter((f) => existsSync(path.join(root, f)));
 }
 
-type Rewrite = (file: string, source: string, bodies: Map<string, string>) => Promise<string>;
+type Rewrite = (file: string, source: string, sidecar: Sidecar) => Promise<string>;
 
 /**
  * Syncs each working file into its sidecar, optionally rewrites the file, and finishes
@@ -59,14 +83,9 @@ async function rewriteFiles(root: string, files: string[], rewrite?: Rewrite, op
     const absolute = path.join(root, file);
     const original = decodeExact(readFileSync(absolute));
     if (original === undefined) continue;
-    const sidecarFile = path.join(root, sidecarPathFor(file));
-    const stored = parseSidecar(existsSync(sidecarFile) ? readFileSync(sidecarFile, "utf8") : "");
-    const synced = await sync(file, original, stored, options);
-    if (synced.sidecarChanged) {
-      mkdirSync(path.dirname(sidecarFile), { recursive: true });
-      writeFileSync(sidecarFile, serializeSidecar(synced.sidecar));
-    }
-    const source = rewrite ? await rewrite(file, synced.source, bodiesOf(synced.sidecar)) : synced.source;
+    const synced = await sync(file, original, readSidecarSync(root, file), options);
+    if (synced.sidecarChanged) writeSidecar(root, file, synced.sidecar);
+    const source = rewrite ? await rewrite(file, synced.source, synced.sidecar) : synced.source;
     if (source !== original) writeFileSync(absolute, source);
     done.push(file);
   }
@@ -74,15 +93,54 @@ async function rewriteFiles(root: string, files: string[], rewrite?: Rewrite, op
   return done;
 }
 
+function writeSidecar(root: string, file: string, sidecar: Sidecar): void {
+  const sidecarFile = path.join(root, sidecarPathFor(file));
+  mkdirSync(path.dirname(sidecarFile), { recursive: true });
+  writeFileSync(sidecarFile, serializeSidecar(sidecar));
+}
+
 export async function syncFiles(root: string, files: string[], options: SyncOptions & { add: boolean }): Promise<void> {
   const done = await rewriteFiles(root, files, undefined, options);
   if (options.add) stage(root, done.map(sidecarPathFor).filter((s) => existsSync(path.join(root, s))));
 }
 
+/** Expands bare markers and brings every `[stale?]` tag up to date. */
 export async function expandFiles(root: string, files: string[]): Promise<void> {
-  await rewriteFiles(root, files, smudge);
+  await rewriteFiles(root, files, (file, source, sidecar) => smudge(file, source, bodiesOf(sidecar), anchorsOf(sidecar)));
 }
 
 export async function collapseFiles(root: string, files: string[], options: SyncOptions = {}): Promise<void> {
   await rewriteFiles(root, files, (file, source) => clean(file, source), options);
+}
+
+export interface StaleReport extends StaleMarker {
+  file: string;
+  /** 1-based line of the marker. */
+  line: number;
+}
+
+/** Possibly stale comments across `files` (design.md § Staleness); reads only, so CI can run it. */
+export async function staleIn(root: string, files: string[]): Promise<StaleReport[]> {
+  const found: StaleReport[] = [];
+  for (const file of files) {
+    const source = decodeExact(readFileSync(path.join(root, file)));
+    if (source === undefined) continue;
+    for (const s of await staleMarkers(file, source, readSidecarSync(root, file))) {
+      found.push({ ...s, file, line: source.slice(0, s.marker.start).split("\n").length });
+    }
+  }
+  return found;
+}
+
+/**
+ * Records the current anchor for each id in `file`, clearing its stale flag. In an agent
+ * worktree the file is expanded again so its `[stale?]` tags match. Returns ids not found.
+ */
+export async function confirmIds(root: string, file: string, ids: string[], expand: boolean): Promise<string[]> {
+  const source = decodeExact(readFileSync(path.join(root, file)));
+  if (source === undefined) return ids;
+  const result = await confirm(file, source, readSidecarSync(root, file), ids);
+  if (result.changed) writeSidecar(root, file, result.sidecar);
+  if (expand) await expandFiles(root, [file]);
+  return result.missing;
 }

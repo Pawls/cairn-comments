@@ -1,8 +1,12 @@
 import type { LanguageSpec } from "./languages.js";
-import { lineIndexAt, splitLines } from "./lines.js";
-import { findComments } from "./parser.js";
+import { anchorHash } from "./anchors.js";
+import { lineIndexAt, splitLines, type Line } from "./lines.js";
+import { commentsIn, parseWith, type CommentSpan } from "./parser.js";
 
 export const ID_PATTERN = "[0-9a-z]{4}";
+
+/** Smudge puts this before a possibly stale body; every reader strips it, so it never reaches a blob or sidecar. */
+export const STALE_TAG = "[stale?]";
 
 export type MarkerKind = "new" | "expanded" | "bare";
 
@@ -19,11 +23,23 @@ export interface Marker {
   end: number;
   /** Leading whitespace of an own-line marker; continuation lines repeat it. */
   indent: string;
+  /** Whether the expanded text carried `STALE_TAG`; `text` never includes it. */
+  staleTag: boolean;
+  /**
+   * Hash of the anchored code (anchors.ts), or null when nothing is anchored. Undefined
+   * unless `findMarkers` was asked for anchors, which staleness checks treat as unknown.
+   */
+  anchor?: string | null;
+}
+
+export interface FindOptions {
+  anchors?: boolean;
 }
 
 interface SigilComment {
   id: string | undefined;
   text: string;
+  staleTag: boolean;
   start: number;
   end: number;
   row: number;
@@ -41,22 +57,40 @@ function escapeRegExp(s: string): string {
  * line carries the id; a bare marker never absorbs following lines, because that would
  * let a neighbouring new comment overwrite its stored body.
  */
-export async function findMarkers(spec: LanguageSpec, source: string): Promise<Marker[]> {
+export async function findMarkers(spec: LanguageSpec, source: string, options: FindOptions = {}): Promise<Marker[]> {
   if (!source.includes(spec.lineSigil)) return [];
+  return parseWith(spec, source, (root) => {
+    const lines = splitLines(source);
+    const markers = markersFrom(spec, source, lines, commentsIn(spec, root));
+    if (options.anchors) {
+      for (const m of markers) {
+        const row = { first: lineIndexAt(lines, m.start), last: lineIndexAt(lines, m.end) };
+        m.anchor = anchorHash(spec, root, source, lines, m, row) ?? null;
+      }
+    }
+    return markers;
+  });
+}
+
+function markersFrom(spec: LanguageSpec, source: string, lines: Line[], comments: readonly CommentSpan[]): Marker[] {
   const form = new RegExp(`^${escapeRegExp(spec.lineSigil)}(${ID_PATTERN})?(?: (.*))?$`, "s");
-  const lines = splitLines(source);
+  const tagged = new RegExp(`^${escapeRegExp(STALE_TAG)}(?: |$)`);
 
   const sigils: SigilComment[] = [];
-  for (const span of await findComments(spec, source)) {
+  for (const span of comments) {
     // Some grammars (Python's) let the comment token swallow the CR of a CRLF terminator.
     const raw = source.slice(span.start, span.end).replace(/\r$/, "");
     const m = form.exec(raw);
     if (!m) continue;
     const row = lineIndexAt(lines, span.start);
     const before = source.slice(lines[row]!.start, span.start);
+    let text = (m[2] ?? "").trimEnd();
+    const staleTag = !!m[1] && tagged.test(text);
+    if (staleTag) text = text.slice(STALE_TAG.length + 1);
     sigils.push({
       id: m[1],
-      text: (m[2] ?? "").trimEnd(),
+      text,
+      staleTag,
       start: span.start,
       end: span.start + raw.length,
       row,
@@ -88,6 +122,7 @@ export async function findMarkers(spec: LanguageSpec, source: string): Promise<M
       start: first.start,
       end: last.end,
       indent: first.indent ?? "",
+      staleTag: first.staleTag,
     });
   }
   return markers;

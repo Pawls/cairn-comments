@@ -13,8 +13,9 @@ code stays clean, and a VS Code extension toggles the comments on as an overlay.
 TypeScript/JavaScript, C#, and Java (plan slices A1, A3, A4), the VS Code overlay renders
 comment bodies over the markers in your checkout (A2), and `scan` finds existing AI
 comments to stash (A5), and hooks for Claude Code, Codex, and Cursor tag the comments an
-agent writes and record who wrote them (A6). Publishing is still ahead; nothing is on npm or the Marketplace
-yet.
+agent writes and record who wrote them (A6), and a comment whose code changed under it
+is flagged as possibly stale (A7). Publishing is still ahead; nothing is on npm or the
+Marketplace yet.
 
 - [Design, decisions, and spike findings](docs/design.md)
 - [v1 plan](docs/plans/v1.md)
@@ -91,6 +92,26 @@ Hooks go into `.claude/settings.local.json`, `.codex/hooks.json`, and
 `.cursor/hooks.json`. Codex asks you to trust a project hook (`/hooks`) before it runs.
 Edits an agent makes through a shell command are not reported to hooks; run `tag` on
 those files.
+
+## Stale comments
+
+Each sidecar entry records a hash of the code its comment sits on: the statement below
+an own-line comment (a declaration's signature, not its body), or the code before a
+trailing one. When that code changes and the comment does not, the comment is flagged
+as possibly stale. Reformatting does not count: whitespace, comments, semicolons,
+trailing commas, quote style, and redundant parentheses are ignored.
+
+- In an agent worktree the comment reads `#~ab12 [stale?] ...`, so the agent sees the flag
+  where it reads the comment. The tag never reaches a commit or the sidecar.
+- In VS Code the overlay shows `~?` (overlay off) or `[stale?]` (on) in the warning color.
+  The hover offers **Confirm: still accurate**, and `Slopstash: Review Stale AI Comments`
+  lists every flagged comment in the repository.
+- Editing the comment clears the flag, and so does confirming it:
+
+```sh
+slopstash check --stale          # list flagged comments; exits 1 when there are any (CI)
+slopstash confirm ab12           # or src/settle.py:ab12 when the id is in several files
+```
 
 ## License
 

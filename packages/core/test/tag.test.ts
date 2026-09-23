@@ -53,9 +53,10 @@ describe("sync provenance", () => {
     const source = "#~ab12 new text\n#~cd34 same\nx = 1\n#~ fresh\n";
     const { sidecar } = await sync("a.py", source, stored, { meta });
     const byId = new Map(sidecar.entries.map((e) => [e.id, e]));
-    expect([...byId.get("ab12")!.meta.keys()]).toEqual(["hash", "by", "model", "at"]);
-    expect(byId.get("cd34")!.meta.size).toBe(0);
-    expect(sidecar.entries[2]!.meta).toEqual(meta);
+    expect([...byId.get("ab12")!.meta.keys()]).toEqual(["hash", "by", "model", "at", "anchor"]);
+    // An unchanged body gains only its anchor (A7), never provenance.
+    expect([...byId.get("cd34")!.meta.keys()]).toEqual(["anchor"]);
+    expect(new Map([...sidecar.entries[2]!.meta].filter(([k]) => k !== "anchor"))).toEqual(meta);
     expect(stored.entries[0]!.meta.size).toBe(1);
   });
 

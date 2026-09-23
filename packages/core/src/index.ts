@@ -12,10 +12,23 @@ export {
   type ScanOptions,
   type ScannedComment,
 } from "./scan.js";
-export { clean, smudge, sync, type SyncOptions, type SyncResult } from "./filter.js";
+export {
+  ANCHOR_KEY,
+  anchorsOf,
+  clean,
+  confirm,
+  isStale,
+  smudge,
+  staleMarkers,
+  sync,
+  type ConfirmResult,
+  type StaleMarker,
+  type SyncOptions,
+  type SyncResult,
+} from "./filter.js";
 export { resolveIds } from "./ids.js";
 export { LANGUAGES, languageForPath, type LanguageSpec } from "./languages.js";
-export { findMarkers, type Marker, type MarkerKind } from "./markers.js";
+export { STALE_TAG, findMarkers, type FindOptions, type Marker, type MarkerKind } from "./markers.js";
 export {
   bodiesOf,
   normalizeBody,

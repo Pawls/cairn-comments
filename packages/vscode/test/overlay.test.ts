@@ -2,8 +2,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { findMarkers, languageForPath, parseSidecar, type SidecarEntry } from "@slopstash/core";
-import { findSidecarRoot, hoverMarkdown, labelFor, planOverlay } from "../src/overlay.js";
+import { findMarkers, languageForPath, parseSidecar, sync, type SidecarEntry } from "@slopstash/core";
+import { STALE_NOTICE, findSidecarRoot, hoverMarkdown, labelFor, planOverlay } from "../src/overlay.js";
 
 const python = languageForPath("x.py")!;
 const entriesOf = (text: string) => new Map(parseSidecar(text).entries.map((e) => [e.id, e]));
@@ -43,6 +43,19 @@ describe("planOverlay", () => {
     ]);
   });
 
+  it("badges a body whose anchored code changed, in both modes", async () => {
+    const { sidecar } = await sync("a.py", "#~a1b2 retries are safe\nledger.write(x)\n", { preamble: "", entries: [] });
+    const entries = new Map(sidecar.entries.map((e) => [e.id, e]));
+    const current = await findMarkers(python, "#~a1b2\nledger.write( x )\n", { anchors: true });
+    expect(planOverlay(current, entries, "on", () => false)[0]).toMatchObject({ stale: false, label: "retries are safe" });
+    const changed = await findMarkers(python, "#~a1b2\nledger.append(x)\n", { anchors: true });
+    expect(planOverlay(changed, entries, "on", () => false)[0]).toMatchObject({ kind: "hidden", stale: true, label: "[stale?] retries are safe" });
+    expect(planOverlay(changed, entries, "off", () => false)[0]).toMatchObject({ stale: true, label: "~?" });
+    expect(planOverlay(changed, entries, "off", () => true)[0]).toMatchObject({ kind: "revealed", label: "[stale?] retries are safe" });
+    // Without anchors (markers found the plain way) nothing reads as stale.
+    expect(planOverlay(await findMarkers(python, "#~a1b2\nledger.append(x)\n"), entries, "on", () => false)[0]!.stale).toBe(false);
+  });
+
   it("treats a marker with no sidecar at all as missing", async () => {
     const markers = await findMarkers(python, "#~a1b2\n");
     expect(planOverlay(markers, new Map(), "on", () => false)[0]?.kind).toBe("missing");
@@ -67,6 +80,11 @@ describe("hoverMarkdown", () => {
   it("shows no provenance line for an entry without any", () => {
     const entry: SidecarEntry = { id: "a1b2", meta: new Map([["hash", "x"]]), body: "body" };
     expect(hoverMarkdown("a1b2", entry, ".agents/comments/x.py.md")).toBe("body");
+  });
+
+  it("leads with a notice when the comment is possibly stale", () => {
+    const entry: SidecarEntry = { id: "a1b2", meta: new Map([["anchor", "0badc0de"]]), body: "body" };
+    expect(hoverMarkdown("a1b2", entry, ".agents/comments/x.py.md", true)).toBe(`${STALE_NOTICE}\n\nbody`);
   });
 
   it("says where the missing body should live", () => {

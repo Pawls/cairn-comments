@@ -1,4 +1,4 @@
-import type { Parser } from "web-tree-sitter";
+import type { Node, Parser } from "web-tree-sitter";
 import { resolveWasm, type LanguageSpec } from "./languages.js";
 
 export interface CommentSpan {
@@ -30,19 +30,29 @@ export interface CommentNode extends CommentSpan {
   parentType: string | undefined;
 }
 
-/** Comment tokens in document order, as string offsets into `source`. */
-export async function findComments(spec: LanguageSpec, source: string): Promise<CommentNode[]> {
+/** Runs `read` over the parse tree of `source`; the tree is freed afterwards, so nodes must not escape. */
+export async function parseWith<T>(spec: LanguageSpec, source: string, read: (root: Node) => T): Promise<T> {
   const parser = await parserFor(spec);
   const tree = parser.parse(source);
   if (!tree) throw new Error(`tree-sitter returned no tree for a ${spec.id} source`);
   try {
-    return tree.rootNode
-      .descendantsOfType([...spec.commentTypes])
-      .filter((n) => n !== null)
-      .map((n) => ({ start: n.startIndex, end: n.endIndex, parentType: n.parent?.type }));
+    return read(tree.rootNode);
   } finally {
     tree.delete();
   }
+}
+
+/** Comment nodes of `root` in document order, as string offsets. */
+export function commentsIn(spec: LanguageSpec, root: Node): CommentNode[] {
+  return root
+    .descendantsOfType([...spec.commentTypes])
+    .filter((n) => n !== null)
+    .map((n) => ({ start: n.startIndex, end: n.endIndex, parentType: n.parent?.type }));
+}
+
+/** Comment tokens in document order, as string offsets into `source`. */
+export function findComments(spec: LanguageSpec, source: string): Promise<CommentNode[]> {
+  return parseWith(spec, source, (root) => commentsIn(spec, root));
 }
 
 /** Whether `text` parses as this language with no error nodes: the commented-out-code test. */

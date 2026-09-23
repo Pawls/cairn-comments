@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import * as vscode from "vscode";
 import type { Applied, TestApi } from "../src/extension.js";
 
 const EXTENSION_ID = "slopstash.slopstash-vscode";
-const COMMANDS = { toggle: "slopstash.toggleOverlay", edit: "slopstash.editComment" };
+const COMMANDS = { toggle: "slopstash.toggleOverlay", edit: "slopstash.editComment", confirm: "slopstash.confirmComment" };
+/** The fixture's `g7h8` entry records an anchor no code hashes to, so it is always stale. */
+const STALE_BODY = "the check is read-only, so it never takes the ledger lock";
+const STALE_LABEL = `[stale?] ${STALE_BODY}`;
 
 const folder = () => vscode.workspace.workspaceFolders![0]!.uri;
 const fixtureFile = (...parts: string[]) => vscode.Uri.joinPath(folder(), ...parts);
@@ -51,10 +55,11 @@ suite("overlay", () => {
     const { api, editor } = await openSample();
     await setMode(api, "off");
     const applied = await api.refresh(editor);
-    assert.deepEqual(applied.hidden.map((o) => rangeText(editor, o)), ["#~a1b2", "#~c3d4"]);
+    assert.deepEqual(applied.hidden.map((o) => rangeText(editor, o)), ["#~a1b2", "#~c3d4", "#~g7h8"]);
     assert.deepEqual(labels(applied, "hidden"), [
       [1, "~"],
       [2, "~"],
+      [12, "~?"],
     ]);
     assert.deepEqual(applied.missing.map((o) => rangeText(editor, o)), ["#~e5f6"]);
     assert.deepEqual(applied.revealed, []);
@@ -69,6 +74,7 @@ suite("overlay", () => {
     assert.deepEqual(labels(applied, "hidden"), [
       [1, "retries are safe: ledger write is idempotent (+2)"],
       [2, "keyed on order.id"],
+      [12, `${STALE_LABEL}`],
     ]);
     assert.deepEqual(labels(applied, "missing"), [[3, "  no comment body"]]);
     await settle(500);
@@ -80,7 +86,7 @@ suite("overlay", () => {
     await setMode(api, "on");
     editor.selection = new vscode.Selection(2, 4, 2, 4);
     const applied = await api.refresh(editor);
-    assert.deepEqual(applied.hidden.map((o) => rangeText(editor, o)), ["#~a1b2"]);
+    assert.deepEqual(applied.hidden.map((o) => rangeText(editor, o)), ["#~a1b2", "#~g7h8"]);
     assert.deepEqual(applied.revealed.map((o) => rangeText(editor, o)), ["#~c3d4"]);
   });
 
@@ -127,5 +133,34 @@ suite("overlay", () => {
     assert.match(active.document.getText(), /\n## e5f6\n$/);
     assert.equal(active.document.lineAt(active.selection.active.line - 1).text, "## e5f6");
     await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor");
+  });
+
+  test("a stale comment's hover says so and offers confirm", async () => {
+    const { editor } = await openSample();
+    const hovers = await vscode.commands.executeCommand<vscode.Hover[]>("vscode.executeHoverProvider", editor.document.uri, new vscode.Position(12, 6));
+    const text = hovers.flatMap((h) => h.contents.map((c) => (c as vscode.MarkdownString).value)).join("\n");
+    assert.match(text, /\*\*Possibly stale\*\*/);
+    assert.match(text, /\[Confirm: still accurate\]\(command:slopstash\.confirmComment\?/);
+    const fresh = await vscode.commands.executeCommand<vscode.Hover[]>("vscode.executeHoverProvider", editor.document.uri, new vscode.Position(1, 6));
+    assert.doesNotMatch(fresh.flatMap((h) => h.contents.map((c) => (c as vscode.MarkdownString).value)).join("\n"), /Possibly stale/);
+  });
+
+  test("confirm records the current anchor and the badge goes away", async () => {
+    const sidecar = fixtureFile(".agents", "comments", "sample.py.md").fsPath;
+    const original = readFileSync(sidecar);
+    try {
+      const { api, editor } = await openSample();
+      await setMode(api, "on");
+      editor.selection = new vscode.Selection(12, 0, 12, 0);
+      await vscode.commands.executeCommand(COMMANDS.confirm);
+      assert.match(readFileSync(sidecar, "utf8"), /## g7h8\n<!-- anchor=[0-9a-f]{8} -->\n/);
+      assert.doesNotMatch(readFileSync(sidecar, "utf8"), /anchor=00000000/);
+      await vscode.window.showTextDocument(editor.document);
+      editor.selection = new vscode.Selection(0, 0, 0, 0);
+      const applied = await api.refresh(vscode.window.activeTextEditor!);
+      assert.deepEqual(labels(applied, "hidden").at(-1), [12, STALE_BODY]);
+    } finally {
+      writeFileSync(sidecar, original);
+    }
   });
 });

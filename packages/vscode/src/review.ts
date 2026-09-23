@@ -73,11 +73,23 @@ export async function findRepo(folder: string): Promise<Repo | undefined> {
   return { root, cli: cliFromCleanConfig(clean) };
 }
 
-/** Runs `<cli> <args>` through the shell, as git and the pre-commit hook do, feeding `input` on stdin. */
-export function runCli(cli: string, args: string, cwd: string, input?: string): Promise<string> {
+/** One `check --stale --json` entry; the CLI owns the format (packages/cli/src/main.ts). */
+export interface StaleComment {
+  file: string;
+  line: number;
+  id: string;
+  text: string;
+}
+
+/**
+ * Runs `<cli> <args>` through the shell, as git and the pre-commit hook do, feeding `input`
+ * on stdin. An exit code in `okCodes` resolves with stdout, for commands like `check`
+ * whose exit code is part of the answer.
+ */
+export function runCli(cli: string, args: string, cwd: string, input?: string, okCodes: readonly number[] = [0]): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = exec(`${cli} ${args}`, { cwd, encoding: "utf8", maxBuffer: 1 << 28 }, (error, stdout, stderr) =>
-      error ? reject(new Error(stderr.trim() || error.message)) : resolve(stdout),
+      error && !okCodes.includes(typeof error.code === "number" ? error.code : -1) ? reject(new Error(stderr.trim() || error.message)) : resolve(stdout),
     );
     child.stdin?.end(input ?? "");
   });

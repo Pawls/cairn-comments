@@ -6,3 +6,7 @@ the ledger dedupes on order.id, so a retried settle is a no-op
 
 ## c3d4
 keyed on order.id
+
+## g7h8
+<!-- anchor=00000000 -->
+the check is read-only, so it never takes the ledger lock

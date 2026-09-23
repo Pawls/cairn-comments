@@ -115,7 +115,8 @@ Each is pinned by a test in `packages/core/test/` or `packages/cli/test/`.
 - **Sync before any rewrite.** `expand` and `collapse` run `sync` first, so a rewrite never
   drops a body that exists only inline and never meets a comment without an id.
 - **Sidecar format.** `## <id>`, then an optional `<!-- key=value ... -->` metadata line
-  (values URI-encoded; provenance from A6, see § Hook adapters, and staleness from A7),
+  (values URI-encoded; provenance from A6, see § Hook adapters, and the `anchor` hash
+  from A7, see § Staleness),
   then the body. Existing entries keep their order and new ones append. A body line that would read back as structure is written
   with a leading backslash. The tool writes LF, and `init` marks the folder
   `text eol=lf` so `autocrlf` never has anything to convert.
@@ -380,7 +381,59 @@ machine, so their fixtures follow the payloads in each harness's hook documentat
 (learn.chatgpt.com/docs/hooks and cursor.com/docs/agent/hooks, read 2026-09-22) and have
 not been checked against a live run.
 
+## Staleness (A7, 2026-09-22)
+
+Implemented in `packages/core/src/anchors.ts` (what a marker anchors to, and the hash) and
+`filter.ts` (`isStale`, `sync`, `smudge`, `confirm`); the CLI adds `check --stale` and
+`confirm`, and the extension badges the overlay. Tests: `packages/core/test/stale.test.ts`,
+`packages/cli/test/stale.test.ts`, and the e2e suites.
+
+- **What a comment anchors to.** An own-line marker anchors to the node that starts the
+  first code line below it, skipping blank and comment lines, taking the largest node that
+  starts there without climbing into Python's `block` (which starts at its first
+  statement, so a comment above a block's first statement would otherwise anchor to the
+  whole body). Tree siblings were not usable: tree-sitter-python attaches a comment above
+  a block's first statement to the enclosing `def`, whose next sibling is the whole block.
+  The code line must sit at the marker's indent, so the last comment of a block anchors
+  to nothing. A trailing marker anchors to the tokens before it on its own line.
+- **Declarations track their signature.** When the anchor is a function, method, class,
+  interface, struct, enum, namespace, constructor, or record (through `export`,
+  decorators, and annotations), its `body` field is left out, so an edit deep inside a
+  class does not flag the comment above it. A callback's or loop's body still counts.
+- **Normalization.** The hash covers tokens plus the types of named nodes, so
+  `(a + b) * c` and `a + b * c` differ. It ignores what formatters change: whitespace,
+  comments, `;`, a comma right before a closing bracket, redundant parentheses (a
+  `parenthesized_expression` is transparent), parentheses around a lone arrow-function
+  parameter, quote style and string-prefix case (`U'q'` equals `"q"`), and number
+  spelling (`0XAB`/`0xab`, `.5`/`0.5`, `1.50`/`1.5`). Sixteen before/after pairs modeled on
+  black, prettier, and dotnet format pin it; neither formatter is installed here, so the
+  pairs are hand-written from their documented rewrites.
+- **Storage and the rule.** The hash is the `anchor` key on the entry's metadata line
+  (8 hex characters of a SHA-256). `sync` writes it with every body it writes, and gives
+  an entry that has none (written before A7) the current hash. It never updates the hash
+  of an unchanged body: that is what leaves a comment stale once its code moves on. Stale
+  means a recorded anchor that differs from the current one while the body is unchanged;
+  an anchor that disappeared counts as changed. An expanded comment whose text differs
+  from the stored body is a pending edit, not stale.
+- **The tag.** `smudge` writes `[stale?]` and a space before a stale body, and on already expanded
+  comments adds or removes the tag in place, so `expand` refreshes it. `findMarkers`
+  strips the tag from any comment with an id, so `clean`, `sync`, and the id rules never
+  see it; a new comment (no id) that starts with it keeps it as text.
+- **Confirm.** `confirm <id>` (or `<file>:<id>`) records the current anchor without
+  touching the body, then re-expands in an agent worktree so the tag goes away. The
+  extension confirms in process against the open document, which may be unsaved.
+- **Cost.** Anchors are only hashed when the sidecar has any. `npm run bench` (Windows,
+  process mode, medians of 5, every entry anchored and stale) measured checkout at
+  1,847 ms against 1,841 ms with `--no-anchors`; warm status unchanged at 51 ms.
+
 ## Known gaps to design in later slices
+
+- **The stale tag only changes on smudge, `expand`, and `confirm`.** A hook-driven `sync`
+  records the old anchor but does not rewrite the working file, so an agent that just
+  changed the code under a comment sees no tag until the next checkout or `expand`.
+  Deleting the tag by hand is not a confirm either: the next smudge puts it back.
+- **Pasted duplicates share one anchor.** Two markers with one id (a pasted line whose
+  text still matches) are judged against the first copy's anchor, so the copy reads stale.
 
 - **Live runs for the Codex and Cursor adapters.** See § Hook adapters, Evidence.
 - **A converted comment directly below an expanded sigil block joins it.** Inside an agent

@@ -30,7 +30,7 @@ describe("init with a global-style core.hooksPath", () => {
     box.write(box.path("repo", "a.py"), "x = 1  #~ why one\n");
     box.git(repo, "add", "-A");
     box.git(repo, "commit", "-qm", "with a comment");
-    expect(box.git(repo, "show", "HEAD:.agents/comments/a.py.md")).toMatch(/^## [0-9a-z]{4}\nwhy one\n$/);
+    expect(box.git(repo, "show", "HEAD:.agents/comments/a.py.md")).toMatch(/^## [0-9a-z]{4}\n<!-- anchor=[0-9a-f]{8} -->\nwhy one\n$/);
     expect(box.git(repo, "show", "HEAD:a.py")).toMatch(/^x = 1 {2}#~[0-9a-z]{4}\n$/);
     expect(readFileSync(box.path("previous-hook.log"), "utf8").trim()).toBe("ran");
     expect(box.status(repo)).toBe("");

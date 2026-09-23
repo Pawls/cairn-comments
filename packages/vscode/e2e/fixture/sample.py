@@ -7,3 +7,8 @@ def settle(order):
 
 def refund(order):  #~ this comment already carries its text
     ledger.reverse(order.id)
+
+
+def audit(order):
+    #~g7h8
+    ledger.check(order.id)

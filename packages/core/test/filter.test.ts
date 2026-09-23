@@ -90,14 +90,16 @@ describe("sync", () => {
   });
 
   it("does not flatten a multi-line body shown on a trailing marker", async () => {
-    const sidecar = parseSidecar("## c3d4\nline one\nline two\n");
+    const sidecar = (await sync("a.py", "x = 1  #~c3d4\n", parseSidecar("## c3d4\nline one\nline two\n"))).sidecar;
     const source = await smudge("a.py", "x = 1  #~c3d4\n", bodiesOf(sidecar));
     expect((await sync("a.py", source, sidecar)).sidecarChanged).toBe(false);
   });
 
-  it("leaves a collapsed file and its sidecar untouched", async () => {
-    const sidecar = parseSidecar("## a1b2\nbody\n");
-    expect(await sync("a.py", "#~a1b2\nx = 1\n", sidecar)).toMatchObject({ sourceChanged: false, sidecarChanged: false });
+  it("leaves a collapsed file and its sidecar untouched once the entry has an anchor", async () => {
+    const first = await sync("a.py", "#~a1b2\nx = 1\n", parseSidecar("## a1b2\nbody\n"));
+    expect(first).toMatchObject({ sourceChanged: false, sidecarChanged: true });
+    expect(first.sidecar.entries[0]!.meta.get("anchor")).toMatch(/^[0-9a-f]{8}$/);
+    expect(await sync("a.py", "#~a1b2\nx = 1\n", first.sidecar)).toMatchObject({ sourceChanged: false, sidecarChanged: false });
   });
 });
 

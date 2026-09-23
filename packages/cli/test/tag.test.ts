@@ -55,10 +55,10 @@ describe.each([false, true])("tag and hook adapters (autocrlf=%s)", (autocrlf) =
     expect(read("main", "src/new.py")).toMatch(/^#~[0-9a-z]{4}\nx = 1\n$/);
     const [entry] = entries("main", "src/app.py");
     expect(entry!.body).toBe("Prices are already tax-inclusive");
-    expect([...entry!.meta.keys()]).toEqual(["by", "model", "session", "at"]);
+    expect([...entry!.meta.keys()]).toEqual(["by", "model", "session", "at", "anchor"]);
     expect(entry!.meta.get("by")).toBe("manual");
     expect(entry!.meta.get("at")).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
-    expect(read("main", ".agents/comments/src/app.py.md")).toMatch(/<!-- by=manual model=m-1 session=s-1 at=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z -->/);
+    expect(read("main", ".agents/comments/src/app.py.md")).toMatch(/<!-- by=manual model=m-1 session=s-1 at=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z anchor=[0-9a-f]{8} -->/);
     // A second run finds nothing new.
     expect(box.cli(main, "tag", "--changed")).toBe("tagged 0 comment(s); synced 2 file(s)\n");
     if (autocrlf) expect(readFileSync(box.path("main", "src/app.py"), "utf8")).not.toMatch(/[^\r]\n/);
@@ -82,7 +82,7 @@ describe.each([false, true])("tag and hook adapters (autocrlf=%s)", (autocrlf) =
       codex: { by: "codex", model: "gpt-5.5-codex", session: "019a6f2c-7d1e-7b30-9c4a-3f5d2e8b1a60" },
       cursor: { by: "cursor", model: "claude-sonnet-5", session: "5c1d9a4e-2b7f-4e61-a3d8-0f9e6b2c7a14" },
     }[harness];
-    expect(meta).toEqual({ ...expected, at: expect.stringMatching(/Z$/) });
+    expect(meta).toEqual({ ...expected, at: expect.stringMatching(/Z$/), anchor: expect.stringMatching(/^[0-9a-f]{8}$/) });
   });
 
   it("a hook for a file outside any initialized repository does nothing", () => {

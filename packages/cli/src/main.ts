@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
-import { BRAND } from "@slopstash/core";
-import { collapseFiles, expandFiles, filterContent, selectFiles, syncFiles } from "./files.js";
+import { BRAND, STALE_TAG } from "@slopstash/core";
+import { collapseFiles, confirmIds, expandFiles, filterContent, readSidecar, selectFiles, staleIn, syncFiles } from "./files.js";
 import { ADAPTERS } from "./adapters.js";
-import { repoRoot, toRepoPath } from "./git.js";
+import { repoRoot, smudges, toRepoPath } from "./git.js";
 import { runHook } from "./hook.js";
 import { agentsSnippet, init } from "./init.js";
 import { serveFilterProcess } from "./process.js";
@@ -32,6 +32,10 @@ const USAGE = `usage: ${BRAND} <command>
   tag [--changed] [--by <harness>] [--model <m>] [--session <id>] [files...]
                                 turn comments new since the index into sigil comments and sync,
                                 recording the provenance given; --changed adds every edited file
+  check [--stale] [--json] [files...]
+                                list comments whose code changed while their body did not
+                                (the only check so far); exits 1 when any are found
+  confirm <id|file:id>...       accept the current code for a stale comment, clearing its flag
   hook <harness>                run a harness's post-edit hook payload (stdin) through \`tag\`
   agents-md                     print the sigil convention snippet for an agent instruction file
   clean <path>, smudge <path>   one-shot git filter endpoints (stdin to stdout)
@@ -49,6 +53,18 @@ async function runFilter(mode: "clean" | "smudge", file: string | undefined): Pr
   if (!file) throw new Error(`${mode} needs the path git passes as %f`);
   const output = await filterContent(mode, process.cwd(), file, await readStdin());
   await new Promise<void>((resolve, reject) => process.stdout.write(output, (err) => (err ? reject(err) : resolve())));
+}
+
+/** `<file>:<id>`, or a bare id found in exactly one sidecar. */
+async function locateId(root: string, arg: string): Promise<[string, string]> {
+  const split = /^(.+):([0-9a-z]{4})$/.exec(arg);
+  if (split) return [toRepoPath(root, split[1]!), split[2]!];
+  const files: string[] = [];
+  for (const file of selectFiles(root, { files: [], staged: false })) {
+    if ((await readSidecar(root, file)).entries.some((e) => e.id === arg)) files.push(file);
+  }
+  if (files.length === 1) return [files[0]!, arg];
+  throw new Error(files.length ? `${arg} is in several files; name one as <file>:${arg}: ${files.join(", ")}` : `no comment ${arg}`);
 }
 
 async function main(argv: string[]): Promise<void> {
@@ -117,6 +133,36 @@ async function main(argv: string[]): Promise<void> {
       const named = positionals.map((f) => toRepoPath(root, f));
       const report = await tag(root, tagTargets(root, named, values.changed), values);
       console.log(`tagged ${report.tagged} comment(s); synced ${report.files.length} file(s)`);
+      return;
+    }
+    case "check": {
+      const { values, positionals } = parseArgs({
+        args: rest,
+        allowPositionals: true,
+        options: { stale: { type: "boolean", default: false }, json: { type: "boolean", default: false } },
+      });
+      const root = repoRoot();
+      const stale = await staleIn(root, selectFiles(root, { files: positionals, staged: false }));
+      const rows = stale.map((s) => ({ file: s.file, line: s.line, id: s.id, text: s.body }));
+      if (values.json) process.stdout.write(JSON.stringify(rows, null, 2) + "\n");
+      else for (const r of rows) console.log(`${r.file}:${r.line}: ${r.id} ${STALE_TAG} ${r.text.split("\n")[0]}`);
+      if (rows.length) process.exitCode = 1;
+      return;
+    }
+    case "confirm": {
+      if (!rest.length) throw new Error("confirm needs one or more ids (<id> or <file>:<id>)");
+      const root = repoRoot();
+      const byFile = new Map<string, string[]>();
+      for (const arg of rest) {
+        const [file, id] = await locateId(root, arg);
+        byFile.set(file, [...(byFile.get(file) ?? []), id]);
+      }
+      const expand = smudges(root);
+      for (const [file, ids] of byFile) {
+        const missing = await confirmIds(root, file, ids, expand);
+        if (missing.length) throw new Error(`no comment ${missing.join(", ")} in ${file}`);
+        console.log(`confirmed ${ids.join(", ")} in ${file}`);
+      }
       return;
     }
     case "hook": {
