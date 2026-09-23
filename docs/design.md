@@ -426,6 +426,34 @@ Implemented in `packages/core/src/anchors.ts` (what a marker anchors to, and the
   process mode, medians of 5, every entry anchored and stale) measured checkout at
   1,847 ms against 1,841 ms with `--no-anchors`; warm status unchanged at 51 ms.
 
+## Promote and demote (A8, 2026-09-22)
+
+Implemented in `packages/core/src/filter.ts` (`promote`) and `scan.ts` (`demoteTarget`);
+the CLI adds `promote <id|file:id>...` and `demote <file:line>...`, and the extension offers
+both as code actions. Tests: `packages/core/test/promote.test.ts`,
+`packages/cli/test/promote.test.ts`, and the review e2e suite.
+
+- **Promote** replaces the marker with its body under the language's plain line prefix
+  (the sigil minus `~`: `#`, `//`), one comment line per body line at the marker's indent
+  (a blank body line becomes a bare `#`), or one line for a trailing marker. The sidecar
+  entry goes with it, anchor and provenance included; an emptied sidecar file is deleted.
+  An expanded marker's own text wins over the stored body, so an unsynced edit is what
+  gets promoted. Outside an agent worktree the rest of the file is collapsed, as `collapse`
+  would.
+- **Demote** is the explicit, single-comment form of `scan --apply`: it converts the
+  comment group covering the line (the same grouping scan uses), syncs, and collapses
+  outside an agent worktree. It overrides the scan-only protections (ticketed TODO,
+  commented-out code) but refuses doc, pragma, license, and unconvertible comments, whose
+  meaning depends on staying in the code. Every target is checked before any file is
+  written.
+- **Round trip.** Demote then promote restores the original bytes for a line comment
+  written `<prefix> text` (any extra spaces after the prefix are kept in the body).
+  A block comment comes back as line comments, and `#text` without the space comes back
+  as `# text`.
+- **The extension runs the CLI** for both, after saving the document, rather than editing
+  in process as confirm does: promote and demote change which lines are markers, and
+  only the CLI knows whether this checkout collapses them.
+
 ## Known gaps to design in later slices
 
 - **The stale tag only changes on smudge, `expand`, and `confirm`.** A hook-driven `sync`

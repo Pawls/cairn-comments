@@ -66,6 +66,40 @@ suite("scan review", () => {
     assert.equal(a.review.message(), "No likely AI comments found.");
   });
 
+  test("code actions demote an ordinary comment and promote it back to the same bytes", async () => {
+    await api();
+    const uri = vscode.Uri.file(path.join(repo(), "src/app.py"));
+    const document = await vscode.workspace.openTextDocument(uri);
+    const actions = async (line: number) => {
+      const found = await vscode.commands.executeCommand<vscode.CodeAction[]>("vscode.executeCodeActionProvider", uri, new vscode.Range(line, 0, line, 0));
+      return found.filter((a) => a.command?.command.startsWith("slopstash."));
+    };
+    const titles = async (line: number) => (await actions(line)).map((a) => a.title);
+    const run = async (action: vscode.CodeAction) =>
+      vscode.commands.executeCommand<string>(action.command!.command, ...(action.command!.arguments ?? []));
+    const settled = async (text: string) => {
+      for (let i = 0; i < 50 && document.getText() !== text; i++) await new Promise((r) => setTimeout(r, 100));
+      assert.equal(document.getText(), text);
+    };
+
+    const source = read("src/app.py");
+    const sidecar = read(".agents/comments/src/app.py.md");
+    assert.deepEqual(await titles(0), []);
+    assert.deepEqual(await titles(1), ["Promote AI comment to an ordinary comment"]);
+    assert.deepEqual(await titles(4), ["Demote comment to an AI comment (move it to the sidecar)"]);
+
+    assert.equal(await run((await actions(4))[0]!), "demoted 1 comment(s) in 1 file(s)\n");
+    const demoted = read("src/app.py");
+    assert.match(demoted, /\n {4}#~[0-9a-z]{4}\n {4}return data/);
+    assert.match(read(".agents/comments/src/app.py.md"), /\nretry once; the proxy drops the first connection after idle\n$/);
+    await settled(demoted);
+
+    assert.match(await run((await actions(4))[0]!), /^promoted [0-9a-z]{4} in src\/app\.py\n$/);
+    assert.equal(read("src/app.py"), source);
+    assert.equal(read(".agents/comments/src/app.py.md"), sidecar);
+    await settled(source);
+  });
+
   test("the stale list names a comment whose code changed, through `check --stale`", async () => {
     const a = await api();
     assert.deepEqual(await a.staleComments(), []);

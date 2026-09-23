@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -7,6 +7,7 @@ import {
   clean,
   confirm,
   parseSidecar,
+  promote,
   serializeSidecar,
   sidecarPathFor,
   smudge,
@@ -70,7 +71,8 @@ export function selectFiles(root: string, selection: Selection): string[] {
   return managedFiles(root, candidates).filter((f) => existsSync(path.join(root, f)));
 }
 
-type Rewrite = (file: string, source: string, sidecar: Sidecar) => Promise<string>;
+/** A new source, or a new source and sidecar when the rewrite moves bodies itself. */
+type Rewrite = (file: string, source: string, sidecar: Sidecar) => Promise<string | { source: string; sidecar: Sidecar }>;
 
 /**
  * Syncs each working file into its sidecar, optionally rewrites the file, and finishes
@@ -85,7 +87,9 @@ async function rewriteFiles(root: string, files: string[], rewrite?: Rewrite, op
     if (original === undefined) continue;
     const synced = await sync(file, original, readSidecarSync(root, file), options);
     if (synced.sidecarChanged) writeSidecar(root, file, synced.sidecar);
-    const source = rewrite ? await rewrite(file, synced.source, synced.sidecar) : synced.source;
+    const rewritten = rewrite ? await rewrite(file, synced.source, synced.sidecar) : synced.source;
+    const source = typeof rewritten === "string" ? rewritten : rewritten.source;
+    if (typeof rewritten !== "string") writeSidecar(root, file, rewritten.sidecar);
     if (source !== original) writeFileSync(absolute, source);
     done.push(file);
   }
@@ -93,8 +97,13 @@ async function rewriteFiles(root: string, files: string[], rewrite?: Rewrite, op
   return done;
 }
 
+/** An emptied sidecar is removed rather than left as a zero-byte file. */
 function writeSidecar(root: string, file: string, sidecar: Sidecar): void {
   const sidecarFile = path.join(root, sidecarPathFor(file));
+  if (!sidecar.entries.length && !sidecar.preamble) {
+    rmSync(sidecarFile, { force: true });
+    return;
+  }
   mkdirSync(path.dirname(sidecarFile), { recursive: true });
   writeFileSync(sidecarFile, serializeSidecar(sidecar));
 }
@@ -143,4 +152,19 @@ export async function confirmIds(root: string, file: string, ids: string[], expa
   if (result.changed) writeSidecar(root, file, result.sidecar);
   if (expand) await expandFiles(root, [file]);
   return result.missing;
+}
+
+/**
+ * Promotes each id in `file` to an ordinary comment. Outside an agent worktree the rest
+ * of the file is collapsed as well, as `collapse` would. Returns ids not found.
+ */
+export async function promoteIds(root: string, file: string, ids: string[], expand: boolean): Promise<string[]> {
+  let missing: string[] = [];
+  await rewriteFiles(root, [file], async (f, source, sidecar) => {
+    const result = await promote(f, source, sidecar, ids);
+    missing = result.missing;
+    if (missing.length) return source;
+    return { source: expand ? result.source : await clean(f, result.source), sidecar: result.sidecar };
+  });
+  return missing;
 }

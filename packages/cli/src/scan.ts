@@ -9,6 +9,7 @@ import {
   analyzeSource,
   appendIgnore,
   convertComments,
+  demoteTarget,
   languageForPath,
   parseIgnore,
   scanSource,
@@ -197,6 +198,28 @@ export async function markAll(root: string, files: string[]): Promise<ApplyRepor
     const picks = (await analyzeSource(file, source)).filter((c) => !c.protected && !ignored.get(file)?.has(c.fingerprint));
     chosen.set(file, picks);
     report.converted.push(...picks.map((c) => toEntry(file, c)));
+  }
+  report.files = await convertAndSync(root, chosen);
+  return report;
+}
+
+/**
+ * Moves the comments on the named 1-based lines into their sidecars: the explicit form of
+ * `scan --apply` for one comment. Every target is checked before any file is written.
+ */
+export async function demote(root: string, targets: { file: string; line: number }[]): Promise<ApplyReport> {
+  requireManaged(root, [...new Set(targets.map((t) => t.file))]);
+  const report: ApplyReport = { converted: [], ignored: [], stale: [], files: [] };
+  const chosen = new Map<string, ScannedComment[]>();
+  for (const { file, line } of targets) {
+    const source = existsSync(path.join(root, file)) ? readSource(root, file) : undefined;
+    const target = source === undefined ? "not a readable UTF-8 file" : await demoteTarget(file, source, line);
+    if (typeof target === "string") throw new Error(`${file}:${line}: ${target}`);
+    const picks = chosen.get(file) ?? [];
+    if (picks.some((c) => c.start === target.start)) continue;
+    picks.push(target);
+    chosen.set(file, picks);
+    report.converted.push(toEntry(file, target));
   }
   report.files = await convertAndSync(root, chosen);
   return report;

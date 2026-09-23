@@ -61,6 +61,16 @@
         "category": "Slopstash"
       },
       {
+        "command": "slopstash.promoteComment",
+        "title": "Promote AI Comment to an Ordinary Comment",
+        "category": "Slopstash"
+      },
+      {
+        "command": "slopstash.demoteComment",
+        "title": "Demote Comment to an AI Comment",
+        "category": "Slopstash"
+      },
+      {
         "command": "slopstash.reviewStale",
         "title": "Review Stale AI Comments",
         "category": "Slopstash"
@@ -113,6 +123,14 @@
         },
         {
           "command": "slopstash.confirmComment",
+          "when": "editorLangId == python || editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact || editorLangId == csharp || editorLangId == java"
+        },
+        {
+          "command": "slopstash.promoteComment",
+          "when": "editorLangId == python || editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact || editorLangId == csharp || editorLangId == java"
+        },
+        {
+          "command": "slopstash.demoteComment",
           "when": "editorLangId == python || editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact || editorLangId == csharp || editorLangId == java"
         }
       ]

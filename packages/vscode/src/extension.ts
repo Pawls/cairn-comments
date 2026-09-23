@@ -5,6 +5,7 @@ import {
   BRAND,
   SIDECAR_ROOT,
   confirm,
+  demoteTarget,
   findMarkers,
   languageForPath,
   parseSidecar,
@@ -23,6 +24,8 @@ export const COMMANDS = {
   edit: `${BRAND}.editComment`,
   confirm: `${BRAND}.confirmComment`,
   reviewStale: `${BRAND}.reviewStale`,
+  promote: `${BRAND}.promoteComment`,
+  demote: `${BRAND}.demoteComment`,
 } as const;
 
 const STATE_KEY = "overlay.on";
@@ -198,10 +201,19 @@ export function activate(context: vscode.ExtensionContext): TestApi {
       refreshAll();
     }),
     vscode.commands.registerCommand(COMMANDS.reviewStale, () => reviewStale()),
+    vscode.commands.registerCommand(COMMANDS.promote, (arg?: CommentRef) => promoteComment(arg)),
+    vscode.commands.registerCommand(COMMANDS.demote, (arg?: LineRef) => demoteComment(arg)),
     ...VSCODE_LANGUAGE_IDS.map((language) =>
       vscode.languages.registerHoverProvider(
         { scheme: "file", language },
         { provideHover: (document, position) => provideHover(store, document, position) },
+      ),
+    ),
+    ...VSCODE_LANGUAGE_IDS.map((language) =>
+      vscode.languages.registerCodeActionsProvider(
+        { scheme: "file", language },
+        { provideCodeActions: (document, range) => provideCodeActions(document, range.start.line) },
+        { providedCodeActionKinds: [vscode.CodeActionKind.RefactorRewrite] },
       ),
     ),
   );
@@ -353,4 +365,79 @@ async function editComment(arg?: CommentRef): Promise<void> {
   const at = new vscode.Position(target, 0);
   editor.selection = new vscode.Selection(at, at);
   editor.revealRange(new vscode.Range(at, at), vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+}
+
+/** An ordinary comment named by a code action (absolute path, 1-based line) or by the cursor. */
+interface LineRef {
+  file: string;
+  line: number;
+}
+
+/** The marker, bare or expanded, whose lines include 0-based `line`. */
+async function markerCovering(document: vscode.TextDocument, line: number): Promise<Marker | undefined> {
+  const located = locate(document);
+  if (!located) return undefined;
+  return (await findMarkers(languageForPath(located.file)!, document.getText())).find(
+    (m) => m.id && document.positionAt(m.start).line <= line && line <= document.positionAt(m.end).line,
+  );
+}
+
+/** Promote on an AI comment's lines; demote on an ordinary comment that may leave the code. */
+async function provideCodeActions(document: vscode.TextDocument, line: number): Promise<vscode.CodeAction[]> {
+  const located = locate(document);
+  if (!located) return [];
+  const marker = await markerCovering(document, line);
+  if (marker) {
+    const action = new vscode.CodeAction("Promote AI comment to an ordinary comment", vscode.CodeActionKind.RefactorRewrite);
+    action.command = { command: COMMANDS.promote, title: action.title, arguments: [{ file: document.fileName, id: marker.id }] };
+    return [action];
+  }
+  const target = await demoteTarget(located.file, document.getText(), line + 1);
+  if (typeof target === "string") return [];
+  const action = new vscode.CodeAction("Demote comment to an AI comment (move it to the sidecar)", vscode.CodeActionKind.RefactorRewrite);
+  action.command = { command: COMMANDS.demote, title: action.title, arguments: [{ file: document.fileName, line: target.line }] };
+  return [action];
+}
+
+/**
+ * Saves `document` and runs `<cli> <verb> <target>` from its repository, so promote and
+ * demote follow the same sync and collapse rules as the CLI. Resolves to the CLI's output,
+ * or undefined after telling the user why it did not run.
+ */
+async function runOnFile(document: vscode.TextDocument, verb: string, suffix: string): Promise<string | undefined> {
+  if (document.isDirty && !(await document.save())) return undefined;
+  const repo = await findRepo(path.dirname(document.fileName));
+  if (!repo?.cli) {
+    void vscode.window.showInformationMessage(repo ? `Run \`${BRAND} init\` in this repository first.` : "Open a file in a git repository.");
+    return undefined;
+  }
+  const file = path.relative(repo.root, document.fileName).split(path.sep).join("/");
+  try {
+    return await runCli(repo.cli, `${verb} ${JSON.stringify(`${file}:${suffix}`)}`, repo.root);
+  } catch (error) {
+    void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
+    return undefined;
+  }
+}
+
+async function promoteComment(arg?: CommentRef): Promise<string | undefined> {
+  let ref = arg && { document: await vscode.workspace.openTextDocument(arg.file), id: arg.id };
+  const editor = vscode.window.activeTextEditor;
+  if (!ref && editor) {
+    const marker = await markerCovering(editor.document, editor.selection.active.line);
+    ref = marker && { document: editor.document, id: marker.id! };
+  }
+  if (!ref) {
+    void vscode.window.showInformationMessage("No AI comment on this line.");
+    return undefined;
+  }
+  return runOnFile(ref.document, "promote", ref.id);
+}
+
+async function demoteComment(arg?: LineRef): Promise<string | undefined> {
+  const editor = vscode.window.activeTextEditor;
+  const document = arg ? await vscode.workspace.openTextDocument(arg.file) : editor?.document;
+  const line = arg ? arg.line : editor && editor.selection.active.line + 1;
+  if (!document || line === undefined) return undefined;
+  return runOnFile(document, "demote", String(line));
 }

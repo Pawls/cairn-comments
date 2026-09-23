@@ -2,13 +2,13 @@
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { BRAND, STALE_TAG } from "@slopstash/core";
-import { collapseFiles, confirmIds, expandFiles, filterContent, readSidecar, selectFiles, staleIn, syncFiles } from "./files.js";
+import { collapseFiles, confirmIds, expandFiles, filterContent, promoteIds, readSidecar, selectFiles, staleIn, syncFiles } from "./files.js";
 import { ADAPTERS } from "./adapters.js";
 import { repoRoot, smudges, toRepoPath } from "./git.js";
 import { runHook } from "./hook.js";
 import { agentsSnippet, init } from "./init.js";
 import { serveFilterProcess } from "./process.js";
-import { applyReview, formatApply, formatReview, markAll, parseReview, scan } from "./scan.js";
+import { applyReview, demote, formatApply, formatReview, markAll, parseReview, scan } from "./scan.js";
 import { tag, tagTargets } from "./tag.js";
 import { addWorktree } from "./worktree.js";
 
@@ -36,6 +36,8 @@ const USAGE = `usage: ${BRAND} <command>
                                 list comments whose code changed while their body did not
                                 (the only check so far); exits 1 when any are found
   confirm <id|file:id>...       accept the current code for a stale comment, clearing its flag
+  promote <id|file:id>...       turn an AI comment into an ordinary committed comment
+  demote <file:line>...         move the ordinary comment on that line into the sidecar
   hook <harness>                run a harness's post-edit hook payload (stdin) through \`tag\`
   agents-md                     print the sigil convention snippet for an agent instruction file
   clean <path>, smudge <path>   one-shot git filter endpoints (stdin to stdout)
@@ -149,8 +151,9 @@ async function main(argv: string[]): Promise<void> {
       if (rows.length) process.exitCode = 1;
       return;
     }
-    case "confirm": {
-      if (!rest.length) throw new Error("confirm needs one or more ids (<id> or <file>:<id>)");
+    case "confirm":
+    case "promote": {
+      if (!rest.length) throw new Error(`${command} needs one or more ids (<id> or <file>:<id>)`);
       const root = repoRoot();
       const byFile = new Map<string, string[]>();
       for (const arg of rest) {
@@ -158,11 +161,24 @@ async function main(argv: string[]): Promise<void> {
         byFile.set(file, [...(byFile.get(file) ?? []), id]);
       }
       const expand = smudges(root);
+      const run = command === "confirm" ? confirmIds : promoteIds;
       for (const [file, ids] of byFile) {
-        const missing = await confirmIds(root, file, ids, expand);
+        const missing = await run(root, file, ids, expand);
         if (missing.length) throw new Error(`no comment ${missing.join(", ")} in ${file}`);
-        console.log(`confirmed ${ids.join(", ")} in ${file}`);
+        console.log(`${command === "confirm" ? "confirmed" : "promoted"} ${ids.join(", ")} in ${file}`);
       }
+      return;
+    }
+    case "demote": {
+      if (!rest.length) throw new Error("demote needs one or more <file>:<line>");
+      const root = repoRoot();
+      const targets = rest.map((arg) => {
+        const split = /^(.+):([1-9][0-9]*)$/.exec(arg);
+        if (!split) throw new Error(`expected <file>:<line>, got ${arg}`);
+        return { file: toRepoPath(root, split[1]!), line: Number(split[2]) };
+      });
+      const report = await demote(root, targets);
+      console.log(`demoted ${report.converted.length} comment(s) in ${report.files.length} file(s)`);
       return;
     }
     case "hook": {

@@ -203,3 +203,43 @@ export async function confirm(path: string, source: string, sidecar: Sidecar, id
   }
   return { sidecar: { preamble: sidecar.preamble, entries }, changed, missing };
 }
+
+export interface PromoteResult {
+  source: string;
+  sidecar: Sidecar;
+  /** Requested ids with no marker in the source or no body to promote. */
+  missing: string[];
+}
+
+/**
+ * Turns each named AI comment into an ordinary committed comment: the marker becomes the
+ * body under the language's plain line prefix (`#`, `//`), and the sidecar entry, anchor
+ * included, is dropped. An expanded marker's own text wins over the stored body, so an
+ * unsynced edit is what gets promoted. Inverse of `convertComments` for a line comment
+ * written `<prefix> text` (design.md § Promote and demote).
+ */
+export async function promote(path: string, source: string, sidecar: Sidecar, ids: readonly string[]): Promise<PromoteResult> {
+  const spec = languageForPath(path);
+  const markers = spec ? await findMarkers(spec, source) : [];
+  const stored = bodiesOf(sidecar);
+  const fallbackEol = dominantEol(source);
+  const splices: Splice[] = [];
+  const promoted = new Set<string>();
+  const missing: string[] = [];
+  for (const id of ids) {
+    const m = markers.find((x) => x.id === id);
+    const body = m && normalizeBody(m.text ?? stored.get(id) ?? "");
+    if (!spec || !m || !body) {
+      missing.push(id);
+      continue;
+    }
+    const prefix = spec.lineSigil.slice(0, -1);
+    const as = (line: string) => (line ? `${prefix} ${line}` : prefix);
+    const eol = source.startsWith("\r\n", m.end) ? "\r\n" : source[m.end] === "\n" ? "\n" : fallbackEol;
+    const text = inlineText(m, body).split("\n").map(as).join(eol + m.indent);
+    splices.push({ start: m.start, end: m.end, text });
+    promoted.add(id);
+  }
+  const entries = sidecar.entries.filter((e) => !promoted.has(e.id)).map((e) => ({ ...e, meta: new Map(e.meta) }));
+  return { source: applySplices(source, splices), sidecar: { preamble: sidecar.preamble, entries }, missing };
+}

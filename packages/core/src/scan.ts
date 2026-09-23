@@ -301,6 +301,27 @@ export async function newComments(path: string, source: string, baseline: string
   return out;
 }
 
+/** Classes that only keep scan from proposing a comment; an explicit demote overrides them. */
+const SCAN_ONLY_PROTECTION = new Set<ProtectedClass>(["ticketed-todo", "commented-out-code"]);
+
+/**
+ * The comment an explicit demote of 1-based `line` would convert, or why there is none:
+ * no comment there, a sigil comment already, or a class whose meaning depends on staying
+ * in the code (doc, pragma, license) or that has no line-sigil form.
+ */
+export async function demoteTarget(path: string, source: string, line: number): Promise<ScannedComment | string> {
+  const spec = languageForPath(path);
+  if (!spec) return "not a supported language";
+  const found = (await analyzeSource(path, source, { detectors: [] })).find((c) => c.line <= line && line <= c.endLine);
+  if (!found) {
+    const row = splitLines(source)[line - 1];
+    const text = row ? source.slice(row.start, row.contentEnd) : "";
+    return text.includes(spec.lineSigil) ? "already an AI comment" : "no comment on this line";
+  }
+  if (found.protected && !SCAN_ONLY_PROTECTION.has(found.protected)) return `a ${found.protected} comment stays in the code`;
+  return { ...found, protected: undefined };
+}
+
 /**
  * Rewrites `comments` as new sigil comments (`<sigil> text`), which `sync` then stamps
  * with ids. Every byte outside the rewritten tokens, including each terminator, is kept;
