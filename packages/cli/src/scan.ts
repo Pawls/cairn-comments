@@ -45,6 +45,10 @@ export interface ApplyReport {
   files: string[];
 }
 
+function emptyReport(): ApplyReport {
+  return { converted: [], ignored: [], stale: [], files: [] };
+}
+
 function readIgnore(root: string): Map<string, Set<string>> {
   const file = path.join(root, SCAN_IGNORE);
   return parseIgnore(existsSync(file) ? readFileSync(file, "utf8") : "");
@@ -53,9 +57,8 @@ function readIgnore(root: string): Map<string, Set<string>> {
 /** Named files, or every tracked file in a scanned language outside the tool's own folder. */
 export function scanTargets(root: string, files: string[]): string[] {
   const candidates = files.length ? files.map((f) => toRepoPath(root, f)) : trackedFiles(root);
-  return candidates.filter(
-    (f) => languageForPath(f) && !f.startsWith(`${path.posix.dirname(SIDECAR_ROOT)}/`) && existsSync(path.join(root, f)),
-  );
+  const toolFolder = `${path.posix.dirname(SIDECAR_ROOT)}/`;
+  return candidates.filter((f) => languageForPath(f) && !f.startsWith(toolFolder) && existsSync(path.join(root, f)));
 }
 
 function readSource(root: string, file: string): string | undefined {
@@ -75,7 +78,10 @@ function toEntry(file: string, c: ScannedComment): ReviewEntry {
   };
 }
 
-/** Likely AI comments, minus the ones already rejected. `all` also runs the detectors that ship disabled. */
+/**
+ * Likely AI comments, minus the ones already rejected. `all` also runs the detectors
+ * that ship disabled.
+ */
 export async function scan(root: string, files: string[], options: { all?: boolean } = {}): Promise<Review> {
   const ignored = readIgnore(root);
   const comments: ReviewEntry[] = [];
@@ -137,7 +143,9 @@ function recordIgnored(root: string, entries: IgnoreEntry[]): void {
 
 export function parseReview(text: string): Review {
   const review = JSON.parse(text) as Partial<Review>;
-  if (review.version !== 1 || !Array.isArray(review.comments)) throw new Error("not a scan review: expected {version: 1, comments: [...]}");
+  if (review.version !== 1 || !Array.isArray(review.comments)) {
+    throw new Error("not a scan review: expected {version: 1, comments: [...]}");
+  }
   for (const c of review.comments) {
     if (typeof c.file !== "string" || typeof c.fingerprint !== "string" || typeof c.line !== "number") {
       throw new Error(`review entry needs file, line, and fingerprint: ${JSON.stringify(c)}`);
@@ -149,9 +157,24 @@ export function parseReview(text: string): Review {
   return review as Review;
 }
 
+/**
+ * The comment with the entry's text nearest its listed line, skipping ones already
+ * picked, so identical comments in one file stay distinct.
+ */
+function nearestMatch(
+  available: ScannedComment[],
+  entry: ReviewEntry,
+  picked: ScannedComment[],
+): ScannedComment | undefined {
+  const distance = (c: ScannedComment) => Math.abs(c.line - entry.line);
+  return available
+    .filter((c) => c.fingerprint === entry.fingerprint && !picked.includes(c))
+    .sort((a, b) => distance(a) - distance(b))[0];
+}
+
 /** Applies a reviewed list: accepted entries become sigil comments, rejected ones are ignored from now on. */
 export async function applyReview(root: string, review: Review): Promise<ApplyReport> {
-  const report: ApplyReport = { converted: [], ignored: [], stale: [], files: [] };
+  const report = emptyReport();
   const byFile = new Map<string, ReviewEntry[]>();
   for (const e of review.comments) byFile.set(e.file, [...(byFile.get(e.file) ?? []), e]);
   const accepting = [...byFile].filter(([, es]) => es.some((e) => e.accept !== false)).map(([f]) => f);
@@ -164,10 +187,7 @@ export async function applyReview(root: string, review: Review): Promise<ApplyRe
     const available = source === undefined ? [] : (await analyzeSource(file, source)).filter((c) => !c.protected);
     const picks: ScannedComment[] = [];
     for (const entry of entries) {
-      // Same text, nearest to the listed line: identical comments in one file stay distinct.
-      const match = available
-        .filter((c) => c.fingerprint === entry.fingerprint && !picks.includes(c))
-        .sort((a, b) => Math.abs(a.line - entry.line) - Math.abs(b.line - entry.line))[0];
+      const match = nearestMatch(available, entry, picks);
       if (!match) {
         report.stale.push(entry);
       } else if (entry.accept === false) {
@@ -190,12 +210,13 @@ export async function markAll(root: string, files: string[]): Promise<ApplyRepor
   const targets = scanTargets(root, files);
   requireManaged(root, targets);
   const ignored = readIgnore(root);
-  const report: ApplyReport = { converted: [], ignored: [], stale: [], files: [] };
+  const report = emptyReport();
   const chosen = new Map<string, ScannedComment[]>();
   for (const file of targets) {
     const source = readSource(root, file);
     if (source === undefined) continue;
-    const picks = (await analyzeSource(file, source)).filter((c) => !c.protected && !ignored.get(file)?.has(c.fingerprint));
+    const rejected = ignored.get(file);
+    const picks = (await analyzeSource(file, source)).filter((c) => !c.protected && !rejected?.has(c.fingerprint));
     chosen.set(file, picks);
     report.converted.push(...picks.map((c) => toEntry(file, c)));
   }
@@ -209,7 +230,7 @@ export async function markAll(root: string, files: string[]): Promise<ApplyRepor
  */
 export async function demote(root: string, targets: { file: string; line: number }[]): Promise<ApplyReport> {
   requireManaged(root, [...new Set(targets.map((t) => t.file))]);
-  const report: ApplyReport = { converted: [], ignored: [], stale: [], files: [] };
+  const report = emptyReport();
   const chosen = new Map<string, ScannedComment[]>();
   for (const { file, line } of targets) {
     const source = existsSync(path.join(root, file)) ? readSource(root, file) : undefined;
