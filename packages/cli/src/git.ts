@@ -43,8 +43,64 @@ export function trackedFiles(root: string): string[] {
   return nulSeparated(git(["ls-files", "-z"], { cwd: root }));
 }
 
-export function stagedFiles(root: string): string[] {
-  return nulSeparated(git(["diff", "--cached", "--name-only", "--diff-filter=ACM", "-z"], { cwd: root }));
+/** --no-renames: a staged `git mv` must list its new path, which rename detection reports as `R`. */
+export function stagedFiles(root: string, filter = "ACM"): string[] {
+  return nulSeparated(git(["diff", "--cached", "--name-only", "--no-renames", `--diff-filter=${filter}`, "-z"], { cwd: root }));
+}
+
+/** Staged blobs by path, read in one `git cat-file --batch`; paths not in the index are absent. */
+export function indexBlobs(root: string, files: Iterable<string>): Map<string, Buffer> {
+  const paths = [...new Set(files)].filter((f) => !f.includes("\n"));
+  const blobs = new Map<string, Buffer>();
+  if (!paths.length) return blobs;
+  const out = execFileSync("git", ["cat-file", "--batch"], {
+    cwd: root,
+    input: paths.map((p) => `:${p}\n`).join(""),
+    stdio: ["pipe", "pipe", "inherit"],
+    maxBuffer: 1 << 30,
+  });
+  let at = 0;
+  for (const file of paths) {
+    const eol = out.indexOf(10, at);
+    const header = out.subarray(at, eol).toString("utf8");
+    at = eol + 1;
+    if (header.endsWith(" missing")) continue;
+    const size = Number(header.split(" ")[2]);
+    blobs.set(file, out.subarray(at, at + size));
+    at += size + 1;
+  }
+  return blobs;
+}
+
+/**
+ * Where each fixed-string token occurs, as token → paths: in the index with `cached`, else
+ * in the working tree, untracked files included. A token must not contain `:`.
+ */
+export function grepTokens(root: string, tokens: string[], cached: boolean): Map<string, Set<string>> {
+  const found = new Map<string, Set<string>>();
+  if (!tokens.length) return found;
+  let out = "";
+  try {
+    // Patterns on stdin (`-f -`): a repository's worth of ids would overflow a command line.
+    const args = ["-c", "core.quotePath=false", "grep", "-o", "-F", "--full-name", cached ? "--cached" : "--untracked", "-f", "-"];
+    out = execFileSync("git", args, { cwd: root, input: tokens.join("\n") + "\n", encoding: "utf8", stdio: ["pipe", "pipe", "ignore"], maxBuffer: 1 << 28 });
+  } catch {
+    // Exit 1: no match.
+  }
+  for (const line of out.split("\n")) {
+    const colon = line.lastIndexOf(":");
+    if (colon <= 0) continue;
+    const token = line.slice(colon + 1);
+    const files = found.get(token) ?? new Set<string>();
+    files.add(line.slice(0, colon));
+    found.set(token, files);
+  }
+  return found;
+}
+
+/** Whether git would ignore `file` by pattern, tracked or not. */
+export function ignoredByPattern(root: string, file: string): boolean {
+  return gitQuiet(["check-ignore", "-q", "--no-index", file], root) !== undefined;
 }
 
 /** The subset of `files` whose `filter` attribute names this tool's driver. */

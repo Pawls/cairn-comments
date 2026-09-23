@@ -1,12 +1,13 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
-import { BRAND, STALE_TAG } from "@slopstash/core";
-import { collapseFiles, confirmIds, expandFiles, filterContent, promoteIds, readSidecar, selectFiles, staleIn, syncFiles } from "./files.js";
+import { BRAND, SIDECAR_ROOT, STALE_TAG, mergeSidecars, parseSidecar, serializeSidecar } from "@slopstash/core";
+import { check, formatCheck } from "./check.js";
+import { collapseFiles, confirmIds, expandFiles, filterContent, promotableIds, promoteIds, readSidecar, selectFiles, staleIn, syncFiles } from "./files.js";
 import { ADAPTERS } from "./adapters.js";
-import { repoRoot, smudges, toRepoPath } from "./git.js";
+import { repoRoot, smudges, toRepoPath, trackedFiles } from "./git.js";
 import { runHook } from "./hook.js";
-import { agentsSnippet, init } from "./init.js";
+import { agentsSnippet, planInit, planUninstall, runPlan } from "./init.js";
 import { serveFilterProcess } from "./process.js";
 import { applyReview, demote, formatApply, formatReview, markAll, parseReview, scan } from "./scan.js";
 import { tag, tagTargets } from "./tag.js";
@@ -14,11 +15,13 @@ import { addWorktree } from "./worktree.js";
 
 const USAGE = `usage: ${BRAND} <command>
 
-  init [--command <cli>] [--one-shot] [--hooks <harness,...>] [--agents-md]
-                                configure the filter, .gitattributes, and pre-commit hook;
-                                --one-shot runs a process per file instead of one per git command;
-                                --hooks installs post-edit adapters (${Object.keys(ADAPTERS).join(", ")});
-                                --agents-md writes the sigil convention into AGENTS.md
+  init [--command <cli>] [--one-shot] [--hooks <harness,...>] [--agents-md] [--dry-run]
+                                configure the filter, merge driver, .gitattributes, and pre-commit
+                                hook, printing each change; --one-shot runs a process per file
+                                instead of one per git command; --hooks installs post-edit adapters
+                                (${Object.keys(ADAPTERS).join(", ")}); --agents-md writes the sigil
+                                convention into AGENTS.md; --dry-run prints without changing
+  uninstall [--dry-run]         undo init, adapters and AGENTS.md included; sidecars and markers stay
   worktree add <git args...>    add a worktree whose checkout shows full comments
   sync [--staged] [--add] [files...]
                                 move comment bodies into sidecars and stamp new ids
@@ -32,16 +35,23 @@ const USAGE = `usage: ${BRAND} <command>
   tag [--changed] [--by <harness>] [--model <m>] [--session <id>] [files...]
                                 turn comments new since the index into sigil comments and sync,
                                 recording the provenance given; --changed adds every edited file
-  check [--stale] [--json] [files...]
-                                list comments whose code changed while their body did not
-                                (the only check so far); exits 1 when any are found
+  check [--staged] [--fix] [--json] [files...]
+                                check what is committed (the index): comments committed with
+                                their text, markers without bodies, bodies without markers;
+                                --fix moves bodies after renames and drops unreferenced ones;
+                                exits 1 when problems remain
+  check --stale [--json] [files...]
+                                list comments whose code changed while their body did not;
+                                exits 1 when any are found
   confirm <id|file:id>...       accept the current code for a stale comment, clearing its flag
-  promote <id|file:id>...       turn an AI comment into an ordinary committed comment
+  promote <id|file:id>... | --all [files...]
+                                turn AI comments into ordinary committed comments
   demote <file:line>...         move the ordinary comment on that line into the sidecar
   hook <harness>                run a harness's post-edit hook payload (stdin) through \`tag\`
   agents-md                     print the sigil convention snippet for an agent instruction file
   clean <path>, smudge <path>   one-shot git filter endpoints (stdin to stdout)
   filter-process [--smudge]     git long-running filter process (filter.<driver>.process)
+  merge-sidecar <O> <A> <B>     git merge driver for sidecars (merge.<driver>.driver)
 `;
 
 async function readStdin(): Promise<Buffer> {
@@ -141,9 +151,20 @@ async function main(argv: string[]): Promise<void> {
       const { values, positionals } = parseArgs({
         args: rest,
         allowPositionals: true,
-        options: { stale: { type: "boolean", default: false }, json: { type: "boolean", default: false } },
+        options: {
+          stale: { type: "boolean", default: false },
+          json: { type: "boolean", default: false },
+          staged: { type: "boolean", default: false },
+          fix: { type: "boolean", default: false },
+        },
       });
       const root = repoRoot();
+      if (!values.stale) {
+        const report = await check(root, { files: positionals, staged: values.staged, fix: values.fix });
+        process.stdout.write(values.json ? JSON.stringify(report, null, 2) + "\n" : formatCheck(report));
+        if (report.problems.length) process.exitCode = 1;
+        return;
+      }
       const stale = await staleIn(root, selectFiles(root, { files: positionals, staged: false }));
       const rows = stale.map((s) => ({ file: s.file, line: s.line, id: s.id, text: s.body }));
       if (values.json) process.stdout.write(JSON.stringify(rows, null, 2) + "\n");
@@ -153,10 +174,18 @@ async function main(argv: string[]): Promise<void> {
     }
     case "confirm":
     case "promote": {
+      const all = command === "promote" && rest[0] === "--all";
       if (!rest.length) throw new Error(`${command} needs one or more ids (<id> or <file>:<id>)`);
       const root = repoRoot();
       const byFile = new Map<string, string[]>();
-      for (const arg of rest) {
+      if (all) {
+        for (const file of selectFiles(root, { files: rest.slice(1), staged: false })) {
+          const ids = await promotableIds(root, file);
+          if (ids.length) byFile.set(file, ids);
+        }
+        if (!byFile.size) console.log("no AI comments to promote");
+      }
+      for (const arg of all ? [] : rest) {
         const [file, id] = await locateId(root, arg);
         byFile.set(file, [...(byFile.get(file) ?? []), id]);
       }
@@ -197,11 +226,32 @@ async function main(argv: string[]): Promise<void> {
           "one-shot": { type: "boolean", default: false },
           hooks: { type: "string" },
           "agents-md": { type: "boolean", default: false },
+          "dry-run": { type: "boolean", default: false },
         },
       });
       const hooks = values.hooks?.split(",").map((h) => h.trim()).filter(Boolean);
       const options = { command: values.command, oneShot: values["one-shot"], hooks, agentsMd: values["agents-md"] };
-      for (const line of init(repoRoot(), options)) console.log(line);
+      for (const line of runPlan(planInit(repoRoot(), options), values["dry-run"])) console.log(line);
+      return;
+    }
+    case "uninstall": {
+      const { values } = parseArgs({ args: rest, options: { "dry-run": { type: "boolean", default: false } } });
+      const root = repoRoot();
+      for (const line of runPlan(planUninstall(root), values["dry-run"])) console.log(line);
+      const kept = trackedFiles(root).filter((f) => f.startsWith(`${SIDECAR_ROOT}/`)).length;
+      if (kept) console.log(`note: ${kept} sidecar file(s) under ${SIDECAR_ROOT}/ and their markers stay; \`${BRAND} promote --all\` before uninstalling turns them into ordinary comments`);
+      return;
+    }
+    case "merge-sidecar": {
+      const [base, ours, theirs] = rest;
+      if (!base || !ours || !theirs) throw new Error("merge-sidecar needs the %O %A %B paths git passes");
+      const read = (file: string) => parseSidecar(readFileSync(file, "utf8"));
+      const result = mergeSidecars(read(base), read(ours), read(theirs));
+      writeFileSync(ours, serializeSidecar(result.sidecar));
+      if (result.conflicts.length) {
+        process.stderr.write(`${BRAND}: both sides changed ${result.conflicts.join(", ")}; resolve the conflict markers in the body\n`);
+        process.exitCode = 1;
+      }
       return;
     }
     case "worktree": {

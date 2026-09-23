@@ -121,7 +121,8 @@ Each is pinned by a test in `packages/core/test/` or `packages/cli/test/`.
   with a leading backslash. The tool writes LF, and `init` marks the folder
   `text eol=lf` so `autocrlf` never has anything to convert.
 - **Hook install.** `init` writes `pre-commit` into the effective hooks directory, renames
-  a hook already there to `pre-commit.<brand>-chained`, and runs it after `sync`. The
+  a hook already there to `pre-commit.<brand>-chained`, and runs it after `sync` (and,
+  since A9, `check --staged --fix`). The
   managed hook does nothing unless `filter.<brand>.clean` is set, because a global
   `core.hooksPath` directory is shared by every repository on the machine.
 - **Non-UTF-8 input** passes through the filter byte for byte.
@@ -454,6 +455,77 @@ both as code actions. Tests: `packages/core/test/promote.test.ts`,
   in process as confirm does: promote and demote change which lines are markers, and
   only the CLI knows whether this checkout collapses them.
 
+## Check (A9, 2026-09-23)
+
+Implemented in `packages/cli/src/check.ts`; tests in `packages/cli/test/check.test.ts`.
+
+- **It reads the index, not the working tree.** The pre-commit hook and CI then judge
+  exactly what is or will be committed: in CI the index is the checked-out commit, and no
+  `init` is needed there, because `.gitattributes` already says which files are managed.
+  `--staged` narrows the check to staged sources, their sidecars, staged sidecar changes,
+  and the sidecars of staged deletions.
+- **Three problems.** A sigil comment with text in a blob (a clone without the filter, or
+  a `clean` that failed and fell back to unfiltered content, § Filter process); a marker
+  whose id has no body in its sidecar (a rename, or `#~todo` read as an id); a body whose
+  id no marker in its source carries. When `.agents/comments/` is ignored by pattern
+  (zero-trace mode, § Decisions), only the first is checked.
+- **`--fix` works from the orphaned body.** An orphan moves to the one file whose index
+  marker has its id and whose sidecar lacks it; that covers renames and moves between files
+  even when the new file is outside the checked scope (a `git grep --cached` finds it). An
+  orphan whose id is a marker nowhere in the index, or only in files that already hold the
+  body, is removed. An orphan whose id appears only in the working tree (a move with half of
+  it unstaged) is kept and reported, because removing it would strand the marker once the
+  other half is committed. `--fix` edits the working sidecars and stages them, as
+  `sync --add` does.
+- **The pre-commit hook runs `sync --staged --add`, then `check --staged --fix`.** A deleted
+  comment's body goes in the same commit, a `git mv` carries its sidecar along, and a commit
+  that would leave committed text or a stranded marker fails. `sync` still keeps orphans;
+  pruning happens only at commit time, where a whole change is visible.
+- **`--stale` is a separate mode.** It reads working files, as A7 settled, and its JSON
+  shape is what the extension's stale list consumes, so it did not merge into the
+  integrity report.
+- **Staged renames.** `stagedFiles` passes `--no-renames`: with rename detection, a staged
+  `git mv` shows as `R` and `--diff-filter=ACM` dropped the new path, so `sync --staged`
+  never saw a renamed file.
+
+## Sidecar merges (A9, 2026-09-23)
+
+The scripted scenario (two branches editing one body, one also appending an entry) showed
+`merge=union` mangling silently: the merge exited 0 with both bodies concatenated under one
+heading and the second branch's `<!-- ... -->` metadata line read back as body text.
+
+- **Driver.** `init` sets `merge.<brand>.driver = <cli> merge-sidecar %O %A %B`, and
+  `.agents/comments/**` carries `merge=<brand>`; `init` replaces the earlier union line.
+  `mergeSidecars` (`packages/core/src/merge.ts`) merges by entry id: ours keeps its order,
+  theirs' new entries append, a one-sided edit wins with its own metadata (provenance and
+  anchor describe the body they came with), metadata-only changes merge per key, and a
+  deletion wins over an unchanged entry but not over an edit. A body both sides changed
+  differently gets `<<<<<<< ours` / `=======` / `>>>>>>> theirs` inside it and the driver
+  exits 1, so git reports the conflict at that file.
+- **Clones without `init`.** Git falls back to its built-in text merge when an attribute
+  names an undefined driver (checked with git 2.55): concurrent appends and edits then
+  conflict visibly instead of mangling. `.agents/scan-ignore` stays `merge=union`, since
+  its lines are append-only.
+
+## Packaging (A9, 2026-09-23)
+
+- **One bundle per product.** esbuild bundles the CLI (with core and web-tree-sitter) into
+  `packages/cli/bundle/main.js` and the extension into `packages/vscode/dist/extension.cjs`.
+  `scripts/bundle-assets.mjs` copies `web-tree-sitter.wasm` beside each bundle (where
+  web-tree-sitter looks, relative to its own module) and every grammar in `LANGUAGES` into
+  `grammars/`, which `resolveWasm` prefers over `node_modules`. Neither package has runtime
+  dependencies, so the grammar packages' native install scripts never run for users.
+- **Sizes.** The npm tarball is 0.88 MB (9.52 MB unpacked, 11 files; the C# grammar alone is
+  5.1 MB). The `.vsix` is 910 KB.
+- **The bundle is also faster.** One-shot `clean` on Windows, Node 24, median of 9: 47 ms for
+  a file with no sigil and 62 ms with one marker, against 60 ms and 75 ms from the `tsc`
+  output, which loads each module separately.
+- **Tests run what ships.** The integration harness and the e2e runner use the CLI bundle;
+  `packages/cli/test/package.test.ts` packs the CLI, installs the tarball offline into an
+  empty project, and runs the quickstart with it. The e2e suite also passes against an
+  unpacked `.vsix` (`SLOPSTASH_E2E_EXTENSION`), which holds no `node_modules`.
+- **Node 22 or later.** Node 20 left maintenance in April 2026; CI tests 22 and 24.
+
 ## Known gaps to design in later slices
 
 - **The stale tag only changes on smudge, `expand`, and `confirm`.** A hook-driven `sync`
@@ -473,14 +545,6 @@ both as code actions. Tests: `packages/core/test/promote.test.ts`,
   Recording hit counts from `scan` on a few agent-written repositories would show whether
   narrates-steps, at 0.81, is worth keeping on by default.
 
-- **Writing into a shared hooks directory.** With a global `core.hooksPath`, `init` renames
-  and replaces a hook file that serves every repository. The managed hook is inert
-  elsewhere, but `init --dry-run` and `uninstall` (A9) should make the change reviewable
-  and reversible.
-- **Native install script.** `tree-sitter-python` runs `node-gyp-build` on install although
-  only its `.wasm` is used. It worked with the script skipped (npm 11.19 on Linux);
-  publishing (A9) should bundle the grammar WASM instead of depending on the package.
-
 - **Checkout overhead in Node (design note, opened by A4's kill criterion).** Process mode
   misses the +20% checkout budget; § Filter process has the numbers and where the time
   goes. Two ways forward, in order of cost: move parse and smudge onto `worker_threads`
@@ -489,13 +553,8 @@ both as code actions. Tests: `packages/core/test/promote.test.ts`,
   with a tree-sitter C binding) speaking the same protocol, which removes Node's
   per-request event-loop cost but not git's own writes. Neither blocks v1: the overhead is
   per marked file, only in agent worktrees, and warm `git status` is unaffected.
-- **Renames.** Sidecar paths mirror source paths, so `git mv` orphans a sidecar. `check`
-  detects markers without bodies and relocates by id (slice A9).
-- **Sidecar merges.** Entries are keyed by random ids and the folder uses `merge=union`
-  to avoid adjacent-append conflicts; concurrent edits to one body need a real merge
-  driver if union proves too blunt (revisit in A9).
-- **Clones without the filter.** Expanded comments could be committed. `check` in CI and
-  pre-commit rejects expanded sigil comments in blobs (slice A9).
+- **The GitHub Action is untested.** `action.yml` runs `npx slopstash@<version> check`, so it
+  can only run once the CLI is on npm; the README's plain `npx` step is the same command.
 - **A lone sigil line below a bare marker (found in A4, not fixed).** In `#~zz99\n#~`, the
   bare `#~` stays put under `clean`. Once `zz99` expands, though, that `#~` reads as the
   block's empty continuation line, so `clean(smudge(x))` returns `#~zz99` and the line is
@@ -505,7 +564,7 @@ both as code actions. Tests: `packages/core/test/promote.test.ts`,
 - **Marker ambiguity.** A new comment written without the space and exactly four
   alphanumerics (`#~todo`) parses as an id. Hook tagging does not fix it (the comment is
   already a sigil comment, so `tag` never sees it); the AGENTS.md snippet warns against
-  it, and `check` (A9) flags ids with no body.
+  it, and `check` reports it as a marker without a body, which fails the commit.
 
 ## Prior art (VS Code Marketplace, surveyed 2026-09-20)
 

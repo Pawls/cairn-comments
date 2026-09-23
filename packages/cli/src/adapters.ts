@@ -1,4 +1,4 @@
-import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { BRAND } from "@slopstash/core";
 import type { Provenance } from "./tag.js";
@@ -18,6 +18,8 @@ export interface Adapter {
   parse(payload: Record<string, unknown>): HookEvent;
   /** Adds or updates this tool's hook entry in the parsed settings object. */
   install(settings: Record<string, unknown>, command: string): void;
+  /** Removes this tool's hook entry, pruning containers it leaves empty. */
+  uninstall(settings: Record<string, unknown>): void;
 }
 
 const str = (v: unknown): string | undefined => (typeof v === "string" && v ? v : undefined);
@@ -87,6 +89,28 @@ function installMatcherHook(settings: Record<string, unknown>, event: string, ma
   groups.push({ matcher, hooks: [{ type: "command", command }] });
 }
 
+const isOurs = (entry: unknown, ours: RegExp) => {
+  const command = obj(entry).command;
+  return typeof command === "string" && ours.test(command);
+};
+
+/** Deletes `key` from `parent` when it holds an empty object or array. */
+function prune(parent: Record<string, unknown>, key: string): void {
+  const v = parent[key];
+  if ((Array.isArray(v) && !v.length) || (v && typeof v === "object" && !Array.isArray(v) && !Object.keys(v).length)) delete parent[key];
+}
+
+function uninstallMatcherHook(settings: Record<string, unknown>, event: string, ours: RegExp): void {
+  const hooks = obj(settings.hooks);
+  hooks[event] = arr(hooks[event]).filter((group) => {
+    const g = obj(group);
+    g.hooks = arr(g.hooks).filter((h) => !isOurs(h, ours));
+    return (g.hooks as unknown[]).length > 0;
+  });
+  prune(hooks, event);
+  if (settings.hooks !== undefined) prune(settings, "hooks");
+}
+
 export const ADAPTERS: Record<string, Adapter> = {
   "claude-code": {
     // Local settings: the command holds this machine's path to the CLI.
@@ -103,6 +127,9 @@ export const ADAPTERS: Record<string, Adapter> = {
     install(settings, command) {
       installMatcherHook(settings, "PostToolUse", "Edit|Write|MultiEdit", `${command} hook claude-code`, /\bhook claude-code$/);
     },
+    uninstall(settings) {
+      uninstallMatcherHook(settings, "PostToolUse", /\bhook claude-code$/);
+    },
   },
   codex: {
     settingsFile: ".codex/hooks.json",
@@ -117,6 +144,9 @@ export const ADAPTERS: Record<string, Adapter> = {
     },
     install(settings, command) {
       installMatcherHook(settings, "PostToolUse", "apply_patch|Edit|Write", `${command} hook codex`, /\bhook codex$/);
+    },
+    uninstall(settings) {
+      uninstallMatcherHook(settings, "PostToolUse", /\bhook codex$/);
     },
   },
   cursor: {
@@ -138,6 +168,14 @@ export const ADAPTERS: Record<string, Adapter> = {
       if (ours) ours.command = `${command} hook cursor`;
       else entries.push({ command: `${command} hook cursor` });
     },
+    uninstall(settings) {
+      const hooks = obj(settings.hooks);
+      hooks.afterFileEdit = arr(hooks.afterFileEdit).filter((e) => !isOurs(e, /\bhook cursor$/));
+      prune(hooks, "afterFileEdit");
+      if (settings.hooks !== undefined) prune(settings, "hooks");
+      // `version` is ours too when nothing else is left.
+      if (Object.keys(settings).length === 1 && settings.version === 1) delete settings.version;
+    },
   },
 };
 
@@ -147,24 +185,46 @@ export function adapterFor(harness: string): Adapter {
   return adapter;
 }
 
-/** Writes the harness's hook entry into its settings file, keeping everything else in it. */
-export function installAdapter(root: string, harness: string, command: string): string {
+/** A pending edit to a harness settings file; `next` null deletes the file. */
+export interface SettingsChange {
+  file: string;
+  existed: boolean;
+  next: string | null;
+}
+
+function editSettings(root: string, harness: string, edit: (adapter: Adapter, settings: Record<string, unknown>) => void): SettingsChange | undefined {
   const adapter = adapterFor(harness);
   const file = path.join(root, adapter.settingsFile);
-  const existing = existsSync(file) ? readFileSync(file, "utf8") : "";
+  const existing = existsSync(file) ? readFileSync(file, "utf8") : undefined;
   let settings: Record<string, unknown>;
   try {
-    settings = existing.trim() ? obj(JSON.parse(existing)) : {};
+    settings = existing?.trim() ? obj(JSON.parse(existing)) : {};
   } catch (error) {
-    throw new Error(`${adapter.settingsFile} is not valid JSON, so the ${harness} hook was not installed: ${(error as Error).message}`, {
-      cause: error,
-    });
+    throw new Error(`${adapter.settingsFile} is not valid JSON, so the ${harness} hook was left alone: ${(error as Error).message}`, { cause: error });
   }
-  adapter.install(settings, command);
-  const eol = existing.includes("\r\n") ? "\r\n" : "\n";
-  const next = JSON.stringify(settings, null, 2).replaceAll("\n", eol) + eol;
-  if (next === existing) return `${adapter.settingsFile}: ${harness} hook already up to date`;
-  mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, next);
-  return `${adapter.settingsFile}: ${harness} hook installed`;
+  edit(adapter, settings);
+  const eol = existing?.includes("\r\n") ? "\r\n" : "\n";
+  const next = Object.keys(settings).length ? JSON.stringify(settings, null, 2).replaceAll("\n", eol) + eol : null;
+  if (next === (existing ?? null)) return undefined;
+  return { file, existed: existing !== undefined, next };
+}
+
+/** Adds or updates the harness's hook entry, keeping everything else in its settings file. */
+export function planAdapterInstall(root: string, harness: string, command: string): SettingsChange | undefined {
+  return editSettings(root, harness, (adapter, settings) => adapter.install(settings, command));
+}
+
+/** Removes the harness's hook entry; a settings file left empty is deleted. */
+export function planAdapterUninstall(root: string, harness: string): SettingsChange | undefined {
+  if (!existsSync(path.join(root, adapterFor(harness).settingsFile))) return undefined;
+  return editSettings(root, harness, (adapter, settings) => adapter.uninstall(settings));
+}
+
+export function applySettingsChange(change: SettingsChange): void {
+  if (change.next === null) {
+    rmSync(change.file, { force: true });
+    return;
+  }
+  mkdirSync(path.dirname(change.file), { recursive: true });
+  writeFileSync(change.file, change.next);
 }

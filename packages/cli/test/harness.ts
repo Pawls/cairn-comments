@@ -4,12 +4,15 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../dist/main.js");
+/** The published bundle, so every integration scenario runs what npm ships. */
+export const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../bundle/main.js");
 
 export interface SandboxOptions {
   autocrlf: boolean;
   /** Extra lines for the isolated global git config. */
   globalConfig?: string;
+  /** CLI entry point to run; defaults to the bundle in this checkout. */
+  cli?: string;
 }
 
 /**
@@ -19,10 +22,12 @@ export interface SandboxOptions {
 export class Sandbox {
   readonly dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "slopstash-it-")));
   readonly eol: string;
+  private readonly cliPath: string;
   private readonly env: NodeJS.ProcessEnv;
 
   constructor(options: SandboxOptions) {
     this.eol = options.autocrlf ? "\r\n" : "\n";
+    this.cliPath = options.cli ?? CLI;
     const config = path.join(this.dir, "gitconfig");
     writeFileSync(
       config,
@@ -36,7 +41,8 @@ export class Sandbox {
       ].join("\n"),
     );
     const inherited = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("GIT_")));
-    this.env = { ...inherited, GIT_CONFIG_GLOBAL: config, GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0" };
+    // XDG_CONFIG_HOME: git also reads $XDG_CONFIG_HOME/git/ignore, which GIT_CONFIG_GLOBAL does not cover.
+    this.env = { ...inherited, GIT_CONFIG_GLOBAL: config, GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0", XDG_CONFIG_HOME: this.dir };
   }
 
   path(...parts: string[]): string {
@@ -54,18 +60,18 @@ export class Sandbox {
   }
 
   cli(cwd: string, ...args: string[]): string {
-    return execFileSync(process.execPath, [CLI, ...args], { cwd, env: this.env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    return execFileSync(process.execPath, [this.cliPath, ...args], { cwd, env: this.env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   }
 
   /** Runs the CLI without throwing, for commands whose exit code is the result. */
   cliResult(cwd: string, ...args: string[]): { status: number | null; stdout: string; stderr: string } {
-    const { status, stdout, stderr } = spawnSync(process.execPath, [CLI, ...args], { cwd, env: this.env, encoding: "utf8" });
+    const { status, stdout, stderr } = spawnSync(process.execPath, [this.cliPath, ...args], { cwd, env: this.env, encoding: "utf8" });
     return { status, stdout, stderr };
   }
 
   /** Runs the CLI with `input` on stdin, as a harness hook would. */
   cliWithInput(cwd: string, input: string, ...args: string[]): string {
-    return execFileSync(process.execPath, [CLI, ...args], { cwd, env: this.env, encoding: "utf8", input, stdio: ["pipe", "pipe", "pipe"] });
+    return execFileSync(process.execPath, [this.cliPath, ...args], { cwd, env: this.env, encoding: "utf8", input, stdio: ["pipe", "pipe", "pipe"] });
   }
 
   /** Writes LF-authored text with this sandbox's working-tree terminator. */

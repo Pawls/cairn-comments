@@ -1,12 +1,12 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { PassThrough, Writable } from "node:stream";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { contentPackets, FLUSH, MAX_PACKET_DATA, PacketReader, textPacket } from "../src/pktline.js";
 import { serveFilterProcess } from "../src/process.js";
-import { CLI, Sandbox } from "./harness.js";
+import { Sandbox } from "./harness.js";
 
 const GREETING = [textPacket("git-filter-client"), textPacket("version=2"), FLUSH];
 const OFFER = [textPacket("capability=clean"), textPacket("capability=smudge"), textPacket("capability=delay"), FLUSH];
@@ -236,7 +236,8 @@ describe("filter process protocol", () => {
  * standing in for a crash mid-stream. Git starts a fresh process for the next file.
  */
 function writeCrashingFilter(file: string): void {
-  const process_ = pathToFileURL(path.join(path.dirname(CLI), "process.js")).href;
+  // The tsc output, which keeps process.js a module of its own; the bundle does not.
+  const process_ = pathToFileURL(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../dist/process.js")).href;
   writeFileSync(
     file,
     [

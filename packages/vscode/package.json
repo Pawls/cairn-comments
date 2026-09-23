@@ -2,10 +2,14 @@
   "name": "slopstash-vscode",
   "displayName": "Slopstash: Hide AI Comments",
   "description": "Stash the slop, keep the context. Keeps AI-written comments out of your code without losing them, and shows them as a toggleable overlay over the bare markers left in committed code.",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "publisher": "slopstash",
   "license": "MIT",
-  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Pawls/slopstash.git",
+    "directory": "packages/vscode"
+  },
   "type": "module",
   "main": "./dist/extension.cjs",
   "engines": {
@@ -148,15 +152,15 @@
   },
   "scripts": {
     "bundle": "node esbuild.mjs",
-    "e2e": "node out/e2e/run.js"
-  },
-  "dependencies": {
-    "@slopstash/core": "0.0.0"
+    "e2e": "node out/e2e/run.js",
+    "package": "node -e \"require('fs').copyFileSync('../../LICENSE', 'LICENSE')\" && vsce package --no-dependencies -o slopstash.vsix"
   },
   "devDependencies": {
+    "@slopstash/core": "0.0.0",
     "@types/mocha": "^10.0.10",
     "@types/vscode": "1.90.0",
     "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^4.0.0",
     "esbuild": "^0.28.2",
     "mocha": "^12.0.2"
   }

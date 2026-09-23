@@ -9,10 +9,10 @@
     "packages/vscode"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
-    "build": "tsc -b && npm run bundle -w packages/vscode",
+    "build": "tsc -b && npm run bundle -w packages/cli && npm run bundle -w packages/vscode",
     "lint": "eslint .",
     "test": "npm run build && vitest run",
     "test:unit": "vitest run packages/core packages/vscode",

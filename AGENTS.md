@@ -9,8 +9,9 @@ markers through a git filter, bodies live in `.agents/comments/`. Start with
 
 | Command | What it does |
 | --- | --- |
-| `npm test` | `tsc -b`, bundle the extension, then every vitest suite. The CLI integration tests run `packages/cli/dist/main.js`, so a stale build tests old code; `npm run test:unit` skips the build and covers only `core` and `vscode`. |
-| `npm run test:vscode` | Extension e2e in a downloaded VS Code (first run downloads it into `.vscode-test/`). |
+| `npm test` | `tsc -b`, bundle the CLI and the extension, then every vitest suite. The CLI integration tests run the published bundle `packages/cli/bundle/main.js`, so a stale build tests old code; `package.test.ts` packs and installs it. `npm run test:unit` skips the build and covers only `core` and `vscode`. |
+| `npm run test:vscode` | Extension e2e in a downloaded VS Code (first run downloads it into `.vscode-test/`). With `SLOPSTASH_E2E_EXTENSION=<unzipped .vsix>/extension` it tests the packaged extension instead. |
+| `npm run package -w packages/vscode` | Build `packages/vscode/slopstash.vsix` (after `npm run build`). Packaging only; nothing is published. |
 | `npm run lint` | eslint over the whole workspace. |
 | `npm run bench` | 2,000-file checkout benchmark (design.md § Filter process). Slow; run only when touching the filter path. |
 
@@ -30,7 +31,11 @@ platform (WSL Ubuntu so far). The integration suites already run each scenario u
 - **The brand lives in one constant** (`packages/core/src/brand.ts`). The CLI `bin` key
   and the extension manifest repeat it; `packages/cli/test/brand.test.ts` guards them.
 - **Integration tests use the `Sandbox` harness** (`packages/cli/test/harness.ts`), which
-  isolates `GIT_CONFIG_GLOBAL`. Never let a test touch the developer's git config or hooks.
+  isolates `GIT_CONFIG_GLOBAL` and `XDG_CONFIG_HOME` (git's global ignore file). Never let
+  a test touch the developer's git config or hooks.
+- **Packages have no runtime dependencies.** Both bundle core and web-tree-sitter, and
+  `scripts/bundle-assets.mjs` copies the WASM beside them; a new runtime import must bundle
+  too (design.md § Packaging).
 - **Detector changes move measured numbers.** `scan.corpus.test.ts` pins each detector's
   score and enabled flag; update the table in design.md § Scan detectors with them.
 

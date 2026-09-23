@@ -1,0 +1,7 @@
+**
+!dist/extension.cjs
+!dist/web-tree-sitter.wasm
+!dist/grammars/**
+!README.md
+!LICENSE
+!package.json

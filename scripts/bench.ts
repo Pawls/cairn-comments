@@ -30,7 +30,7 @@ const RUNS = Number(args.runs);
 const ONE_SHOT_RUNS = Number(args["one-shot-runs"]);
 const MARKERS_PER_FILE = 6;
 
-const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../packages/cli/dist/main.js");
+const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../packages/cli/bundle/main.js");
 const dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "slopstash-bench-")));
 const globalConfig = path.join(dir, "gitconfig");
 writeFileSync(

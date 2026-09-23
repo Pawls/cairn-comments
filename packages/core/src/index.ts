@@ -30,6 +30,7 @@ export {
   type SyncResult,
 } from "./filter.js";
 export { resolveIds } from "./ids.js";
+export { mergeSidecars, type MergeResult } from "./merge.js";
 export { LANGUAGES, languageForPath, type LanguageSpec } from "./languages.js";
 export { STALE_TAG, findMarkers, type FindOptions, type Marker, type MarkerKind } from "./markers.js";
 export {

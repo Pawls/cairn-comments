@@ -6,6 +6,8 @@ import {
   bodiesOf,
   clean,
   confirm,
+  findMarkers,
+  languageForPath,
   parseSidecar,
   promote,
   serializeSidecar,
@@ -98,7 +100,7 @@ async function rewriteFiles(root: string, files: string[], rewrite?: Rewrite, op
 }
 
 /** An emptied sidecar is removed rather than left as a zero-byte file. */
-function writeSidecar(root: string, file: string, sidecar: Sidecar): void {
+export function writeSidecar(root: string, file: string, sidecar: Sidecar): void {
   const sidecarFile = path.join(root, sidecarPathFor(file));
   if (!sidecar.entries.length && !sidecar.preamble) {
     rmSync(sidecarFile, { force: true });
@@ -152,6 +154,16 @@ export async function confirmIds(root: string, file: string, ids: string[], expa
   if (result.changed) writeSidecar(root, file, result.sidecar);
   if (expand) await expandFiles(root, [file]);
   return result.missing;
+}
+
+/** Ids of the markers in a working file that have a body to promote, inline or stored. */
+export async function promotableIds(root: string, file: string): Promise<string[]> {
+  const spec = languageForPath(file);
+  const source = decodeExact(readFileSync(path.join(root, file)));
+  if (!spec || source === undefined) return [];
+  const bodies = bodiesOf(readSidecarSync(root, file));
+  const ids = (await findMarkers(spec, source)).flatMap((m) => (m.id && (m.text || bodies.get(m.id)) ? [m.id] : []));
+  return [...new Set(ids)];
 }
 
 /**

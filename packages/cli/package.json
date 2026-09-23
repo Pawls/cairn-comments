@@ -1,15 +1,39 @@
 {
   "name": "slopstash",
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "Stash the slop, keep the context: a git filter that keeps AI-written comments out of committed code and serves them back inline to coding agents.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Pawls/slopstash.git",
+    "directory": "packages/cli"
+  },
   "type": "module",
+  "keywords": [
+    "ai comments",
+    "ai slop",
+    "git filter",
+    "coding agent",
+    "claude code",
+    "codex",
+    "cursor",
+    "comments"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "bin": {
-    "slopstash": "./dist/main.js"
+    "slopstash": "./bundle/main.js"
   },
   "files": [
-    "dist"
+    "bundle"
   ],
-  "dependencies": {
-    "@slopstash/core": "0.0.0"
+  "scripts": {
+    "bundle": "node bundle.mjs",
+    "prepack": "node -e \"require('fs').copyFileSync('../../LICENSE', 'LICENSE')\""
+  },
+  "devDependencies": {
+    "@slopstash/core": "0.0.0",
+    "esbuild": "^0.28.2"
   }
 }

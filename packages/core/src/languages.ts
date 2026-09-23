@@ -1,4 +1,7 @@
+import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 export interface LanguageSpec {
   id: string;
@@ -69,6 +72,12 @@ export function languageForPath(path: string): LanguageSpec | undefined {
   return LANGUAGES.find((l) => l.extensions.some((ext) => lower.endsWith(ext)));
 }
 
+/**
+ * A published bundle carries the grammars in `grammars/` beside it, so it needs none of the
+ * grammar packages (whose install scripts build native bindings nothing here uses). From
+ * source, the packages resolve through `node_modules`.
+ */
 export function resolveWasm(spec: LanguageSpec): string {
-  return createRequire(import.meta.url).resolve(spec.wasm);
+  const bundled = fileURLToPath(new URL(`grammars/${path.posix.basename(spec.wasm)}`, import.meta.url));
+  return existsSync(bundled) ? bundled : createRequire(import.meta.url).resolve(spec.wasm);
 }

@@ -54,7 +54,8 @@ describe.each(MODES)("round trip through git (autocrlf=$autocrlf, oneShot=$oneSh
     expect(attributes).toContain("*.js filter=slopstash");
     expect(attributes).toContain("*.cs filter=slopstash");
     expect(attributes).toContain("*.java filter=slopstash");
-    expect(attributes).toContain(".agents/comments/** merge=union text eol=lf");
+    expect(attributes).toContain(".agents/comments/** merge=slopstash text eol=lf");
+    expect(attributes).toContain(".agents/scan-ignore merge=union text eol=lf");
     expect(() => box.git(main, "config", "--get", "filter.slopstash.smudge")).toThrow();
     if (oneShot) expect(() => box.git(main, "config", "--get", "filter.slopstash.process")).toThrow();
     else expect(box.git(main, "config", "--get", "filter.slopstash.process").trim()).toMatch(/ filter-process$/);

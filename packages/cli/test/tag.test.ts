@@ -98,9 +98,9 @@ describe.each([false, true])("tag and hook adapters (autocrlf=%s)", (autocrlf) =
     const settings = box.path("main", ".claude/settings.local.json");
     box.write(settings, JSON.stringify({ permissions: { allow: ["Bash(ls)"] } }, null, 2) + "\n");
     const report = box.cli(main, "init", "--hooks", "claude-code,codex,cursor");
-    expect(report).toContain(".claude/settings.local.json: claude-code hook installed");
-    expect(report).toContain(".codex/hooks.json: codex hook installed");
-    expect(report).toContain(".cursor/hooks.json: cursor hook installed");
+    expect(report).toContain(".claude/settings.local.json: set the claude-code hook");
+    expect(report).toContain(".codex/hooks.json: create with the codex hook");
+    expect(report).toContain(".cursor/hooks.json: create with the cursor hook");
     const claude = JSON.parse(readFileSync(settings, "utf8"));
     expect(claude.permissions).toEqual({ allow: ["Bash(ls)"] });
     expect(claude.hooks.PostToolUse).toEqual([
@@ -110,7 +110,7 @@ describe.each([false, true])("tag and hook adapters (autocrlf=%s)", (autocrlf) =
     expect(cursor).toEqual({ version: 1, hooks: { afterFileEdit: [{ command: expect.stringMatching(/ hook cursor$/) }] } });
     expect(JSON.parse(read("main", ".codex/hooks.json")).hooks.PostToolUse[0].matcher).toBe("apply_patch|Edit|Write");
 
-    expect(box.cli(main, "init", "--hooks", "claude-code")).toContain("claude-code hook already up to date");
+    expect(box.cli(main, "init", "--hooks", "claude-code")).toBe("nothing to change\n");
     box.cli(main, "init", "--hooks", "cursor", "--command", "slopstash");
     expect(JSON.parse(read("main", ".cursor/hooks.json")).hooks.afterFileEdit).toEqual([{ command: "slopstash hook cursor" }]);
     expect(() => box.cli(main, "init", "--hooks", "vim")).toThrow(/unknown harness "vim"/);
@@ -119,11 +119,11 @@ describe.each([false, true])("tag and hook adapters (autocrlf=%s)", (autocrlf) =
   it("init --agents-md writes the convention once and updates it in place", () => {
     const agents = box.path("main", "AGENTS.md");
     box.write(agents, "# Project\n\nOur rules.\n");
-    expect(box.cli(main, "init", "--agents-md")).toContain("AGENTS.md: sigil convention written");
+    expect(box.cli(main, "init", "--agents-md")).toContain("AGENTS.md: add the sigil convention\n");
     const first = read("main", "AGENTS.md");
     expect(first).toMatch(/^# Project\n\nOur rules\.\n\n<!-- slopstash:begin -->\n## AI comments\n/);
     expect(first).toContain("`#~ text` in Python; `//~ text` in TypeScript, JavaScript, C#, and Java");
-    expect(box.cli(main, "init", "--agents-md")).toContain("AGENTS.md: already up to date");
+    expect(box.cli(main, "init", "--agents-md")).toBe("nothing to change\n");
     writeFileSync(agents, readFileSync(agents, "utf8").replace("## AI comments", "## stale copy") + "More rules.\n");
     box.cli(main, "init", "--agents-md");
     expect(read("main", "AGENTS.md")).toBe(first + "More rules.\n");
