@@ -3,7 +3,18 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { BRAND, SIDECAR_ROOT, STALE_TAG, mergeSidecars, parseSidecar, serializeSidecar } from "@slopstash/core";
 import { check, formatCheck } from "./check.js";
-import { collapseFiles, confirmIds, expandFiles, filterContent, promotableIds, promoteIds, readSidecar, selectFiles, staleIn, syncFiles } from "./files.js";
+import {
+  collapseFiles,
+  confirmIds,
+  expandFiles,
+  filterContent,
+  promotableIds,
+  promoteIds,
+  readSidecar,
+  selectFiles,
+  staleIn,
+  syncFiles,
+} from "./files.js";
 import { ADAPTERS } from "./adapters.js";
 import { repoRoot, smudges, toRepoPath, trackedFiles } from "./git.js";
 import { runHook } from "./hook.js";
@@ -60,11 +71,111 @@ async function readStdin(): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
+function printJson(value: unknown): void {
+  process.stdout.write(JSON.stringify(value, null, 2) + "\n");
+}
+
 /** Git runs filters from the worktree root and passes a root-relative path. */
 async function runFilter(mode: "clean" | "smudge", file: string | undefined): Promise<void> {
   if (!file) throw new Error(`${mode} needs the path git passes as %f`);
   const output = await filterContent(mode, process.cwd(), file, await readStdin());
-  await new Promise<void>((resolve, reject) => process.stdout.write(output, (err) => (err ? reject(err) : resolve())));
+  await new Promise<void>((resolve, reject) => {
+    process.stdout.write(output, (err) => (err ? reject(err) : resolve()));
+  });
+}
+
+async function runFilterProcess(args: string[]): Promise<void> {
+  const { values } = parseArgs({ args, options: { smudge: { type: "boolean", default: false } } });
+  const log = (message: string) => process.stderr.write(`${BRAND}: ${message}\n`);
+  return serveFilterProcess(process.stdin, process.stdout, { root: process.cwd(), smudge: values.smudge, log });
+}
+
+async function runSync(args: string[]): Promise<void> {
+  const { values, positionals } = parseArgs({
+    args,
+    allowPositionals: true,
+    options: { staged: { type: "boolean", default: false }, add: { type: "boolean", default: false } },
+  });
+  const root = repoRoot();
+  return syncFiles(root, selectFiles(root, { files: positionals, staged: values.staged }), { add: values.add });
+}
+
+async function runRewrite(args: string[], rewrite: (root: string, files: string[]) => Promise<void>): Promise<void> {
+  const root = repoRoot();
+  return rewrite(root, selectFiles(root, { files: args, staged: false }));
+}
+
+async function runScan(args: string[]): Promise<void> {
+  const { values, positionals } = parseArgs({
+    args,
+    allowPositionals: true,
+    options: {
+      json: { type: "boolean", default: false },
+      all: { type: "boolean", default: false },
+      apply: { type: "string" },
+      "mark-all": { type: "boolean", default: false },
+    },
+  });
+  const root = repoRoot();
+  if (values.apply !== undefined) {
+    const text = values.apply === "-" ? (await readStdin()).toString("utf8") : readFileSync(values.apply, "utf8");
+    process.stdout.write(formatApply(await applyReview(root, parseReview(text))));
+    return;
+  }
+  if (values["mark-all"]) {
+    process.stdout.write(formatApply(await markAll(root, positionals)));
+    return;
+  }
+  const review = await scan(root, positionals, { all: values.all });
+  if (values.json) printJson(review);
+  else process.stdout.write(formatReview(review));
+}
+
+async function runTag(args: string[]): Promise<void> {
+  const { values, positionals } = parseArgs({
+    args,
+    allowPositionals: true,
+    options: {
+      changed: { type: "boolean", default: false },
+      by: { type: "string" },
+      model: { type: "string" },
+      session: { type: "string" },
+    },
+  });
+  const root = repoRoot();
+  const named = positionals.map((f) => toRepoPath(root, f));
+  const report = await tag(root, tagTargets(root, named, values.changed), values);
+  console.log(`tagged ${report.tagged} comment(s); synced ${report.files.length} file(s)`);
+}
+
+async function runCheck(args: string[]): Promise<void> {
+  const { values, positionals } = parseArgs({
+    args,
+    allowPositionals: true,
+    options: {
+      stale: { type: "boolean", default: false },
+      json: { type: "boolean", default: false },
+      staged: { type: "boolean", default: false },
+      fix: { type: "boolean", default: false },
+    },
+  });
+  const root = repoRoot();
+  if (values.stale) return runStaleCheck(root, positionals, values.json);
+  const report = await check(root, { files: positionals, staged: values.staged, fix: values.fix });
+  if (values.json) printJson(report);
+  else process.stdout.write(formatCheck(report));
+  if (report.problems.length) process.exitCode = 1;
+}
+
+async function runStaleCheck(root: string, files: string[], json: boolean): Promise<void> {
+  const stale = await staleIn(root, selectFiles(root, { files, staged: false }));
+  const rows = stale.map((s) => ({ file: s.file, line: s.line, id: s.id, text: s.body }));
+  if (json) {
+    printJson(rows);
+  } else {
+    for (const r of rows) console.log(`${r.file}:${r.line}: ${r.id} ${STALE_TAG} ${r.text.split("\n")[0]}`);
+  }
+  if (rows.length) process.exitCode = 1;
 }
 
 /** `<file>:<id>`, or a bare id found in exactly one sidecar. */
@@ -76,193 +187,148 @@ async function locateId(root: string, arg: string): Promise<[string, string]> {
     if ((await readSidecar(root, file)).entries.some((e) => e.id === arg)) files.push(file);
   }
   if (files.length === 1) return [files[0]!, arg];
-  throw new Error(files.length ? `${arg} is in several files; name one as <file>:${arg}: ${files.join(", ")}` : `no comment ${arg}`);
+  if (!files.length) throw new Error(`no comment ${arg}`);
+  throw new Error(`${arg} is in several files; name one as <file>:${arg}: ${files.join(", ")}`);
 }
+
+/** Ids named on the command line, grouped by the file that holds each. */
+async function idsByFile(root: string, args: string[]): Promise<Map<string, string[]>> {
+  const byFile = new Map<string, string[]>();
+  for (const arg of args) {
+    const [file, id] = await locateId(root, arg);
+    byFile.set(file, [...(byFile.get(file) ?? []), id]);
+  }
+  return byFile;
+}
+
+type IdAction = (root: string, file: string, ids: string[], expand: boolean) => Promise<string[]>;
+
+async function applyToIds(root: string, byFile: Map<string, string[]>, action: IdAction, done: string): Promise<void> {
+  const expand = smudges(root);
+  for (const [file, ids] of byFile) {
+    const missing = await action(root, file, ids, expand);
+    if (missing.length) throw new Error(`no comment ${missing.join(", ")} in ${file}`);
+    console.log(`${done} ${ids.join(", ")} in ${file}`);
+  }
+}
+
+async function runConfirm(args: string[]): Promise<void> {
+  if (!args.length) throw new Error("confirm needs one or more ids (<id> or <file>:<id>)");
+  const root = repoRoot();
+  await applyToIds(root, await idsByFile(root, args), confirmIds, "confirmed");
+}
+
+async function runPromote(args: string[]): Promise<void> {
+  if (!args.length) throw new Error("promote needs one or more ids (<id> or <file>:<id>)");
+  const root = repoRoot();
+  if (args[0] !== "--all") {
+    await applyToIds(root, await idsByFile(root, args), promoteIds, "promoted");
+    return;
+  }
+  const byFile = new Map<string, string[]>();
+  for (const file of selectFiles(root, { files: args.slice(1), staged: false })) {
+    const ids = await promotableIds(root, file);
+    if (ids.length) byFile.set(file, ids);
+  }
+  if (!byFile.size) console.log("no AI comments to promote");
+  await applyToIds(root, byFile, promoteIds, "promoted");
+}
+
+async function runDemote(args: string[]): Promise<void> {
+  if (!args.length) throw new Error("demote needs one or more <file>:<line>");
+  const root = repoRoot();
+  const targets = args.map((arg) => {
+    const split = /^(.+):([1-9][0-9]*)$/.exec(arg);
+    if (!split) throw new Error(`expected <file>:<line>, got ${arg}`);
+    return { file: toRepoPath(root, split[1]!), line: Number(split[2]) };
+  });
+  const report = await demote(root, targets);
+  console.log(`demoted ${report.converted.length} comment(s) in ${report.files.length} file(s)`);
+}
+
+async function runHookCommand(args: string[]): Promise<void> {
+  if (!args[0]) throw new Error(`hook needs a harness: ${Object.keys(ADAPTERS).join(", ")}`);
+  await runHook(args[0], (await readStdin()).toString("utf8"));
+}
+
+async function runAgentsMd(): Promise<void> {
+  process.stdout.write(agentsSnippet());
+}
+
+async function runInit(args: string[]): Promise<void> {
+  const { values } = parseArgs({
+    args,
+    options: {
+      command: { type: "string" },
+      "one-shot": { type: "boolean", default: false },
+      hooks: { type: "string" },
+      "agents-md": { type: "boolean", default: false },
+      "dry-run": { type: "boolean", default: false },
+    },
+  });
+  const hooks = values.hooks?.split(",").map((h) => h.trim()).filter(Boolean);
+  const options = { command: values.command, oneShot: values["one-shot"], hooks, agentsMd: values["agents-md"] };
+  for (const line of runPlan(planInit(repoRoot(), options), values["dry-run"])) console.log(line);
+}
+
+async function runUninstall(args: string[]): Promise<void> {
+  const { values } = parseArgs({ args, options: { "dry-run": { type: "boolean", default: false } } });
+  const root = repoRoot();
+  for (const line of runPlan(planUninstall(root), values["dry-run"])) console.log(line);
+  const kept = trackedFiles(root).filter((f) => f.startsWith(`${SIDECAR_ROOT}/`)).length;
+  if (kept) {
+    console.log(
+      `note: ${kept} sidecar file(s) under ${SIDECAR_ROOT}/ and their markers stay; ` +
+        `\`${BRAND} promote --all\` before uninstalling turns them into ordinary comments`,
+    );
+  }
+}
+
+async function runMergeSidecar(args: string[]): Promise<void> {
+  const [base, ours, theirs] = args;
+  if (!base || !ours || !theirs) throw new Error("merge-sidecar needs the %O %A %B paths git passes");
+  const read = (file: string) => parseSidecar(readFileSync(file, "utf8"));
+  const result = mergeSidecars(read(base), read(ours), read(theirs));
+  writeFileSync(ours, serializeSidecar(result.sidecar));
+  if (result.conflicts.length) {
+    const ids = result.conflicts.join(", ");
+    process.stderr.write(`${BRAND}: both sides changed ${ids}; resolve the conflict markers in the body\n`);
+    process.exitCode = 1;
+  }
+}
+
+async function runWorktree(args: string[]): Promise<void> {
+  if (args[0] !== "add") throw new Error("only `worktree add` is supported");
+  console.log(`worktree ready: ${addWorktree(repoRoot(), args.slice(1))}`);
+}
+
+const COMMANDS = new Map<string, (args: string[]) => Promise<void>>([
+  ["clean", (args) => runFilter("clean", args[0])],
+  ["smudge", (args) => runFilter("smudge", args[0])],
+  ["filter-process", runFilterProcess],
+  ["sync", runSync],
+  ["expand", (args) => runRewrite(args, expandFiles)],
+  ["collapse", (args) => runRewrite(args, collapseFiles)],
+  ["scan", runScan],
+  ["tag", runTag],
+  ["check", runCheck],
+  ["confirm", runConfirm],
+  ["promote", runPromote],
+  ["demote", runDemote],
+  ["hook", runHookCommand],
+  ["agents-md", runAgentsMd],
+  ["init", runInit],
+  ["uninstall", runUninstall],
+  ["merge-sidecar", runMergeSidecar],
+  ["worktree", runWorktree],
+]);
 
 async function main(argv: string[]): Promise<void> {
   const [command, ...rest] = argv;
-  switch (command) {
-    case "clean":
-    case "smudge":
-      return runFilter(command, rest[0]);
-    case "filter-process": {
-      const { values } = parseArgs({ args: rest, options: { smudge: { type: "boolean", default: false } } });
-      const log = (message: string) => process.stderr.write(`${BRAND}: ${message}\n`);
-      return serveFilterProcess(process.stdin, process.stdout, { root: process.cwd(), smudge: values.smudge, log });
-    }
-    case "sync": {
-      const { values, positionals } = parseArgs({
-        args: rest,
-        allowPositionals: true,
-        options: { staged: { type: "boolean", default: false }, add: { type: "boolean", default: false } },
-      });
-      const root = repoRoot();
-      return syncFiles(root, selectFiles(root, { files: positionals, staged: values.staged }), { add: values.add });
-    }
-    case "expand":
-    case "collapse": {
-      const root = repoRoot();
-      const files = selectFiles(root, { files: rest, staged: false });
-      return command === "expand" ? expandFiles(root, files) : collapseFiles(root, files);
-    }
-    case "scan": {
-      const { values, positionals } = parseArgs({
-        args: rest,
-        allowPositionals: true,
-        options: {
-          json: { type: "boolean", default: false },
-          all: { type: "boolean", default: false },
-          apply: { type: "string" },
-          "mark-all": { type: "boolean", default: false },
-        },
-      });
-      const root = repoRoot();
-      if (values.apply !== undefined) {
-        const text = values.apply === "-" ? (await readStdin()).toString("utf8") : readFileSync(values.apply, "utf8");
-        process.stdout.write(formatApply(await applyReview(root, parseReview(text))));
-        return;
-      }
-      if (values["mark-all"]) {
-        process.stdout.write(formatApply(await markAll(root, positionals)));
-        return;
-      }
-      const review = await scan(root, positionals, { all: values.all });
-      process.stdout.write(values.json ? JSON.stringify(review, null, 2) + "\n" : formatReview(review));
-      return;
-    }
-    case "tag": {
-      const { values, positionals } = parseArgs({
-        args: rest,
-        allowPositionals: true,
-        options: {
-          changed: { type: "boolean", default: false },
-          by: { type: "string" },
-          model: { type: "string" },
-          session: { type: "string" },
-        },
-      });
-      const root = repoRoot();
-      const named = positionals.map((f) => toRepoPath(root, f));
-      const report = await tag(root, tagTargets(root, named, values.changed), values);
-      console.log(`tagged ${report.tagged} comment(s); synced ${report.files.length} file(s)`);
-      return;
-    }
-    case "check": {
-      const { values, positionals } = parseArgs({
-        args: rest,
-        allowPositionals: true,
-        options: {
-          stale: { type: "boolean", default: false },
-          json: { type: "boolean", default: false },
-          staged: { type: "boolean", default: false },
-          fix: { type: "boolean", default: false },
-        },
-      });
-      const root = repoRoot();
-      if (!values.stale) {
-        const report = await check(root, { files: positionals, staged: values.staged, fix: values.fix });
-        process.stdout.write(values.json ? JSON.stringify(report, null, 2) + "\n" : formatCheck(report));
-        if (report.problems.length) process.exitCode = 1;
-        return;
-      }
-      const stale = await staleIn(root, selectFiles(root, { files: positionals, staged: false }));
-      const rows = stale.map((s) => ({ file: s.file, line: s.line, id: s.id, text: s.body }));
-      if (values.json) process.stdout.write(JSON.stringify(rows, null, 2) + "\n");
-      else for (const r of rows) console.log(`${r.file}:${r.line}: ${r.id} ${STALE_TAG} ${r.text.split("\n")[0]}`);
-      if (rows.length) process.exitCode = 1;
-      return;
-    }
-    case "confirm":
-    case "promote": {
-      const all = command === "promote" && rest[0] === "--all";
-      if (!rest.length) throw new Error(`${command} needs one or more ids (<id> or <file>:<id>)`);
-      const root = repoRoot();
-      const byFile = new Map<string, string[]>();
-      if (all) {
-        for (const file of selectFiles(root, { files: rest.slice(1), staged: false })) {
-          const ids = await promotableIds(root, file);
-          if (ids.length) byFile.set(file, ids);
-        }
-        if (!byFile.size) console.log("no AI comments to promote");
-      }
-      for (const arg of all ? [] : rest) {
-        const [file, id] = await locateId(root, arg);
-        byFile.set(file, [...(byFile.get(file) ?? []), id]);
-      }
-      const expand = smudges(root);
-      const run = command === "confirm" ? confirmIds : promoteIds;
-      for (const [file, ids] of byFile) {
-        const missing = await run(root, file, ids, expand);
-        if (missing.length) throw new Error(`no comment ${missing.join(", ")} in ${file}`);
-        console.log(`${command === "confirm" ? "confirmed" : "promoted"} ${ids.join(", ")} in ${file}`);
-      }
-      return;
-    }
-    case "demote": {
-      if (!rest.length) throw new Error("demote needs one or more <file>:<line>");
-      const root = repoRoot();
-      const targets = rest.map((arg) => {
-        const split = /^(.+):([1-9][0-9]*)$/.exec(arg);
-        if (!split) throw new Error(`expected <file>:<line>, got ${arg}`);
-        return { file: toRepoPath(root, split[1]!), line: Number(split[2]) };
-      });
-      const report = await demote(root, targets);
-      console.log(`demoted ${report.converted.length} comment(s) in ${report.files.length} file(s)`);
-      return;
-    }
-    case "hook": {
-      if (!rest[0]) throw new Error(`hook needs a harness: ${Object.keys(ADAPTERS).join(", ")}`);
-      await runHook(rest[0], (await readStdin()).toString("utf8"));
-      return;
-    }
-    case "agents-md":
-      process.stdout.write(agentsSnippet());
-      return;
-    case "init": {
-      const { values } = parseArgs({
-        args: rest,
-        options: {
-          command: { type: "string" },
-          "one-shot": { type: "boolean", default: false },
-          hooks: { type: "string" },
-          "agents-md": { type: "boolean", default: false },
-          "dry-run": { type: "boolean", default: false },
-        },
-      });
-      const hooks = values.hooks?.split(",").map((h) => h.trim()).filter(Boolean);
-      const options = { command: values.command, oneShot: values["one-shot"], hooks, agentsMd: values["agents-md"] };
-      for (const line of runPlan(planInit(repoRoot(), options), values["dry-run"])) console.log(line);
-      return;
-    }
-    case "uninstall": {
-      const { values } = parseArgs({ args: rest, options: { "dry-run": { type: "boolean", default: false } } });
-      const root = repoRoot();
-      for (const line of runPlan(planUninstall(root), values["dry-run"])) console.log(line);
-      const kept = trackedFiles(root).filter((f) => f.startsWith(`${SIDECAR_ROOT}/`)).length;
-      if (kept) console.log(`note: ${kept} sidecar file(s) under ${SIDECAR_ROOT}/ and their markers stay; \`${BRAND} promote --all\` before uninstalling turns them into ordinary comments`);
-      return;
-    }
-    case "merge-sidecar": {
-      const [base, ours, theirs] = rest;
-      if (!base || !ours || !theirs) throw new Error("merge-sidecar needs the %O %A %B paths git passes");
-      const read = (file: string) => parseSidecar(readFileSync(file, "utf8"));
-      const result = mergeSidecars(read(base), read(ours), read(theirs));
-      writeFileSync(ours, serializeSidecar(result.sidecar));
-      if (result.conflicts.length) {
-        process.stderr.write(`${BRAND}: both sides changed ${result.conflicts.join(", ")}; resolve the conflict markers in the body\n`);
-        process.exitCode = 1;
-      }
-      return;
-    }
-    case "worktree": {
-      if (rest[0] !== "add") throw new Error("only `worktree add` is supported");
-      console.log(`worktree ready: ${addWorktree(repoRoot(), rest.slice(1))}`);
-      return;
-    }
-    default:
-      process.stdout.write(USAGE);
-      if (command && command !== "help" && command !== "--help") process.exitCode = 2;
-  }
+  const run = command === undefined ? undefined : COMMANDS.get(command);
+  if (run) return run(rest);
+  process.stdout.write(USAGE);
+  if (command && command !== "help" && command !== "--help") process.exitCode = 2;
 }
 
 main(process.argv.slice(2)).catch((error: unknown) => {
