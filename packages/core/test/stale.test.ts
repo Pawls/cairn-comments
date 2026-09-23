@@ -156,7 +156,7 @@ describe("staleness", () => {
     expect(m).toMatchObject({ kind: "new", staleTag: false, text: `${STALE_TAG} literally` });
   });
 
-  it("an entry written before A7 gets its anchor on the next sync and is not stale", async () => {
+  it("an entry written before anchors existed gets its anchor on the next sync and is not stale", async () => {
     const legacy = parseSidecar("## ab12\nretries are safe\n");
     expect(await staleMarkers("a.py", CODE_CHANGED, legacy)).toEqual([]);
     const synced = await sync("a.py", await clean("a.py", CODE_CHANGED), legacy);

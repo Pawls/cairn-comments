@@ -3,7 +3,7 @@ import { ID_PATTERN } from "./markers.js";
 
 export interface SidecarEntry {
   id: string;
-  /** Reserved per-entry metadata line; slices A6 (provenance) and A7 (staleness) fill it. */
+  /** Reserved per-entry metadata line: provenance and the staleness anchor. */
   meta: Map<string, string>;
   /** LF-joined, no leading or trailing blank lines. */
   body: string;

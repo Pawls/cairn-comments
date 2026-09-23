@@ -43,7 +43,7 @@ export function isStale(marker: Marker, stored: string | undefined, body: string
 
 /**
  * Expands bare markers from stored bodies. A marker with no body yet stays bare
- * (design.md, spike finding 2); comments that already carry text are left as written.
+ * (design.md § Git behavior, item 2); comments that already carry text are left as written.
  * Given the stored anchors, a possibly stale body is shown behind `STALE_TAG`, and the
  * tag is added to or removed from already expanded comments to match.
  */
@@ -103,7 +103,7 @@ function setAnchor(entry: SidecarEntry, anchor: string | null | undefined): bool
  * onto new comments. A body it writes records its anchor's hash, and an entry with no
  * hash yet gets the current one; an unchanged body keeps its hash, which is what makes
  * it stale once the code moves on. Entries whose marker is gone are kept; `check` owns
- * orphans (A9).
+ * orphans.
  */
 export async function sync(path: string, source: string, sidecar: Sidecar, options: SyncOptions = {}): Promise<SyncResult> {
   const unchanged = { source, sidecar, sourceChanged: false, sidecarChanged: false };

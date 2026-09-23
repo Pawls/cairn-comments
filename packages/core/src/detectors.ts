@@ -1,4 +1,4 @@
-// Heuristic tells of AI-written comments (plan A5). Each detector's `score` is its measured
+// Heuristic tells of AI-written comments (design.md § Scan detectors). Each detector's `score` is its measured
 // precision on the labeled corpus, and `enabled` follows the kill criterion (>= 80%);
 // packages/core/test/scan.corpus.test.ts pins both, so neither can drift from the evidence.
 

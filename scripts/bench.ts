@@ -1,11 +1,11 @@
 /**
- * Filter overhead benchmark (plan A4): a generated repo of marked source files, timed for
+ * Filter overhead benchmark (design.md § Filter process): a generated repo of marked source files, timed for
  * a full checkout into a smudging worktree and for `git status`, with the filter off,
  * one-shot, and as a long-running process. Run through `npm run bench`, which builds first.
  *
  *   node scripts/bench.ts [--files 2000] [--runs 3] [--one-shot-runs 1] [--autocrlf] [--no-anchors] [--keep]
  *
- * `--no-anchors` writes sidecars without staleness anchors, which skips A7's anchor hashing.
+ * `--no-anchors` writes sidecars without staleness anchors, which skips anchor hashing.
  */
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -71,7 +71,7 @@ function generate(root: string): void {
     for (let j = 0; j < MARKERS_PER_FILE / 2; j++) {
       const own = (serial++).toString(36).padStart(4, "0");
       const trailing = (serial++).toString(36).padStart(4, "0");
-      // A recorded anchor makes smudge hash every marker's code (A7); none matches, so each is tagged stale.
+      // A recorded anchor makes smudge hash every marker's code; none matches, so each is tagged stale.
       const meta = args.anchors ? "<!-- anchor=0000abcd -->\n" : "";
       bodies.push(`## ${own}\n${meta}why step ${j} of file ${i} runs before the next one\nand what breaks if it does not\n`);
       bodies.push(`## ${trailing}\n${meta}the value ${j} is load-bearing\n`);

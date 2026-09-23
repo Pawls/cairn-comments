@@ -113,7 +113,7 @@ export function managedFiles(root: string, files: string[]): string[] {
 }
 
 /**
- * Re-stats index entries after a tool rewrite (design.md, spike finding 5). Guarded: an
+ * Re-stats index entries after a tool rewrite (design.md § Git behavior, item 5). Guarded: an
  * entry is touched only when the file cleans to the blob already in the index, so this
  * can never stage a real change.
  */

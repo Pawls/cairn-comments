@@ -313,7 +313,7 @@ describe("a filter process crash mid-stream", () => {
       expect(result.status).toBe(0);
       expect(result.stderr).toMatch(/^error: external filter '.*crash\.mjs"' failed$/m);
       expect(box.git(main, "show", ":a.py")).toMatch(/^a = 2 {2}#~[0-9a-z]{4}\n$/);
-      // Documented fallback (design.md § Filter process): unfiltered, whole, and caught by `check` (A9).
+      // Documented fallback (design.md § Filter process): unfiltered, whole, and caught by `check`.
       expect(box.git(main, "show", ":b.py")).toBe("b = 2  #~ changed b\n");
       expect(box.git(main, "show", ":c.py")).toMatch(/^c = 2 {2}#~[0-9a-z]{4}\n$/);
     } finally {

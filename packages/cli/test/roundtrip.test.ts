@@ -8,7 +8,7 @@ const BASE = "def settle(order):\n    ledger.write(order.id)\n    notify(order)\
 const NOTE = "retries are safe: ledger write is idempotent";
 const NOTE_2 = "the ledger rejects a duplicate order id";
 const TRAILING = "keyed on order.id";
-/** The metadata line `sync` writes with every body (A7 staleness). */
+/** The metadata line `sync` writes with every body (the staleness anchor). */
 const ANCHOR = "<!-- anchor=[0-9a-f]{8} -->\\n";
 const AGENT_EDIT = `def settle(order):\n    #~ ${NOTE}\n    #~ ${NOTE_2}\n    ledger.write(order.id)  #~ ${TRAILING}\n    notify(order)\n`;
 const COLLAPSED = /^def settle\(order\):\n {4}#~[0-9a-z]{4}\n {4}ledger\.write\(order\.id\) {2}#~[0-9a-z]{4}\n {4}notify\(order\)\n$/;

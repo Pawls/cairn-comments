@@ -10,7 +10,7 @@ const npm = (cwd: string, ...args: string[]) =>
   // npm is a .cmd on Windows, which only a shell can start.
   execFileSync(process.platform === "win32" ? "npm.cmd" : "npm", args, { cwd, encoding: "utf8", shell: process.platform === "win32" });
 
-/** Verify step of A9: install the packed tarball into an empty project and run the quickstart. */
+/** Install the packed tarball into an empty project and run the quickstart. */
 describe("the published CLI package", () => {
   let scratch: Sandbox;
   let box: Sandbox;

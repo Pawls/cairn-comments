@@ -67,7 +67,7 @@ export function planOverlay(
 /**
  * One line of provenance from an entry's metadata (`tag` writes by, model, session, at):
  * `claude-code · claude-opus-5-5 · 2026-09-22 20:25 UTC · session f6bed7e6`. Keys it does
- * not know, such as A7's anchor, are left out.
+ * not know, such as the staleness anchor, are left out.
  */
 export function provenanceLine(meta: ReadonlyMap<string, string>): string | undefined {
   const at = meta.get("at")?.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/);

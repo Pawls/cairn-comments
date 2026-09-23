@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Sandbox } from "./harness.js";
 
 /**
- * One A1-style round trip per A3 language: init, an agent worktree adds a marker,
+ * One round trip per supported language: init, an agent worktree adds a marker,
  * commit collapses it in the blob, and a fresh smudged worktree expands it back.
  */
 const CASES: { name: string; file: string; base: string; note: string; edited: string; collapsed: RegExp }[] = [

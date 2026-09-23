@@ -188,7 +188,6 @@ without Slopstash's filter.
 ## Development
 
 - [Design, decisions, and measurements](docs/design.md)
-- [v1 plan](docs/plans/v1.md)
 - [Notes for contributors and agents](AGENTS.md)
 
 ```sh

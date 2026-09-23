@@ -105,7 +105,7 @@ function hooksDir(root: string): string {
 
 /**
  * Installs into the effective hooks directory, which a `core.hooksPath` may have moved
- * away from `.git/hooks` (design.md, spike finding 4). An existing hook is renamed and
+ * away from `.git/hooks` (design.md § Git behavior, item 4). An existing hook is renamed and
  * run after ours. The filter-config test keeps the hook inert in any other repository
  * that shares a global hooks directory.
  */

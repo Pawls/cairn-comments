@@ -40,7 +40,7 @@ Committed blob / owner checkout          Agent worktree (smudged)
 | Human view | Virtual overlay in VS Code | Files on disk stay collapsed. The marker line itself is the render site, so own-line comments display in place (no CodeLens needed); long bodies show the first line plus a hover or comment thread. |
 | Detection | Sigil is the source of truth; harness hooks auto-tag unmarked comments an agent just wrote; a repeatable `scan` finds existing AI comments by heuristic tells, with a mark-all mode | Covers users who never write agent instructions. |
 | Implementation | TypeScript everywhere, `web-tree-sitter` for parsing | One codebase for the CLI, the git filter, the hook adapters, and the extension. |
-| Languages in v1 | Python, TypeScript/JavaScript, C#, Java | Doc comments (docstrings, JSDoc, `///`, Javadoc), pragmas, license headers, and suppression directives are never stripped. Kotlin was dropped in A3: no published package ships a `web-tree-sitter`-compatible grammar WASM (see A3 rules below). |
+| Languages in v1 | Python, TypeScript/JavaScript, C#, Java | Doc comments (docstrings, JSDoc, `///`, Javadoc), pragmas, license headers, and suppression directives are never stripped. Kotlin was dropped: no published package ships a `web-tree-sitter`-compatible grammar WASM (see § Languages). |
 | Hook adapters in v1 | Claude Code, Codex CLI, Cursor, generic post-edit command | The sigil convention (AGENTS.md snippet) and the git filter work for every harness regardless. |
 | Audience | Public open source, MIT | Marketplace extension + npm CLI. |
 
@@ -67,11 +67,11 @@ the sidecar), from the harness hook adapters after each edit, and on demand.
 git prefers over the one-shot `clean`/`smudge` commands; an agent worktree overrides it
 with `--smudge` in its per-worktree config. See § Filter process.
 
-## Spike findings (2026-09-20)
+## Git behavior
 
-Measured with a throwaway regex filter and shell script on Windows, git 2.55,
-`core.autocrlf=true`. Slice A1 deleted the spike once
-`packages/cli/test/roundtrip.test.ts` and `hooks.test.ts` covered every scenario below.
+What git does that the design relies on. First measured with a throwaway regex filter on
+Windows, git 2.55, `core.autocrlf=true`; `packages/cli/test/roundtrip.test.ts` and
+`hooks.test.ts` now cover every item.
 
 1. The round trip holds: `git diff` in a smudged worktree shows only bare markers, blobs
    stay collapsed, the owner's checkout gets bare markers on merge, and smudged worktrees
@@ -95,7 +95,7 @@ Measured with a throwaway regex filter and shell script on Windows, git 2.55,
 7. The filter sees CRLF in working-tree content under `autocrlf`. All rewriting must
    preserve each line's terminator.
 
-## Rules settled in A1 (2026-09-21)
+## Round-trip rules
 
 Each is pinned by a test in `packages/core/test/` or `packages/cli/test/`.
 
@@ -115,35 +115,35 @@ Each is pinned by a test in `packages/core/test/` or `packages/cli/test/`.
 - **Sync before any rewrite.** `expand` and `collapse` run `sync` first, so a rewrite never
   drops a body that exists only inline and never meets a comment without an id.
 - **Sidecar format.** `## <id>`, then an optional `<!-- key=value ... -->` metadata line
-  (values URI-encoded; provenance from A6, see § Hook adapters, and the `anchor` hash
-  from A7, see § Staleness),
+  (values URI-encoded; provenance, see § Hook adapters, and the `anchor` hash, see
+  § Staleness),
   then the body. Existing entries keep their order and new ones append. A body line that would read back as structure is written
   with a leading backslash. The tool writes LF, and `init` marks the folder
   `text eol=lf` so `autocrlf` never has anything to convert.
 - **Hook install.** `init` writes `pre-commit` into the effective hooks directory, renames
-  a hook already there to `pre-commit.<brand>-chained`, and runs it after `sync` (and,
-  since A9, `check --staged --fix`). The
+  a hook already there to `pre-commit.<brand>-chained`, and runs it after `sync` and
+  `check --staged --fix`. The
   managed hook does nothing unless `filter.<brand>.clean` is set, because a global
   `core.hooksPath` directory is shared by every repository on the machine.
 - **Non-UTF-8 input** passes through the filter byte for byte.
 - **`filter.<brand>.required` stays unset.** Git treats a required driver with no smudge
   command as a failure, which would force a smudge process per file onto the owner's
   checkout. A failing `clean` therefore falls back to unfiltered content with git's
-  warning; `check` (A9) is what stops an expanded comment from reaching a blob.
+  warning; `check` is what stops an expanded comment from reaching a blob.
 
 One-shot `clean` latency on Windows, Node 24, median of 7 runs: 61 ms for a file with no
 sigil (the grammar is never loaded), 80 ms with one marker, 113 ms for a 1,200-line file
-with 800 markers, against 36 ms for bare `node -e 0`. That is under A1's 300 ms kill
-criterion, so A4 keeps its place in the plan.
+with 800 markers, against 36 ms for bare `node -e 0`. That is under the 300 ms budget
+for one-shot mode; § Filter process covers the long-running filter.
 
-## Rules settled in A3 (2026-09-22)
+## Languages
 
-Visible change: the round trip and marker grammar work in TypeScript, TSX, JavaScript,
-C#, and Java, in addition to Python.
+The round trip and marker grammar work in Python, TypeScript, TSX, JavaScript, C#, and
+Java.
 
-- **`languages.ts` needed no refactor.** `clean`/`smudge`/`sync`/`findMarkers` were already
-  fully parameterized by `LanguageSpec`; A3 only added table entries plus the grammar
-  packages, confirming the abstraction chosen in A1 holds for a C-family sigil (`//~`).
+- **One `LanguageSpec` per language.** `clean`/`smudge`/`sync`/`findMarkers` are fully
+  parameterized by `LanguageSpec`; a language is a table entry plus its grammar package,
+  and the same code serves `#~` and a C-family sigil (`//~`).
 - **Protection is structural, not a separate node-type list.** `findMarkers` only ever
   matches a comment node whose full text is `^<sigil>(id)?( text)?$`. JSDoc/KDoc-style
   `/** ... */` blocks, `///` doc comments, `#pragma`, `@ts-ignore`, and license headers
@@ -159,25 +159,23 @@ C#, and Java, in addition to Python.
   plain `.ts` cannot parse JSX. `tree-sitter-javascript`'s grammar parses JSX natively, so
   one dialect covers `.js`/`.jsx`/`.mjs`/`.cjs`. `tree-sitter-c-sharp` publishes its WASM as
   `tree-sitter-c_sharp.wasm` (underscore, not a hyphen).
-- **Kotlin dropped for v1 (kill criterion).** No published npm package ships a Kotlin
+- **Kotlin is not supported.** No published npm package ships a Kotlin
   grammar WASM compatible with `web-tree-sitter@0.27`: `tree-sitter-kotlin` ships only
   native `node-gyp-build` bindings, and the community `tree-sitter-wasms` bundle's
   `tree-sitter-kotlin.wasm` fails `Language.load` (`web-tree-sitter` requires a `dylink.0`
   custom section; that WASM does not carry one, so it was very likely built against an
   older/incompatible Emscripten toolchain). Building a compatible WASM from
-  `tree-sitter-kotlin`'s grammar source with the `tree-sitter` CLI was out of scope for
-  this slice. The A3 kill criterion ("a grammar that cannot [be used] reliably gets
-  dropped from v1") applies at the load step as much as the parse step. Kotlin/Java in
-  the plan's language list is Java only until a compatible WASM is sourced or built.
-- **`init` needed no changes**: `ensureAttributes` already iterates `LANGUAGES`. The VS
-  Code overlay did: `activationEvents`, the command-palette `when` clause, and the hover
-  provider's `DocumentSelector` were hardcoded to `language: "python"`
-  (`packages/vscode/package.json`, `packages/vscode/src/extension.ts`) and now list every
-  v1 language's VS Code language id (`typescriptreact`/`javascriptreact` in addition to
-  `LANGUAGES`' own extension-keyed ids, since VS Code assigns JSX/TSX files a distinct
-  language id from plain JS/TS).
+  `tree-sitter-kotlin`'s grammar source with the `tree-sitter` CLI is not done yet. A
+  grammar that cannot be loaded and parsed reliably is not shipped, so Kotlin waits until
+  a compatible WASM is sourced or built.
+- **Adding a language touches the extension manifest.** `init` picks it up on its own
+  (`ensureAttributes` iterates `LANGUAGES`), but the extension's `activationEvents`, the
+  command-palette `when` clause, and the hover provider's `DocumentSelector`
+  (`packages/vscode/package.json`, `packages/vscode/src/extension.ts`) list every VS Code
+  language id by hand: `typescriptreact`/`javascriptreact` in addition to `LANGUAGES`' own
+  extension-keyed ids, since VS Code gives JSX/TSX files their own language id.
 
-## Filter process (A4, 2026-09-22)
+## Filter process
 
 Implemented in `packages/cli/src/process.ts` (protocol) and `pktline.ts` (framing);
 conformance and crash tests in `packages/cli/test/process.test.ts`.
@@ -202,7 +200,7 @@ conformance and crash tests in `packages/cli/test/process.test.ts`.
   path and `Could not reset index file`, and the delayed paths are not written. Rerunning
   the command recovers, and no file is ever written with partial content. git-lfs has the
   same failure mode under delay. A crash during `add` falls back to the unfiltered file
-  for that path, which A1's rule already covers (`check`, A9).
+  for that path, which § Round-trip rules already covers (`check` catches it).
 - **Racy entries.** Git for Windows compares mtimes at second granularity. A `git status`
   within the same second as a checkout re-cleans every entry the checkout wrote, and so
   can the next one. The benchmark measures "warm" status only after a status issued more
@@ -223,15 +221,14 @@ smudging worktree. Medians of 3 runs (one-shot: 1 run).
 | | process | 657 ms | +378% | 5 ms |
 
 **Budget:** warm `git status` passes (no added cost; with a settled index git runs no
-filter). The +20% checkout budget fails on both platforms, so the kill criterion applies:
-the numbers are recorded here, and the next steps are in § Known gaps. Where the Windows
+filter). The +20% checkout budget fails on both platforms; the next steps are in § Known gaps. Where the Windows
 checkout time goes, from a probe on one run of 1,788 ms: ~560 ms for git to write the
 sidecars before the filter starts, 526 ms of git sending requests, and ~650 ms of git
 fetching results and writing files. With parse and smudge deferred, the request phase is
 154 ms (0.077 ms per request). The other ~370 ms is parse and smudge sharing the protocol
 loop's thread. In process, `smudge` is 0.05 ms per file and a sidecar parse 0.007 ms.
 
-## Overlay rendering (A2 spike, 2026-09-22)
+## Overlay rendering
 
 Verified in VS Code 1.138 on Windows with screenshots taken by the e2e suite
 (`docs/images/overlay-*.png`); no CodeLens fallback was needed.
@@ -259,7 +256,7 @@ Verified in VS Code 1.138 on Windows with screenshots taken by the e2e suite
   path so the grammar WASM still resolves through `node_modules`. `web-tree-sitter` stays
   external because it locates its own WASM next to its module file.
 
-## Scan detectors (A5, 2026-09-22)
+## Scan detectors
 
 Implemented in `packages/core/src/scan.ts` (grouping, protection, conversion) and
 `detectors.ts`; the CLI flow is `packages/cli/src/scan.ts` and the review tree
@@ -332,7 +329,7 @@ harvested text, so its precision is an estimate on synthetic-but-representative 
 Real precision depends on how much of a repository an agent wrote. Treat the numbers as
 a floor-setting gate, not a guarantee; review is always the step before apply.
 
-## Hook adapters (A6, 2026-09-22)
+## Hook adapters
 
 Implemented in `packages/cli/src/tag.ts` (the generic command), `adapters.ts` (payload
 parsing and install per harness), and `hook.ts`; the comment diff is `newComments` in
@@ -351,7 +348,7 @@ parsing and install per harness), and `hook.ts`; the comment diff is `newComment
   state (Claude Code) sees the file changed and re-reads it before its next edit.
 - **Provenance** goes on the metadata line of each entry the run creates or whose body it
   changes: `by` (harness), `model`, `session`, `at` (UTC, to the second), in that order.
-  It names the last writer, so an edit overwrites these keys and keeps any others (A7's).
+  It names the last writer, so an edit overwrites these keys and keeps any others (such as `anchor`).
   Metadata values stay URI-encoded, except `:`, `/`, `@`, and `,`, so the line reads as
   `<!-- by=claude-code model=claude-haiku-4-5-20251001 session=… at=2026-09-22T20:33:22Z -->`.
 - **Adapters take the file from the payload, never `--changed`.** In a shared checkout,
@@ -382,7 +379,7 @@ machine, so their fixtures follow the payloads in each harness's hook documentat
 (learn.chatgpt.com/docs/hooks and cursor.com/docs/agent/hooks, read 2026-09-22) and have
 not been checked against a live run.
 
-## Staleness (A7, 2026-09-22)
+## Staleness
 
 Implemented in `packages/core/src/anchors.ts` (what a marker anchors to, and the hash) and
 `filter.ts` (`isStale`, `sync`, `smudge`, `confirm`); the CLI adds `check --stale` and
@@ -411,7 +408,7 @@ Implemented in `packages/core/src/anchors.ts` (what a marker anchors to, and the
   pairs are hand-written from their documented rewrites.
 - **Storage and the rule.** The hash is the `anchor` key on the entry's metadata line
   (8 hex characters of a SHA-256). `sync` writes it with every body it writes, and gives
-  an entry that has none (written before A7) the current hash. It never updates the hash
+  an entry that has none (written before anchors existed) the current hash. It never updates the hash
   of an unchanged body: that is what leaves a comment stale once its code moves on. Stale
   means a recorded anchor that differs from the current one while the body is unchanged;
   an anchor that disappeared counts as changed. An expanded comment whose text differs
@@ -427,7 +424,7 @@ Implemented in `packages/core/src/anchors.ts` (what a marker anchors to, and the
   process mode, medians of 5, every entry anchored and stale) measured checkout at
   1,847 ms against 1,841 ms with `--no-anchors`; warm status unchanged at 51 ms.
 
-## Promote and demote (A8, 2026-09-22)
+## Promote and demote
 
 Implemented in `packages/core/src/filter.ts` (`promote`) and `scan.ts` (`demoteTarget`);
 the CLI adds `promote <id|file:id>...` and `demote <file:line>...`, and the extension offers
@@ -455,7 +452,7 @@ both as code actions. Tests: `packages/core/test/promote.test.ts`,
   in process as confirm does: promote and demote change which lines are markers, and
   only the CLI knows whether this checkout collapses them.
 
-## Check (A9, 2026-09-23)
+## Check
 
 Implemented in `packages/cli/src/check.ts`; tests in `packages/cli/test/check.test.ts`.
 
@@ -481,14 +478,14 @@ Implemented in `packages/cli/src/check.ts`; tests in `packages/cli/test/check.te
   comment's body goes in the same commit, a `git mv` carries its sidecar along, and a commit
   that would leave committed text or a stranded marker fails. `sync` still keeps orphans;
   pruning happens only at commit time, where a whole change is visible.
-- **`--stale` is a separate mode.** It reads working files, as A7 settled, and its JSON
+- **`--stale` is a separate mode.** It reads working files (§ Staleness), and its JSON
   shape is what the extension's stale list consumes, so it did not merge into the
   integrity report.
 - **Staged renames.** `stagedFiles` passes `--no-renames`: with rename detection, a staged
   `git mv` shows as `R` and `--diff-filter=ACM` dropped the new path, so `sync --staged`
   never saw a renamed file.
 
-## Sidecar merges (A9, 2026-09-23)
+## Sidecar merges
 
 The scripted scenario (two branches editing one body, one also appending an entry) showed
 `merge=union` mangling silently: the merge exited 0 with both bodies concatenated under one
@@ -507,7 +504,7 @@ heading and the second branch's `<!-- ... -->` metadata line read back as body t
   conflict visibly instead of mangling. `.agents/scan-ignore` stays `merge=union`, since
   its lines are append-only.
 
-## Packaging (A9, 2026-09-23)
+## Packaging
 
 - **One bundle per product.** esbuild bundles the CLI (with core and web-tree-sitter) into
   `packages/cli/bundle/main.js` and the extension into `packages/vscode/dist/extension.cjs`.
@@ -526,7 +523,7 @@ heading and the second branch's `<!-- ... -->` metadata line read back as body t
   unpacked `.vsix` (`SLOPSTASH_E2E_EXTENSION`), which holds no `node_modules`.
 - **Node 22 or later.** Node 20 left maintenance in April 2026; CI tests 22 and 24.
 
-## Known gaps to design in later slices
+## Known gaps
 
 - **The stale tag only changes on smudge, `expand`, and `confirm`.** A hook-driven `sync`
   records the old anchor but does not rewrite the working file, so an agent that just
@@ -545,7 +542,7 @@ heading and the second branch's `<!-- ... -->` metadata line read back as body t
   Recording hit counts from `scan` on a few agent-written repositories would show whether
   narrates-steps, at 0.81, is worth keeping on by default.
 
-- **Checkout overhead in Node (design note, opened by A4's kill criterion).** Process mode
+- **Checkout overhead in Node.** Process mode
   misses the +20% checkout budget; § Filter process has the numbers and where the time
   goes. Two ways forward, in order of cost: move parse and smudge onto `worker_threads`
   so the protocol loop answers git without waiting on them (estimated floor about +30%,
@@ -555,7 +552,7 @@ heading and the second branch's `<!-- ... -->` metadata line read back as body t
   per marked file, only in agent worktrees, and warm `git status` is unaffected.
 - **The GitHub Action is untested.** `action.yml` runs `npx slopstash@<version> check`, so it
   can only run once the CLI is on npm; the README's plain `npx` step is the same command.
-- **A lone sigil line below a bare marker (found in A4, not fixed).** In `#~zz99\n#~`, the
+- **A lone sigil line below a bare marker (not fixed).** In `#~zz99\n#~`, the
   bare `#~` stays put under `clean`. Once `zz99` expands, though, that `#~` reads as the
   block's empty continuation line, so `clean(smudge(x))` returns `#~zz99` and the line is
   lost. The `clean undoes smudge` property in `packages/core/test/filter.test.ts` catches
@@ -566,7 +563,9 @@ heading and the second branch's `<!-- ... -->` metadata line read back as body t
   already a sigil comment, so `tag` never sees it); the AGENTS.md snippet warns against
   it, and `check` reports it as a marker without a body, which fails the commit.
 
-## Prior art (VS Code Marketplace, surveyed 2026-09-20)
+## Prior art
+
+VS Code Marketplace, surveyed 2026-09-20.
 
 - Destructive removers dominate "remove AI comments": CommentsCleaner (2.7k installs),
   Clear Comments, Tidy Up, SlopBuster. They delete context.

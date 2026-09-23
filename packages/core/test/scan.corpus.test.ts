@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { beforeAll, describe, expect, it } from "vitest";
 import { DETECTORS, analyzeSource, type ScannedComment } from "../src/index.js";
 
-// Labeled corpus (plan A5): each detector's precision decides whether it ships enabled.
+// Labeled corpus (design.md § Scan detectors): each detector's precision decides whether it ships enabled.
 const CORPUS = new URL("./corpus/", import.meta.url);
 const EXTENSION: Record<string, string> = { python: "py", typescript: "ts", tsx: "tsx", javascript: "js", csharp: "cs", java: "java" };
 // Detectors need a few hits before their precision means anything.
