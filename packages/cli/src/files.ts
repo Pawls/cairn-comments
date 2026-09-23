@@ -27,7 +27,10 @@ export function decodeExact(bytes: Buffer): string | undefined {
   return Buffer.from(text, "utf8").equals(bytes) ? text : undefined;
 }
 
-/** Async and a single open: on Windows each open costs ~0.45 ms, and the filter process overlaps them. */
+/**
+ * Async and a single open: on Windows each open costs ~0.45 ms, and the filter process
+ * overlaps them.
+ */
 export async function readSidecar(root: string, file: string): Promise<Sidecar> {
   try {
     return parseSidecar(await readFile(path.join(root, sidecarPathFor(file)), "utf8"));
@@ -42,18 +45,27 @@ function readSidecarSync(root: string, file: string): Sidecar {
   return parseSidecar(existsSync(sidecarFile) ? readFileSync(sidecarFile, "utf8") : "");
 }
 
+function smudgeFrom(file: string, source: string, sidecar: Sidecar): Promise<string> {
+  return smudge(file, source, bodiesOf(sidecar), anchorsOf(sidecar));
+}
+
 /**
  * One file through a filter endpoint, for the one-shot commands and the filter process
  * alike. Returns `input` itself when nothing changes, so non-UTF-8 passes byte for byte.
  */
-export async function filterContent(mode: "clean" | "smudge", root: string, file: string, input: Buffer): Promise<Buffer> {
+export async function filterContent(
+  mode: "clean" | "smudge",
+  root: string,
+  file: string,
+  input: Buffer,
+): Promise<Buffer> {
   const text = decodeExact(input);
   if (text === undefined) return input;
   let result: string;
-  if (mode === "clean") result = await clean(file, text);
-  else {
-    const sidecar = await readSidecar(root, file);
-    result = await smudge(file, text, bodiesOf(sidecar), anchorsOf(sidecar));
+  if (mode === "clean") {
+    result = await clean(file, text);
+  } else {
+    result = await smudgeFrom(file, text, await readSidecar(root, file));
   }
   return result === text ? input : Buffer.from(result, "utf8");
 }
@@ -65,23 +77,35 @@ export interface Selection {
 
 /** Named files, the staged set, or every tracked file; always narrowed to managed ones. */
 export function selectFiles(root: string, selection: Selection): string[] {
-  const candidates = selection.files.length
-    ? selection.files.map((f) => toRepoPath(root, f))
-    : selection.staged
-      ? stagedFiles(root)
-      : trackedFiles(root);
+  const candidates = selectionCandidates(root, selection);
   return managedFiles(root, candidates).filter((f) => existsSync(path.join(root, f)));
 }
 
+function selectionCandidates(root: string, selection: Selection): string[] {
+  if (selection.files.length) return selection.files.map((f) => toRepoPath(root, f));
+  if (selection.staged) return stagedFiles(root);
+  return trackedFiles(root);
+}
+
 /** A new source, or a new source and sidecar when the rewrite moves bodies itself. */
-type Rewrite = (file: string, source: string, sidecar: Sidecar) => Promise<string | { source: string; sidecar: Sidecar }>;
+type Rewrite = (file: string, source: string, sidecar: Sidecar) => Promise<string | Rewritten>;
+
+interface Rewritten {
+  source: string;
+  sidecar: Sidecar;
+}
 
 /**
  * Syncs each working file into its sidecar, optionally rewrites the file, and finishes
  * with the guarded re-stat. Sync always runs first so a rewrite never drops a body that
  * exists only inline, and never meets a comment that still lacks an id.
  */
-async function rewriteFiles(root: string, files: string[], rewrite?: Rewrite, options: SyncOptions = {}): Promise<string[]> {
+async function rewriteFiles(
+  root: string,
+  files: string[],
+  rewrite?: Rewrite,
+  options: SyncOptions = {},
+): Promise<string[]> {
   const done: string[] = [];
   for (const file of files) {
     const absolute = path.join(root, file);
@@ -117,7 +141,7 @@ export async function syncFiles(root: string, files: string[], options: SyncOpti
 
 /** Expands bare markers and brings every `[stale?]` tag up to date. */
 export async function expandFiles(root: string, files: string[]): Promise<void> {
-  await rewriteFiles(root, files, (file, source, sidecar) => smudge(file, source, bodiesOf(sidecar), anchorsOf(sidecar)));
+  await rewriteFiles(root, files, smudgeFrom);
 }
 
 export async function collapseFiles(root: string, files: string[], options: SyncOptions = {}): Promise<void> {
@@ -162,8 +186,11 @@ export async function promotableIds(root: string, file: string): Promise<string[
   const source = decodeExact(readFileSync(path.join(root, file)));
   if (!spec || source === undefined) return [];
   const bodies = bodiesOf(readSidecarSync(root, file));
-  const ids = (await findMarkers(spec, source)).flatMap((m) => (m.id && (m.text || bodies.get(m.id)) ? [m.id] : []));
-  return [...new Set(ids)];
+  const ids = new Set<string>();
+  for (const m of await findMarkers(spec, source)) {
+    if (m.id && (m.text || bodies.get(m.id))) ids.add(m.id);
+  }
+  return [...ids];
 }
 
 /**
