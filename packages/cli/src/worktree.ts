@@ -1,4 +1,4 @@
-import { FILTER_DRIVER } from "@slopstash/core";
+import { FILTER_DRIVER } from "@cairn-comments/core";
 import { git } from "./git.js";
 import { configuredCommand, configuredProcess } from "./init.js";
 

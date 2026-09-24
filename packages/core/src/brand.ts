@@ -1,9 +1,9 @@
 // The one place the brand lives (design.md § Naming). The CLI package's `bin` key and the
 // extension manifest must match; packages/cli/test/brand.test.ts guards both.
-export const BRAND = "slopstash";
+export const BRAND = "cairn";
 
 /** Title-case form for UI labels: the Marketplace display name and command category. */
-export const BRAND_TITLE = "Slopstash";
+export const BRAND_TITLE = "Cairn Comments";
 
 /** Git filter driver name, as in `filter.<name>.clean` and `filter=<name>`. */
 export const FILTER_DRIVER = BRAND;

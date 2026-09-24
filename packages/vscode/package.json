@@ -1,13 +1,13 @@
 {
-  "name": "slopstash-vscode",
-  "displayName": "Slopstash: Hide AI Comments",
+  "name": "cairn-comments-vscode",
+  "displayName": "Cairn Comments: Hide AI Comments",
   "description": "Stash the slop, keep the context. Keeps AI-written comments out of your code without losing them, and shows them as a toggleable overlay over the bare markers left in committed code.",
   "version": "0.1.0",
-  "publisher": "slopstash",
+  "publisher": "cairn-comments",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Pawls/slopstash.git",
+    "url": "https://github.com/Pawls/cairn-comments.git",
     "directory": "packages/vscode"
   },
   "type": "module",
@@ -50,59 +50,59 @@
   "contributes": {
     "commands": [
       {
-        "command": "slopstash.toggleOverlay",
+        "command": "cairn.toggleOverlay",
         "title": "Toggle AI Comment Overlay",
-        "category": "Slopstash"
+        "category": "Cairn Comments"
       },
       {
-        "command": "slopstash.editComment",
+        "command": "cairn.editComment",
         "title": "Edit AI Comment",
-        "category": "Slopstash"
+        "category": "Cairn Comments"
       },
       {
-        "command": "slopstash.confirmComment",
+        "command": "cairn.confirmComment",
         "title": "Confirm AI Comment Is Still Accurate",
-        "category": "Slopstash"
+        "category": "Cairn Comments"
       },
       {
-        "command": "slopstash.promoteComment",
+        "command": "cairn.promoteComment",
         "title": "Promote AI Comment to an Ordinary Comment",
-        "category": "Slopstash"
+        "category": "Cairn Comments"
       },
       {
-        "command": "slopstash.demoteComment",
+        "command": "cairn.demoteComment",
         "title": "Demote Comment to an AI Comment",
-        "category": "Slopstash"
+        "category": "Cairn Comments"
       },
       {
-        "command": "slopstash.reviewStale",
+        "command": "cairn.reviewStale",
         "title": "Review Stale AI Comments",
-        "category": "Slopstash"
+        "category": "Cairn Comments"
       },
       {
-        "command": "slopstash.scan",
+        "command": "cairn.scan",
         "title": "Scan for AI Comments",
-        "category": "Slopstash",
+        "category": "Cairn Comments",
         "icon": "$(refresh)"
       },
       {
-        "command": "slopstash.applyReview",
+        "command": "cairn.applyReview",
         "title": "Apply AI Comment Review",
-        "category": "Slopstash",
+        "category": "Cairn Comments",
         "icon": "$(check-all)"
       }
     ],
     "views": {
       "explorer": [
         {
-          "id": "slopstash.review",
+          "id": "cairn.review",
           "name": "AI Comment Review"
         }
       ]
     },
     "keybindings": [
       {
-        "command": "slopstash.toggleOverlay",
+        "command": "cairn.toggleOverlay",
         "key": "ctrl+alt+`",
         "mac": "cmd+alt+`"
       }
@@ -110,39 +110,39 @@
     "menus": {
       "view/title": [
         {
-          "command": "slopstash.scan",
-          "when": "view == slopstash.review",
+          "command": "cairn.scan",
+          "when": "view == cairn.review",
           "group": "navigation@1"
         },
         {
-          "command": "slopstash.applyReview",
-          "when": "view == slopstash.review",
+          "command": "cairn.applyReview",
+          "when": "view == cairn.review",
           "group": "navigation@2"
         }
       ],
       "commandPalette": [
         {
-          "command": "slopstash.editComment",
+          "command": "cairn.editComment",
           "when": "editorLangId == python || editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact || editorLangId == csharp || editorLangId == java"
         },
         {
-          "command": "slopstash.confirmComment",
+          "command": "cairn.confirmComment",
           "when": "editorLangId == python || editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact || editorLangId == csharp || editorLangId == java"
         },
         {
-          "command": "slopstash.promoteComment",
+          "command": "cairn.promoteComment",
           "when": "editorLangId == python || editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact || editorLangId == csharp || editorLangId == java"
         },
         {
-          "command": "slopstash.demoteComment",
+          "command": "cairn.demoteComment",
           "when": "editorLangId == python || editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact || editorLangId == csharp || editorLangId == java"
         }
       ]
     },
     "configuration": {
-      "title": "Slopstash",
+      "title": "Cairn Comments",
       "properties": {
-        "slopstash.overlayColor": {
+        "cairn.overlayColor": {
           "type": "string",
           "default": "",
           "markdownDescription": "CSS color for overlay text. Empty uses the theme's `editorCodeLens.foreground`; no theme color exposes the comment token color to decorations."
@@ -153,10 +153,10 @@
   "scripts": {
     "bundle": "node esbuild.mjs",
     "e2e": "node out/e2e/run.js",
-    "package": "node -e \"require('fs').copyFileSync('../../LICENSE', 'LICENSE')\" && vsce package --no-dependencies -o slopstash.vsix"
+    "package": "node -e \"require('fs').copyFileSync('../../LICENSE', 'LICENSE')\" && vsce package --no-dependencies -o cairn-comments.vsix"
   },
   "devDependencies": {
-    "@slopstash/core": "0.0.0",
+    "@cairn-comments/core": "0.0.0",
     "@types/mocha": "^10.0.10",
     "@types/vscode": "1.90.0",
     "@vscode/test-electron": "^3.1.0",

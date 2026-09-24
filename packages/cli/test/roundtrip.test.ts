@@ -48,24 +48,24 @@ describe.each(MODES)("round trip through git (autocrlf=$autocrlf, oneShot=$oneSh
     const attributes = readFileSync(box.path("main", ".gitattributes"), "utf8");
     box.cli(main, ...initArgs);
     expect(readFileSync(box.path("main", ".gitattributes"), "utf8")).toBe(attributes);
-    expect(attributes).toContain("*.py filter=slopstash");
-    expect(attributes).toContain("*.ts filter=slopstash");
-    expect(attributes).toContain("*.tsx filter=slopstash");
-    expect(attributes).toContain("*.js filter=slopstash");
-    expect(attributes).toContain("*.cs filter=slopstash");
-    expect(attributes).toContain("*.java filter=slopstash");
-    expect(attributes).toContain(".agents/comments/** merge=slopstash text eol=lf");
+    expect(attributes).toContain("*.py filter=cairn");
+    expect(attributes).toContain("*.ts filter=cairn");
+    expect(attributes).toContain("*.tsx filter=cairn");
+    expect(attributes).toContain("*.js filter=cairn");
+    expect(attributes).toContain("*.cs filter=cairn");
+    expect(attributes).toContain("*.java filter=cairn");
+    expect(attributes).toContain(".agents/comments/** merge=cairn text eol=lf");
     expect(attributes).toContain(".agents/scan-ignore merge=union text eol=lf");
-    expect(() => box.git(main, "config", "--get", "filter.slopstash.smudge")).toThrow();
-    if (oneShot) expect(() => box.git(main, "config", "--get", "filter.slopstash.process")).toThrow();
-    else expect(box.git(main, "config", "--get", "filter.slopstash.process").trim()).toMatch(/ filter-process$/);
+    expect(() => box.git(main, "config", "--get", "filter.cairn.smudge")).toThrow();
+    if (oneShot) expect(() => box.git(main, "config", "--get", "filter.cairn.process")).toThrow();
+    else expect(box.git(main, "config", "--get", "filter.cairn.process").trim()).toMatch(/ filter-process$/);
     expect(box.status(main)).toBe("");
   });
 
   it("an agent worktree diffs as bare markers only", () => {
     box.cli(main, "worktree", "add", "-q", wt1, "-b", "agent");
-    expect(box.git(wt1, "config", "--worktree", "--get", "filter.slopstash.smudge")).toContain("smudge %f");
-    if (!oneShot) expect(box.git(wt1, "config", "--get", "filter.slopstash.process").trim()).toMatch(/ filter-process --smudge$/);
+    expect(box.git(wt1, "config", "--worktree", "--get", "filter.cairn.smudge")).toContain("smudge %f");
+    if (!oneShot) expect(box.git(wt1, "config", "--get", "filter.cairn.process").trim()).toMatch(/ filter-process --smudge$/);
     box.write(box.path("wt1", SOURCE), AGENT_EDIT);
     const added = box
       .git(wt1, "diff", "--no-color")

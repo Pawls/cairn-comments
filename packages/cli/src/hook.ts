@@ -1,6 +1,6 @@
 import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
-import { FILTER_DRIVER } from "@slopstash/core";
+import { FILTER_DRIVER } from "@cairn-comments/core";
 import { adapterFor } from "./adapters.js";
 import { changedFiles, gitQuiet, toRepoPath } from "./git.js";
 import { tag, type TagReport } from "./tag.js";

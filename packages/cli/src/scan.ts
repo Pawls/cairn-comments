@@ -15,7 +15,7 @@ import {
   scanSource,
   type IgnoreEntry,
   type ScannedComment,
-} from "@slopstash/core";
+} from "@cairn-comments/core";
 import { collapseFiles, decodeExact, syncFiles } from "./files.js";
 import { managedFiles, smudges, toRepoPath, trackedFiles } from "./git.js";
 

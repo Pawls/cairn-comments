@@ -1,7 +1,7 @@
 // `npm run test:vscode`: downloads a VS Code build on first use and runs dist/e2e in it,
 // once against the overlay fixture and once against a scratch git repository for the scan
-// review. Set SLOPSTASH_SCREENSHOTS=<dir> to also capture the two overlay states (Windows
-// only) for the README. Set SLOPSTASH_E2E_EXTENSION=<dir> to test an unpacked .vsix (its
+// review. Set CAIRN_SCREENSHOTS=<dir> to also capture the two overlay states (Windows
+// only) for the README. Set CAIRN_E2E_EXTENSION=<dir> to test an unpacked .vsix (its
 // `extension/` folder) instead of this package.
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { runTests } from "@vscode/test-electron";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const extension = process.env.SLOPSTASH_E2E_EXTENSION ? path.resolve(process.env.SLOPSTASH_E2E_EXTENSION) : packageRoot;
+const extension = process.env.CAIRN_E2E_EXTENSION ? path.resolve(process.env.CAIRN_E2E_EXTENSION) : packageRoot;
 const fixture = path.join(packageRoot, "e2e/fixture");
 const cli = path.resolve(packageRoot, "../cli/bundle/main.js");
 
@@ -37,7 +37,7 @@ const REVIEW_FILES: Record<string, string> = {
  * writing a hook into the developer's `core.hooksPath`, and the extension host inherits it.
  */
 function reviewRepo(): { dir: string; env: Record<string, string> } {
-  const dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "slopstash-e2e-")));
+  const dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "cairn-e2e-")));
   const config = path.join(dir, "gitconfig");
   writeFileSync(config, "[user]\n\tname = e2e\n\temail = e2e@example.com\n[core]\n\tautocrlf = false\n[init]\n\tdefaultBranch = main\n");
   const env = { GIT_CONFIG_GLOBAL: config, GIT_CONFIG_NOSYSTEM: "1" };
@@ -51,7 +51,7 @@ function reviewRepo(): { dir: string; env: Record<string, string> } {
   execFileSync(process.execPath, [cli, "init"], opts);
   execFileSync("git", ["add", "-A"], opts);
   execFileSync("git", ["commit", "-qm", "base"], opts);
-  return { dir, env: { ...env, SLOPSTASH_E2E_REPO: repo } };
+  return { dir, env: { ...env, CAIRN_E2E_REPO: repo } };
 }
 
 const review = reviewRepo();
@@ -60,13 +60,13 @@ try {
     extensionDevelopmentPath: extension,
     extensionTestsPath: path.join(packageRoot, "dist/e2e/index.cjs"),
     launchArgs: [fixture, "--disable-extensions"],
-    extensionTestsEnv: { SLOPSTASH_SUITE: "overlay", SLOPSTASH_SCREENSHOTS: process.env.SLOPSTASH_SCREENSHOTS ?? "" },
+    extensionTestsEnv: { CAIRN_SUITE: "overlay", CAIRN_SCREENSHOTS: process.env.CAIRN_SCREENSHOTS ?? "" },
   });
   await runTests({
     extensionDevelopmentPath: extension,
     extensionTestsPath: path.join(packageRoot, "dist/e2e/index.cjs"),
-    launchArgs: [review.env.SLOPSTASH_E2E_REPO!, "--disable-extensions"],
-    extensionTestsEnv: { SLOPSTASH_SUITE: "review", SLOPSTASH_SCREENSHOTS: process.env.SLOPSTASH_SCREENSHOTS ?? "", ...review.env },
+    launchArgs: [review.env.CAIRN_E2E_REPO!, "--disable-extensions"],
+    extensionTestsEnv: { CAIRN_SUITE: "review", CAIRN_SCREENSHOTS: process.env.CAIRN_SCREENSHOTS ?? "", ...review.env },
   });
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));

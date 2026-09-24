@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { BRAND, LANGUAGES, SIDECAR_ROOT, findMarkers, languageForPath, parseSidecar, sidecarPathFor, type Marker, type Sidecar } from "@slopstash/core";
+import { BRAND, LANGUAGES, SIDECAR_ROOT, findMarkers, languageForPath, parseSidecar, sidecarPathFor, type Marker, type Sidecar } from "@cairn-comments/core";
 import { decodeExact, readSidecar, writeSidecar } from "./files.js";
 import { grepTokens, ignoredByPattern, indexBlobs, managedFiles, stage, stagedFiles, toRepoPath, trackedFiles } from "./git.js";
 

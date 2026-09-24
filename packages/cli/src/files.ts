@@ -18,7 +18,7 @@ import {
   type Sidecar,
   type StaleMarker,
   type SyncOptions,
-} from "@slopstash/core";
+} from "@cairn-comments/core";
 import { managedFiles, restat, stage, stagedFiles, toRepoPath, trackedFiles } from "./git.js";
 
 /** Text of a buffer, or undefined when it is not UTF-8 that re-encodes to the same bytes. */

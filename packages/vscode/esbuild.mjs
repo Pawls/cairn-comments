@@ -1,4 +1,4 @@
-// VS Code loads extensions as CommonJS, so the ESM sources (and `@slopstash/core`) are
+// VS Code loads extensions as CommonJS, so the ESM sources (and `@cairn-comments/core`) are
 // bundled here; `tsc -b` only type-checks this package. web-tree-sitter is bundled too, and
 // its WASM and the grammars are copied beside the bundle, so the .vsix needs no node_modules.
 /* global URL */

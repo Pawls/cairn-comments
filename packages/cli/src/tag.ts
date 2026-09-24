@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { SIDECAR_ROOT, convertComments, languageForPath, newComments } from "@slopstash/core";
+import { SIDECAR_ROOT, convertComments, languageForPath, newComments } from "@cairn-comments/core";
 import { collapseFiles, decodeExact, syncFiles } from "./files.js";
 import { changedFiles, indexBlob, managedFiles, smudges } from "./git.js";
 

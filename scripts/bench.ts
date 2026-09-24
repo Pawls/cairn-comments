@@ -31,7 +31,7 @@ const ONE_SHOT_RUNS = Number(args["one-shot-runs"]);
 const MARKERS_PER_FILE = 6;
 
 const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../packages/cli/bundle/main.js");
-const dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "slopstash-bench-")));
+const dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "cairn-bench-")));
 const globalConfig = path.join(dir, "gitconfig");
 writeFileSync(
   globalConfig,
@@ -93,7 +93,7 @@ type Mode = "off" | "one-shot" | "process";
 /** Repo-wide config for a mode; `init` writes it exactly as a user's repo would get it. */
 function configure(repo: string, mode: Mode): void {
   if (mode === "off") {
-    for (const key of ["clean", "process"]) spawnSync("git", ["config", "--unset", `filter.slopstash.${key}`], { cwd: repo, env });
+    for (const key of ["clean", "process"]) spawnSync("git", ["config", "--unset", `filter.cairn.${key}`], { cwd: repo, env });
   } else {
     cli(repo, "init", ...(mode === "one-shot" ? ["--one-shot"] : []));
   }
@@ -104,9 +104,9 @@ function checkout(repo: string, mode: Mode, name: string): { wt: string; ms: num
   const wt = path.join(dir, name);
   git(repo, "worktree", "add", "-q", "--no-checkout", "--detach", wt);
   if (mode !== "off") {
-    const command = git(repo, "config", "--get", "filter.slopstash.clean").trim().slice(0, -" clean %f".length);
-    git(wt, "config", "--worktree", "filter.slopstash.smudge", `${command} smudge %f`);
-    if (mode === "process") git(wt, "config", "--worktree", "filter.slopstash.process", `${command} filter-process --smudge`);
+    const command = git(repo, "config", "--get", "filter.cairn.clean").trim().slice(0, -" clean %f".length);
+    git(wt, "config", "--worktree", "filter.cairn.smudge", `${command} smudge %f`);
+    if (mode === "process") git(wt, "config", "--worktree", "filter.cairn.process", `${command} filter-process --smudge`);
   }
   const ms = timed(() => git(wt, "reset", "--hard", "-q"));
   return { wt, ms };

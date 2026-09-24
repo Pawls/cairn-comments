@@ -50,5 +50,5 @@ jobs:
         with:
           name: packages
           path: |
-            slopstash-*.tgz
-            packages/vscode/slopstash.vsix
+            cairn-comments-*.tgz
+            packages/vscode/cairn-comments.vsix

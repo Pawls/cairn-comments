@@ -14,7 +14,7 @@ import {
   type Marker,
   type Sidecar,
   type SidecarEntry,
-} from "@slopstash/core";
+} from "@cairn-comments/core";
 import { entryIsStale, findSidecarRoot, hoverMarkdown, planOverlay, type OverlayMode, type PlannedDecoration } from "./overlay.js";
 import { findRepo, runCli, type StaleComment } from "./review.js";
 import { registerReviewTree, type ReviewApi } from "./reviewTree.js";

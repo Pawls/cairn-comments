@@ -52,10 +52,10 @@ describe.each([true, false])("promote and demote through git (autocrlf=%s)", (au
 
   it("demote refuses a pragma, a line without a comment, and a managed marker, writing nothing", () => {
     const before = readFileSync(box.path("main", SOURCE));
-    expect(box.cliResult(main, "demote", `${SOURCE}:4`)).toMatchObject({ status: 1, stderr: `slopstash: ${SOURCE}:4: a pragma comment stays in the code\n` });
-    expect(box.cliResult(main, "demote", `${SOURCE}:5`).stderr).toBe(`slopstash: ${SOURCE}:5: no comment on this line\n`);
-    expect(box.cliResult(main, "demote", `${SOURCE}:2`).stderr).toBe(`slopstash: ${SOURCE}:2: already an AI comment\n`);
-    expect(box.cliResult(main, "demote", SOURCE).stderr).toBe(`slopstash: expected <file>:<line>, got ${SOURCE}\n`);
+    expect(box.cliResult(main, "demote", `${SOURCE}:4`)).toMatchObject({ status: 1, stderr: `cairn: ${SOURCE}:4: a pragma comment stays in the code\n` });
+    expect(box.cliResult(main, "demote", `${SOURCE}:5`).stderr).toBe(`cairn: ${SOURCE}:5: no comment on this line\n`);
+    expect(box.cliResult(main, "demote", `${SOURCE}:2`).stderr).toBe(`cairn: ${SOURCE}:2: already an AI comment\n`);
+    expect(box.cliResult(main, "demote", SOURCE).stderr).toBe(`cairn: expected <file>:<line>, got ${SOURCE}\n`);
     expect(readFileSync(box.path("main", SOURCE))).toEqual(before);
   });
 
@@ -81,6 +81,6 @@ describe.each([true, false])("promote and demote through git (autocrlf=%s)", (au
   });
 
   it("promote reports an unknown id", () => {
-    expect(box.cliResult(main, "promote", "zz99")).toMatchObject({ status: 1, stderr: "slopstash: no comment zz99\n" });
+    expect(box.cliResult(main, "promote", "zz99")).toMatchObject({ status: 1, stderr: "cairn: no comment zz99\n" });
   });
 });

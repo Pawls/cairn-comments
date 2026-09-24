@@ -1,4 +1,4 @@
-name: Slopstash check
+name: Cairn Comments check
 description: Fail when AI comments were committed with their text, or when a marker and its stored body have come apart.
 author: Pawls
 branding:
@@ -6,10 +6,10 @@ branding:
   color: gray-dark
 inputs:
   version:
-    description: npm version or range of the slopstash CLI to run.
+    description: npm version or range of the cairn CLI to run.
     default: "0.1"
   args:
-    description: Extra arguments for `slopstash check`, such as `--stale` or file paths.
+    description: Extra arguments for `cairn check`, such as `--stale` or file paths.
     default: ""
   node-version:
     description: Node.js version to run the CLI with (22 or later).
@@ -20,9 +20,9 @@ runs:
     - uses: actions/setup-node@v4
       with:
         node-version: ${{ inputs.node-version }}
-    # check reads the index, which actions/checkout fills; no `slopstash init` is needed.
+    # check reads the index, which actions/checkout fills; no `cairn init` is needed.
     - shell: bash
-      run: npx --yes "slopstash@${SLOPSTASH_VERSION}" check ${SLOPSTASH_ARGS}
+      run: npx --yes "cairn-comments@${CAIRN_VERSION}" check ${CAIRN_ARGS}
       env:
-        SLOPSTASH_VERSION: ${{ inputs.version }}
-        SLOPSTASH_ARGS: ${{ inputs.args }}
+        CAIRN_VERSION: ${{ inputs.version }}
+        CAIRN_ARGS: ${{ inputs.args }}

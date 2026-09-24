@@ -5,8 +5,8 @@ import path from "node:path";
 import * as vscode from "vscode";
 import type { Applied, TestApi } from "../src/extension.js";
 
-const EXTENSION_ID = "slopstash.slopstash-vscode";
-const COMMANDS = { toggle: "slopstash.toggleOverlay", edit: "slopstash.editComment", confirm: "slopstash.confirmComment" };
+const EXTENSION_ID = "cairn-comments.cairn-comments-vscode";
+const COMMANDS = { toggle: "cairn.toggleOverlay", edit: "cairn.editComment", confirm: "cairn.confirmComment" };
 /** The fixture's `g7h8` entry records an anchor no code hashes to, so it is always stale. */
 const STALE_BODY = "the check is read-only, so it never takes the ledger lock";
 const STALE_LABEL = `[stale?] ${STALE_BODY}`;
@@ -34,7 +34,7 @@ const labels = (applied: Applied, kind: keyof Applied) =>
   applied[kind].map((o) => [o.range.start.line, o.renderOptions?.after?.contentText]);
 
 function screenshot(name: string): void {
-  const dir = process.env.SLOPSTASH_SCREENSHOTS;
+  const dir = process.env.CAIRN_SCREENSHOTS;
   if (!dir || process.platform !== "win32") return;
   const script = path.join(__dirname, "../../e2e/screenshot.ps1");
   // Window pixels of the editor's first lines under the tab bar in the test window.
@@ -108,7 +108,7 @@ suite("overlay", () => {
     const text = hovers.flatMap((h) => h.contents.map((c) => (c as vscode.MarkdownString).value)).join("\n");
     assert.match(text, /retries are safe: ledger write is idempotent\n\nthe ledger dedupes/);
     assert.match(text, /\*claude-code · claude-fable-5-1 · 2026-09-22 20:33 UTC · session 4f5ee155\*/);
-    assert.match(text, /\[Edit comment\]\(command:slopstash\.editComment\?/);
+    assert.match(text, /\[Edit comment\]\(command:cairn\.editComment\?/);
     const none = await vscode.commands.executeCommand<vscode.Hover[]>("vscode.executeHoverProvider", editor.document.uri, new vscode.Position(2, 2));
     assert.equal(none.length, 0, "code before a trailing marker gets no hover");
   });
@@ -140,7 +140,7 @@ suite("overlay", () => {
     const hovers = await vscode.commands.executeCommand<vscode.Hover[]>("vscode.executeHoverProvider", editor.document.uri, new vscode.Position(12, 6));
     const text = hovers.flatMap((h) => h.contents.map((c) => (c as vscode.MarkdownString).value)).join("\n");
     assert.match(text, /\*\*Possibly stale\*\*/);
-    assert.match(text, /\[Confirm: still accurate\]\(command:slopstash\.confirmComment\?/);
+    assert.match(text, /\[Confirm: still accurate\]\(command:cairn\.confirmComment\?/);
     const fresh = await vscode.commands.executeCommand<vscode.Hover[]>("vscode.executeHoverProvider", editor.document.uri, new vscode.Position(1, 6));
     assert.doesNotMatch(fresh.flatMap((h) => h.contents.map((c) => (c as vscode.MarkdownString).value)).join("\n"), /Possibly stale/);
   });

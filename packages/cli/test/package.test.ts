@@ -25,7 +25,7 @@ describe("the published CLI package", () => {
     mkdirSync(project);
     writeFileSync(path.join(project, "package.json"), '{ "name": "consumer", "private": true }\n');
     npm(project, "install", "--offline", "--no-audit", "--no-fund", path.join(scratch.dir, packed[0]!.filename));
-    installed = path.join(project, "node_modules", "slopstash");
+    installed = path.join(project, "node_modules", "cairn-comments");
     box = new Sandbox({ autocrlf: false, cli: path.join(installed, "bundle", "main.js") });
   }, 180_000);
   afterAll(() => {
@@ -49,7 +49,7 @@ describe("the published CLI package", () => {
     ]);
     const manifest = JSON.parse(readFileSync(path.join(installed, "package.json"), "utf8"));
     expect(manifest.dependencies).toBeUndefined();
-    expect(readdirSync(path.join(installed, "..")).filter((d) => !d.startsWith("."))).toEqual(["slopstash"]);
+    expect(readdirSync(path.join(installed, "..")).filter((d) => !d.startsWith("."))).toEqual(["cairn-comments"]);
   });
 
   it("runs the quickstart: init, an agent worktree, a commit, and check", () => {

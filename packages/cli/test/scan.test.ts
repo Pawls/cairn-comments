@@ -71,7 +71,7 @@ describe.each([false, true])("scan (autocrlf=%s)", (autocrlf) => {
     expect(box.cli(main, "scan")).toMatch(/^src\/app\.py:6 {2}0\.81 {2}narrates-steps {2}Step 1: Read the file contents\n/);
     const review = box.path("review.json");
     writeFileSync(review, box.cli(main, "scan", "--json"));
-    expect(() => box.cli(main, "scan", "--apply", review)).toThrow(/run `slopstash init` first/);
+    expect(() => box.cli(main, "scan", "--apply", review)).toThrow(/run `cairn init` first/);
     expect(box.status(main)).toBe("");
   });
 

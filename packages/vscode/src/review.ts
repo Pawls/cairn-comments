@@ -1,6 +1,6 @@
 // Review model for the scan tree: no `vscode` import, so vitest covers it (test/review.test.ts).
 import { exec, execFile } from "node:child_process";
-import { FILTER_DRIVER } from "@slopstash/core";
+import { FILTER_DRIVER } from "@cairn-comments/core";
 
 /** One `scan --json` entry; the CLI owns the format (packages/cli/src/scan.ts). */
 export interface ReviewComment {

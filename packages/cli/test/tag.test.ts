@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseSidecar } from "@slopstash/core";
+import { parseSidecar } from "@cairn-comments/core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Sandbox } from "./harness.js";
 
@@ -111,8 +111,8 @@ describe.each([false, true])("tag and hook adapters (autocrlf=%s)", (autocrlf) =
     expect(JSON.parse(read("main", ".codex/hooks.json")).hooks.PostToolUse[0].matcher).toBe("apply_patch|Edit|Write");
 
     expect(box.cli(main, "init", "--hooks", "claude-code")).toBe("nothing to change\n");
-    box.cli(main, "init", "--hooks", "cursor", "--command", "slopstash");
-    expect(JSON.parse(read("main", ".cursor/hooks.json")).hooks.afterFileEdit).toEqual([{ command: "slopstash hook cursor" }]);
+    box.cli(main, "init", "--hooks", "cursor", "--command", "cairn");
+    expect(JSON.parse(read("main", ".cursor/hooks.json")).hooks.afterFileEdit).toEqual([{ command: "cairn hook cursor" }]);
     expect(() => box.cli(main, "init", "--hooks", "vim")).toThrow(/unknown harness "vim"/);
   });
 
@@ -121,7 +121,7 @@ describe.each([false, true])("tag and hook adapters (autocrlf=%s)", (autocrlf) =
     box.write(agents, "# Project\n\nOur rules.\n");
     expect(box.cli(main, "init", "--agents-md")).toContain("AGENTS.md: add the sigil convention\n");
     const first = read("main", "AGENTS.md");
-    expect(first).toMatch(/^# Project\n\nOur rules\.\n\n<!-- slopstash:begin -->\n## AI comments\n/);
+    expect(first).toMatch(/^# Project\n\nOur rules\.\n\n<!-- cairn:begin -->\n## AI comments\n/);
     expect(first).toContain("`#~ text` in Python; `//~ text` in TypeScript, JavaScript, C#, and Java");
     expect(box.cli(main, "init", "--agents-md")).toBe("nothing to change\n");
     writeFileSync(agents, readFileSync(agents, "utf8").replace("## AI comments", "## stale copy") + "More rules.\n");

@@ -38,7 +38,7 @@ describe("init with a global-style core.hooksPath", () => {
 
   it("running init again does not chain the managed hook to itself", () => {
     box.cli(repo, "init");
-    expect(readFileSync(`${hooks}/pre-commit.slopstash-chained`, "utf8")).toContain("previous-hook.log");
+    expect(readFileSync(`${hooks}/pre-commit.cairn-chained`, "utf8")).toContain("previous-hook.log");
     expect(readFileSync(`${hooks}/pre-commit`, "utf8")).toContain("sync --staged --add");
   });
 

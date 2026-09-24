@@ -5,9 +5,9 @@ import path from "node:path";
 import * as vscode from "vscode";
 import type { TestApi } from "../src/extension.js";
 
-const EXTENSION_ID = "slopstash.slopstash-vscode";
-const COMMANDS = { scan: "slopstash.scan", apply: "slopstash.applyReview" };
-const repo = () => process.env.SLOPSTASH_E2E_REPO!;
+const EXTENSION_ID = "cairn-comments.cairn-comments-vscode";
+const COMMANDS = { scan: "cairn.scan", apply: "cairn.applyReview" };
+const repo = () => process.env.CAIRN_E2E_REPO!;
 const read = (file: string) => readFileSync(path.join(repo(), file), "utf8");
 const git = (...args: string[]) => execFileSync("git", args, { cwd: repo(), encoding: "utf8" });
 
@@ -18,7 +18,7 @@ async function api(): Promise<TestApi> {
 }
 
 function screenshot(name: string): void {
-  const dir = process.env.SLOPSTASH_SCREENSHOTS;
+  const dir = process.env.CAIRN_SCREENSHOTS;
   if (!dir || process.platform !== "win32") return;
   const script = path.join(__dirname, "../../e2e/screenshot.ps1");
   const args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "-Out", path.join(dir, `${name}.png`)];
@@ -36,10 +36,10 @@ suite("scan review", () => {
       ["src/util.ts", [[2, true]]],
     ]);
     assert.match(a.review.message() ?? "", /^3 likely AI comment/);
-    if (process.env.SLOPSTASH_SCREENSHOTS) {
+    if (process.env.CAIRN_SCREENSHOTS) {
       // One rejection, so the picture shows both checkbox states; rows render ~1 s after focus.
       a.review.setAccepted("src/app.py", 6, false);
-      await vscode.commands.executeCommand("slopstash.review.focus");
+      await vscode.commands.executeCommand("cairn.review.focus");
       await new Promise((r) => setTimeout(r, 3000));
       screenshot("review-tree");
     }
@@ -72,7 +72,7 @@ suite("scan review", () => {
     const document = await vscode.workspace.openTextDocument(uri);
     const actions = async (line: number) => {
       const found = await vscode.commands.executeCommand<vscode.CodeAction[]>("vscode.executeCodeActionProvider", uri, new vscode.Range(line, 0, line, 0));
-      return found.filter((a) => a.command?.command.startsWith("slopstash."));
+      return found.filter((a) => a.command?.command.startsWith("cairn."));
     };
     const titles = async (line: number) => (await actions(line)).map((a) => a.title);
     const run = async (action: vscode.CodeAction) =>

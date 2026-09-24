@@ -52,7 +52,7 @@ describe.each([true, false])("check (autocrlf=%s)", (autocrlf) => {
     const found = check(main);
     expect(found.status).toBe(1);
     expect(found.stdout).toBe(
-      `${sidecar("b.py")}: body ${id} has no marker in b.py (\`slopstash check --fix\` moves it to ${sidecar("c.py")})\n` +
+      `${sidecar("b.py")}: body ${id} has no marker in b.py (\`cairn check --fix\` moves it to ${sidecar("c.py")})\n` +
         `c.py:2: marker ${id} has no body in ${sidecar("c.py")}\n`,
     );
     expect(JSON.parse(check(main, "--json").stdout).problems.map((p: { kind: string }) => p.kind)).toEqual(["orphan-body", "missing-body"]);
@@ -101,7 +101,7 @@ describe.each([true, false])("check (autocrlf=%s)", (autocrlf) => {
     expect(result.stdout).toBe(
       "f.py:1: comment committed with its text: an agent wrote this\n" +
         `f.py:2: marker todo has no body in ${sidecar("f.py")}\n` +
-        "hint: this clone commits without the filter; run `slopstash init`, then `slopstash collapse` and commit the result\n",
+        "hint: this clone commits without the filter; run `cairn init`, then `cairn collapse` and commit the result\n",
     );
     expect(check(clone, "e.py").status).toBe(0);
   });
@@ -111,7 +111,7 @@ describe.each([true, false])("check (autocrlf=%s)", (autocrlf) => {
     box.write(box.path("clone", ".gitignore"), ".agents/comments/\n");
     expect(check(clone).stdout).toBe(
       "f.py:1: comment committed with its text: an agent wrote this\n" +
-        "hint: this clone commits without the filter; run `slopstash init`, then `slopstash collapse` and commit the result\n",
+        "hint: this clone commits without the filter; run `cairn init`, then `cairn collapse` and commit the result\n",
     );
   });
 });
@@ -197,11 +197,11 @@ describe("init --dry-run, uninstall, and promote --all", () => {
   it("init replaces the union line from earlier versions and reports only what changed", () => {
     box.cli(main, "init", "--hooks", "claude-code,cursor", "--agents-md");
     const attributes = box.read(box.path("main", ".gitattributes"));
-    expect(attributes).toMatch(/^\*\.png binary\n\*\.py filter=slopstash\n/);
-    expect(attributes).toContain(".agents/comments/** merge=slopstash text eol=lf\n");
+    expect(attributes).toMatch(/^\*\.png binary\n\*\.py filter=cairn\n/);
+    expect(attributes).toContain(".agents/comments/** merge=cairn text eol=lf\n");
     expect(attributes).not.toContain("merge=union text eol=lf\n.agents/comments");
     expect(box.cli(main, "init", "--hooks", "claude-code,cursor", "--agents-md")).toBe("nothing to change\n");
-    expect(box.cli(main, "init", "--one-shot")).toBe("git config: unset filter.slopstash.process\n");
+    expect(box.cli(main, "init", "--one-shot")).toBe("git config: unset filter.cairn.process\n");
     box.cli(main, "init");
   });
 
@@ -219,12 +219,12 @@ describe("init --dry-run, uninstall, and promote --all", () => {
   it("uninstall undoes init and keeps everything else", () => {
     box.cli(main, "worktree", "add", box.path("agent"), "-b", "agent");
     const dry = box.cli(main, "uninstall", "--dry-run");
-    expect(dry).toContain('  git config: remove [filter "slopstash"]\n');
-    expect(dry).toContain('  git config: remove [merge "slopstash"]\n');
-    expect(dry).toMatch(/ {2}git config --worktree \(.*agent\): remove \[filter "slopstash"\]\n/);
+    expect(dry).toContain('  git config: remove [filter "cairn"]\n');
+    expect(dry).toContain('  git config: remove [merge "cairn"]\n');
+    expect(dry).toMatch(/ {2}git config --worktree \(.*agent\): remove \[filter "cairn"\]\n/);
     expect(box.cli(main, "uninstall")).toContain(".cursor/hooks.json: delete (nothing else was in it)\n");
-    expect(config()).not.toContain("slopstash");
-    expect(box.gitResult(box.path("agent"), "config", "--worktree", "--list").stdout).not.toContain("slopstash");
+    expect(config()).not.toContain("cairn");
+    expect(box.gitResult(box.path("agent"), "config", "--worktree", "--list").stdout).not.toContain("cairn");
     expect(box.read(box.path("main", ".gitattributes"))).toBe("*.png binary\n");
     expect(box.read(box.path("main", "AGENTS.md"))).toBe("# Rules\n");
     expect(JSON.parse(box.read(box.path("main", ".claude/settings.local.json")))).toEqual({ permissions: { allow: ["Bash(ls)"] } });

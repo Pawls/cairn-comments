@@ -64,6 +64,6 @@ describe.each([true, false])("staleness through git (autocrlf=%s)", (autocrlf) =
     expect(box.read(box.path("wt", SOURCE))).toBe(`def settle(order):\n    #~${id} ${NOTE}\n    ${"ledger.append(order.id)"}\n    notify(order)\n`);
     expect(box.status(wt)).toBe(` M ${SIDECAR}\n`);
     expect(check(wt)).toMatchObject({ status: 0, stdout: "" });
-    expect(box.cliResult(wt, "confirm", "zz99")).toMatchObject({ status: 1, stderr: "slopstash: no comment zz99\n" });
+    expect(box.cliResult(wt, "confirm", "zz99")).toMatchObject({ status: 1, stderr: "cairn: no comment zz99\n" });
   });
 });

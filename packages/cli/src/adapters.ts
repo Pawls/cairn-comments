@@ -1,6 +1,6 @@
 import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { BRAND } from "@slopstash/core";
+import { BRAND } from "@cairn-comments/core";
 import type { Provenance } from "./tag.js";
 
 /** What one post-edit hook call tells us, whatever the harness. */

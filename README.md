@@ -1,11 +1,11 @@
-# Slopstash
+# Cairn Comments
 
-Stash the slop, keep the context. Slopstash keeps AI-written comments out of your code
-without deleting them.
+Private comments that never ship. Cairn Comments keeps AI-written comments out of your
+code without deleting them, and detects them so you do not have to mark each one.
 
 Coding agents write a lot of comments. A few carry context the next reader needs; most are
 noise to the person who owns the code. Deleting them throws the context away, and keeping
-them clutters every file. Slopstash moves the text of each AI comment into a tracked
+them clutters every file. Cairn Comments moves the text of each AI comment into a tracked
 markdown file and leaves a short marker in the code. Agents still read and write the full
 comments inline, at no extra token cost. Your own checkout stays clean, and a VS Code
 extension shows the comments as an overlay when you want them.
@@ -38,7 +38,7 @@ What is committed, and your checkout       An agent worktree
 
 - **On commit** the filter reduces each sigil comment to `#~` plus a four-character id. The
   pre-commit hook writes the text to `.agents/comments/<path>.md` and stages it.
-- **In an agent worktree** (made with `slopstash worktree add`) the filter expands the
+- **In an agent worktree** (made with `cairn worktree add`) the filter expands the
   markers back into full comments on checkout, so agents read, grep, and edit real text on
   disk. `git diff` there still shows only markers.
 - **In your checkout** the files hold bare markers. The VS Code extension draws the text
@@ -51,39 +51,39 @@ Nothing is deleted at any point: every comment body is in a tracked, human-reada
 Needs git and Node 22 or later.
 
 ```sh
-npm install -g slopstash
+npm install -g cairn-comments
 cd your-repo
-slopstash init                          # filter, merge driver, .gitattributes, pre-commit hook
-git add .gitattributes && git commit -m "Set up Slopstash"
-slopstash worktree add ../agent -b agent  # a checkout for agents, with full comments
+cairn init                          # filter, merge driver, .gitattributes, pre-commit hook
+git add .gitattributes && git commit -m "Set up Cairn Comments"
+cairn worktree add ../agent -b agent  # a checkout for agents, with full comments
 ```
 
-`init` prints every change it makes; `slopstash init --dry-run` shows the list first and
+`init` prints every change it makes; `cairn init --dry-run` shows the list first and
 changes nothing. Git config and the hook are local to your clone. Everyone who clones the
-repository runs `slopstash init` once. Clones without it still work: they see bare
+repository runs `cairn init` once. Clones without it still work: they see bare
 markers, and [`check`](#keeping-the-repository-consistent) catches anything they commit
 wrong.
 
 Point your agent at `../agent`. The comments it writes as `#~ like this` commit as bare
 markers, with the text in `.agents/comments/`.
 
-Then install **Slopstash: Hide AI Comments** from the VS Code Marketplace. Toggle the
+Then install **Cairn Comments: Hide AI Comments** from the VS Code Marketplace. Toggle the
 overlay with the `AI comments` status bar item or `Ctrl+Alt+`` ` (`Cmd+Alt+`` ` on macOS).
 
 ## Agent setup
 
-Agents do not have to know about the sigil. A post-edit hook runs `slopstash tag` on each
+Agents do not have to know about the sigil. A post-edit hook runs `cairn tag` on each
 file the agent edits: comments new since the index become sigil comments, and each
 sidecar entry records the harness, model, session, and time.
 
 | Harness | Setup | Where the hook goes |
 | --- | --- | --- |
-| Claude Code | `slopstash init --hooks claude-code` | `.claude/settings.local.json` (`PostToolUse` on Edit, Write, MultiEdit) |
-| Codex CLI | `slopstash init --hooks codex`, then trust the hook in Codex with `/hooks` | `.codex/hooks.json` (`PostToolUse` on apply_patch, Edit, Write) |
-| Cursor | `slopstash init --hooks cursor` | `.cursor/hooks.json` (`afterFileEdit`) |
-| Anything else | `slopstash init --agents-md` teaches the sigil in `AGENTS.md`; or run `slopstash tag --changed` after the agent's turn | |
+| Claude Code | `cairn init --hooks claude-code` | `.claude/settings.local.json` (`PostToolUse` on Edit, Write, MultiEdit) |
+| Codex CLI | `cairn init --hooks codex`, then trust the hook in Codex with `/hooks` | `.codex/hooks.json` (`PostToolUse` on apply_patch, Edit, Write) |
+| Cursor | `cairn init --hooks cursor` | `.cursor/hooks.json` (`afterFileEdit`) |
+| Anything else | `cairn init --agents-md` teaches the sigil in `AGENTS.md`; or run `cairn tag --changed` after the agent's turn | |
 
-Combine them: `slopstash init --hooks claude-code,codex,cursor --agents-md`. Hooks see only
+Combine them: `cairn init --hooks claude-code,codex,cursor --agents-md`. Hooks see only
 edits made through the harness's own edit tools. A comment an agent writes with `sed` or a
 script is picked up by `tag --changed`, or by the pre-commit hook if it already carries the
 sigil.
@@ -96,14 +96,14 @@ doc comments, pragmas, suppression directives, license headers, ticketed TODOs, 
 commented-out code.
 
 ```sh
-slopstash scan                          # review the list
-slopstash scan --json > review.json     # set "accept": false on the ones to keep
-slopstash scan --apply review.json      # stash the rest; rejected ones are not proposed again
-slopstash scan --mark-all               # or stash every unprotected comment without review
+cairn scan                          # review the list
+cairn scan --json > review.json     # set "accept": false on the ones to keep
+cairn scan --apply review.json      # stash the rest; rejected ones are not proposed again
+cairn scan --mark-all               # or stash every unprotected comment without review
 ```
 
 In VS Code, the **AI Comment Review** view in the Explorer runs the same flow. Single
-comments move either way with `slopstash demote <file>:<line>` and `slopstash promote <id>`,
+comments move either way with `cairn demote <file>:<line>` and `cairn promote <id>`,
 or with the code actions on a comment.
 
 ## Stale comments
@@ -114,19 +114,19 @@ count. Agents see `#~ab12 [stale?] ...` in their worktree, and the overlay marks
 in the warning color.
 
 ```sh
-slopstash check --stale      # list flagged comments; exits 1 when there are any
-slopstash confirm ab12       # the comment is still right: clear the flag
+cairn check --stale      # list flagged comments; exits 1 when there are any
+cairn confirm ab12       # the comment is still right: clear the flag
 ```
 
 ## Keeping the repository consistent
 
-`slopstash check` reads what is committed (the index) and fails on three problems:
+`cairn check` reads what is committed (the index) and fails on three problems:
 
 - a sigil comment committed with its text, from a clone without the filter;
 - a marker whose body is missing, usually after a file was renamed or moved;
 - a body whose marker is gone.
 
-`slopstash check --fix` moves a body to the file its marker moved to and drops bodies no
+`cairn check --fix` moves a body to the file its marker moved to and drops bodies no
 marker references, then stages the result. The pre-commit hook runs exactly that, so in a
 clone with `init` you rarely see these problems at all.
 
@@ -137,18 +137,18 @@ In CI, run it on every push:
 - uses: actions/setup-node@v4
   with:
     node-version: 22
-- run: npx --yes slopstash@0.1 check
+- run: npx --yes cairn-comments@0.1 check
 ```
 
 Or use the action in this repository, which does the same:
-`uses: Pawls/slopstash@v0.1`. Pass `args: --stale` in a second step to fail on stale
+`uses: Pawls/cairn-comments@v0.1`. Pass `args: --stale` in a second step to fail on stale
 comments too.
 
-## Removing Slopstash
+## Removing Cairn Comments
 
 ```sh
-slopstash promote --all      # optional: turn every AI comment back into an ordinary comment
-slopstash uninstall          # undo init: config, hook, .gitattributes lines, harness hooks, AGENTS.md section
+cairn promote --all      # optional: turn every AI comment back into an ordinary comment
+cairn uninstall          # undo init: config, hook, .gitattributes lines, harness hooks, AGENTS.md section
 ```
 
 `uninstall --dry-run` lists the changes first. Uninstalling leaves `.agents/comments/` and
@@ -170,7 +170,7 @@ config and hooks directory, and harness hooks in the harness's settings file.
 
 **What if a teammate does not install it?** Their checkout shows bare markers, and their
 commits skip the filter. A comment they write with the sigil, or a file they rename, is
-caught by `check` in CI; running `slopstash init` in their clone fixes it for good.
+caught by `check` in CI; running `cairn init` in their clone fixes it for good.
 
 **What happens when two branches edit the same comment?** `init` installs a merge driver
 for the sidecars: entries merge by id, and a body both branches changed gets conflict
@@ -183,7 +183,7 @@ markers inside that body. A clone without `init` falls back to git's ordinary te
 
 **Does a hook or `init` touch other repositories?** No. With a global `core.hooksPath`,
 `init` chains any hook already there and the managed hook does nothing in repositories
-without Slopstash's filter.
+without Cairn Comments's filter.
 
 ## Development
 

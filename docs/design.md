@@ -1,6 +1,6 @@
 # Design
 
-Name: Slopstash (`slopstash`), chosen 2026-09-22. See [Naming](#naming).
+Name: Cairn Comments (`cairn`), renamed 2026-09-23 from Slopstash. See [Naming](#naming).
 
 ## Problem
 
@@ -243,7 +243,7 @@ Verified in VS Code 1.138 on Windows with screenshots taken by the e2e suite
   line the selection touches is shown as typed with the label after it.
 - **Comment color is not reachable.** Decoration colors come from `ThemeColor` ids, and no
   theme id exposes the comment token color. The overlay uses `editorCodeLens.foreground`
-  in italics by default, with a `slopstash.overlayColor` CSS override.
+  in italics by default, with a `cairn.overlayColor` CSS override.
 - **Hover is a provider, not a decoration message.** A `display: none` span has no width,
   so the mouse never rests on it and `hoverMessage` would never fire. The hover provider
   answers for any position from the sigil to the end of its line and carries an
@@ -252,7 +252,7 @@ Verified in VS Code 1.138 on Windows with screenshots taken by the e2e suite
   ancestor holding `.agents/comments` or `.git`, whichever appears first walking up, so a
   fixture or nested workspace inside a larger repository keeps its own sidecars.
 - **Packaging.** VS Code loads extensions as CommonJS; esbuild bundles the ESM sources and
-  `@slopstash/core` into `dist/extension.cjs`, with `import.meta.url` shimmed to the bundle
+  `@cairn-comments/core` into `dist/extension.cjs`, with `import.meta.url` shimmed to the bundle
   path so the grammar WASM still resolves through `node_modules`. `web-tree-sitter` stays
   external because it locates its own WASM next to its module file.
 
@@ -520,7 +520,7 @@ heading and the second branch's `<!-- ... -->` metadata line read back as body t
 - **Tests run what ships.** The integration harness and the e2e runner use the CLI bundle;
   `packages/cli/test/package.test.ts` packs the CLI, installs the tarball offline into an
   empty project, and runs the quickstart with it. The e2e suite also passes against an
-  unpacked `.vsix` (`SLOPSTASH_E2E_EXTENSION`), which holds no `node_modules`.
+  unpacked `.vsix` (`CAIRN_E2E_EXTENSION`), which holds no `node_modules`.
 - **Node 22 or later.** Node 20 left maintenance in April 2026; CI tests 22 and 24.
 
 ## Known gaps
@@ -550,7 +550,7 @@ heading and the second branch's `<!-- ... -->` metadata line read back as body t
   with a tree-sitter C binding) speaking the same protocol, which removes Node's
   per-request event-loop cost but not git's own writes. Neither blocks v1: the overhead is
   per marked file, only in agent worktrees, and warm `git status` is unaffected.
-- **The GitHub Action is untested.** `action.yml` runs `npx slopstash@<version> check`, so it
+- **The GitHub Action is untested.** `action.yml` runs `npx cairn-comments@<version> check`, so it
   can only run once the CLI is on npm; the README's plain `npx` step is the same command.
 - **A lone sigil line below a bare marker (not fixed).** In `#~zz99\n#~`, the
   bare `#~` stays put under `clean`. Once `zz99` expands, though, that `#~` reads as the
@@ -600,3 +600,14 @@ Other candidates considered, free on npm with no Marketplace collision as of 202
 title), `undertext`, `hushnote`, `tuckaway`. Avoid: Ghost\* (crowded), Comment Lens,
 Agent Notes, Agent Comments, Shadow Comments, Aside Comments, Sideband, Sidemark,
 Marginalia, Deslop, Unslop (all taken).
+
+**Decision (2026-09-23): Cairn Comments.** Renamed from Slopstash before publishing, to
+open the tool to human-written private notes as well as AI comments (docs/plans/v2.md).
+Display name "Cairn Comments"; npm package `cairn-comments`; CLI binary, filter driver, and
+command ids `cairn`; extension `cairn-comments.cairn-comments-vscode` (the workspace name
+must differ from the CLI package). "cAIrn" is a logo treatment only. The bare "Cairn" is not
+the listing name: two small Marketplace extensions already use it (`valpet.cairn-extension`,
+`fractaldecoder.cairn`), and `cairn` on npm is an unrelated 2017 React Native package. The
+Slopstash tagline and search rationale above are superseded; the `<Brand>: Hide AI Comments`
+display name rule still holds. The GitHub repository was renamed from `Pawls/slopstash` to
+`Pawls/cairn-comments` the same day; GitHub redirects the old path.

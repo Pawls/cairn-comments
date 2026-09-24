@@ -1,6 +1,6 @@
 import path from "node:path";
 import * as vscode from "vscode";
-import { BRAND, SCAN_IGNORE } from "@slopstash/core";
+import { BRAND, SCAN_IGNORE } from "@cairn-comments/core";
 import { ReviewModel, findRepo, runCli, type Repo, type ReviewComment, type ReviewFile } from "./review.js";
 
 export const REVIEW_VIEW = `${BRAND}.review`;
