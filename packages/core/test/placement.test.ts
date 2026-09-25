@@ -149,12 +149,13 @@ describe("placement across code changes", () => {
     );
   });
 
-  it("keeps comments of an unchanged function when a sibling changes, and drops those inside the changed one", async () => {
+  it("keeps comments of an unchanged function when a sibling changes, and orphans one on a changed statement", async () => {
     const placed = await recordAndChange(TWO, (s) => s.replace("return 1", "return 10"));
-    expect(placed.source).toContain("above g");
-    expect(placed.source).toContain("inside g");
-    expect(placed.source).not.toContain("inside f");
+    expect(placed.source).toMatch(/\n#~[0-9a-z]{4} above g\n/);
+    expect(placed.source).toMatch(/\n {4}#~[0-9a-z]{4} inside g\n/);
+    expect(placed.source).toMatch(/^def f\(\):\n {4}return 10\n/);
     expect(placed.unplaced).toHaveLength(1);
+    expect(placed.stale).toEqual([]);
   });
 
   it("ignores what a formatter changes", async () => {
@@ -194,6 +195,91 @@ describe("placement across code changes", () => {
     const working = "def f():\n    x()\n    #~ the second call\n    x()\n";
     const placed = await recordAndChange(working, (s) => s.replace("def f():\n", "def f():\n"));
     expect(placed.source).toMatch(/x\(\)\n {4}#~[0-9a-z]{4} the second call\n {4}x\(\)\n$/);
+  });
+});
+
+describe("changed declarations", () => {
+  const SETTLE_F = "def settle(order):\n    validate(order)\n    #~ the write is idempotent\n    ledger.write(order)  #~ keyed on order.id\n    notify(order)\n";
+
+  async function change(working: string, edit: (stripped: string) => string) {
+    const { recorded, stripped } = await roundTrip("a.py", working);
+    const bodyOf = (id: string) => recorded.sidecar.entries.find((e) => e.id === id)!.body;
+    const placed = await placeComments("a.py", edit(stripped), recorded.sidecar);
+    return { recorded, placed, stale: placed.stale.map((s) => bodyOf(s.id)), unplaced: placed.unplaced.map(bodyOf) };
+  }
+
+  it("keeps a comment on its statement when other statements change, and marks it stale", async () => {
+    const { placed, stale } = await change(SETTLE_F, (s) => s.replace("    validate(order)\n", "    validate(order)\n    audit(order)\n"));
+    expect(placed.source).toMatch(/ {4}audit\(order\)\n {4}#~[0-9a-z]{4} \[stale\?\] the write is idempotent\n {4}ledger\.write\(order\) {2}#~[0-9a-z]{4} \[stale\?\] keyed on order\.id\n/);
+    expect(stale).toEqual(["the write is idempotent", "keyed on order.id"]);
+  });
+
+  // Moving it to the start of the replacement was measured wrong a third of the time (design.md § Anchoring).
+  it("orphans a comment whose statement was replaced, and keeps the rest of the function's", async () => {
+    const { placed, unplaced, stale } = await change(SETTLE_F, (s) => s.replace("ledger.write(order)", "ledger.put(order)"));
+    expect(unplaced).toEqual(["the write is idempotent", "keyed on order.id"]);
+    expect(stale).toEqual([]);
+    expect(placed.source).not.toContain("#~");
+  });
+
+  it("orphans a comment whose statement was deleted with nothing in its place", async () => {
+    const { placed, unplaced } = await change(SETTLE_F, (s) => s.replace("    ledger.write(order)\n", ""));
+    expect(unplaced).toEqual(["the write is idempotent", "keyed on order.id"]);
+    expect(placed.source).not.toContain("#~");
+  });
+
+  it("follows a renamed function or class with an unchanged body, not stale", async () => {
+    const working = "class Ledger:\n    def write(self):\n        #~ one row per call\n        return 1\n\n\n" + SETTLE_F;
+    const { placed, stale, unplaced } = await change(working, (s) => s.replace("def settle", "def settle_order").replace("class Ledger", "class Journal"));
+    expect(unplaced).toEqual([]);
+    expect(stale).toEqual([]);
+    expect(placed.source).toContain("def settle_order(order):\n    validate(order)\n    #~");
+    expect(placed.source).toMatch(/class Journal:\n {4}def write\(self\):\n {8}#~[0-9a-z]{4} one row per call\n/);
+  });
+
+  it("follows a function renamed and edited when most of its statements survive", async () => {
+    const renamed = await change(SETTLE_F, (s) => s.replace("def settle", "def settle_order").replace("notify(order)", "notify(order, now)"));
+    expect(renamed.unplaced).toEqual([]);
+    expect(renamed.stale).toEqual(["the write is idempotent", "keyed on order.id"]);
+    const rewritten = await change(SETTLE_F, (s) => s.replace("def settle", "def settle_order").replace("validate(order)", "check(order)").replace("notify(order)", "notify(order, now)"));
+    expect(rewritten.unplaced).toEqual(["the write is idempotent", "keyed on order.id"]);
+  });
+
+  it("re-records a stale comment only where the function was edited, or on confirm", async () => {
+    const { recorded, stripped } = await roundTrip("a.py", SETTLE_F);
+    const owners = stripped.replace("    validate(order)\n", "    validate(order)\n    audit(order)\n");
+    const shown = (await placeComments("a.py", owners, recorded.sidecar)).source;
+
+    const untouched = await recordComments("a.py", shown, recorded.sidecar, { baseline: owners });
+    expect(untouched.sidecarChanged).toBe(false);
+    expect(untouched.source).toBe(shown);
+
+    const edited = shown.replace("    notify(order)\n", "    notify(order)\n    done(order)\n");
+    const seen = await recordComments("a.py", edited, recorded.sidecar, { baseline: owners });
+    expect(seen.sidecarChanged).toBe(true);
+    expect(seen.source).not.toContain("[stale?]");
+    expect((await placeComments("a.py", await stripComments("a.py", seen.source), seen.sidecar)).stale).toEqual([]);
+
+    const [first] = recorded.sidecar.entries.map((e) => e.id);
+    const confirmed = await recordComments("a.py", shown, recorded.sidecar, { baseline: owners, confirm: new Set([first!]) });
+    const after = await placeComments("a.py", owners, confirmed.sidecar);
+    expect(after.stale.map((s) => s.id)).not.toContain(first);
+    expect(after.stale).toHaveLength(1);
+  });
+
+  it("keeps a comment above a declaration whose signature changed, marked stale", async () => {
+    const python = await change("#~ settles one order\n@retry\ndef settle(order):\n    pass\n", (s) => s.replace("settle(order)", "settle(order, now)"));
+    expect(python.placed.source).toMatch(/^#~[0-9a-z]{4} \[stale\?\] settles one order\n@retry\ndef settle\(order, now\):/);
+    const { recorded, stripped } = await roundTrip("a.ts", "//~ settles one order\nexport const settle = (order: Order) => {\n  go(order);\n};\n");
+    const ts = await placeComments("a.ts", stripped.replace("(order: Order)", "(order: Order, now: Date)"), recorded.sidecar);
+    expect(ts.source).toMatch(/^\/\/~[0-9a-z]{4} \[stale\?\] settles one order\nexport const settle = \(order: Order, now: Date\)/);
+    expect(recorded.sidecar.entries[0]!.meta.get("decl")).toBe("settle");
+  });
+
+  it("records statement hashes and the statement holding the anchor", async () => {
+    const { recorded } = await roundTrip("a.py", SETTLE_F);
+    expect(recorded.sidecar.entries[0]!.meta.get("stmts")).toMatch(/^[0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4}$/);
+    expect(recorded.sidecar.entries.map((e) => e.meta.get("in"))).toEqual(["1", "1"]);
   });
 });
 
@@ -414,32 +500,30 @@ describe("markerless in every language", () => {
     expect(recorded.sidecar.entries[0]!.meta.get("scope")).toBe("A.M");
   });
 
-  // Each edit changes one declaration's body: the comments inside it hide, every other one stays.
-  const EDITS: [string, string, string, string, string[]][] = [
-    ["a.ts", TYPESCRIPT, "return 1;", "return 2;", ["a field bound to an arrow function"]],
+  // Each edit changes one statement of one declaration: comments on that statement (a callback
+  // or lambda is part of the statement holding it) become orphans, the declaration's other
+  // comments turn stale, and every other comment stays as it was.
+  const EDITS: [string, string, string, string, string[], string[]][] = [
+    ["a.ts", TYPESCRIPT, "return 1;", "return 2;", [], ["a field bound to an arrow function"]],
     [
       "a.ts",
       TYPESCRIPT,
       "notify(item);",
       "notify(item, 1);",
-      [
-        "retries are safe: the write is idempotent",
-        "keyed on order.id",
-        "inside a callback, so it belongs to settle",
-        "nothing after notify on purpose",
-      ],
+      ["retries are safe: the write is idempotent", "keyed on order.id"],
+      ["inside a callback, so it belongs to settle", "nothing after notify on purpose"],
     ],
-    ["a.js", JAVASCRIPT, "return Ledger;", "return null;", ["an assigned function expression"]],
-    ["a.cs", CSHARP, "return count;", "return 0;", ["inside a getter"]],
-    ["a.java", JAVA, "log();", "log(1);", ["inside a lambda, so it belongs to toString"]],
+    ["a.js", JAVASCRIPT, "return Ledger;", "return null;", [], ["an assigned function expression"]],
+    ["a.cs", CSHARP, "return count;", "return 0;", [], ["inside a getter"]],
+    ["a.java", JAVA, "log();", "log(1);", [], ["inside a lambda, so it belongs to toString"]],
   ];
 
-  it.each(EDITS)("in %s, changing `%s` hides only the comments inside that declaration", async (path, working, from, to, hidden) => {
+  it.each(EDITS)("in %s, changing `%s` affects only the comments inside that declaration", async (path, working, from, to, stale, orphaned) => {
     const { recorded, stripped } = await roundTrip(path, working);
     const placed = await placeComments(path, stripped.replace(from, to), recorded.sidecar);
     const bodyOf = (id: string) => recorded.sidecar.entries.find((e) => e.id === id)!.body;
-    expect(placed.unplaced.map(bodyOf)).toEqual(hidden);
-    expect(placed.placed).toHaveLength(recorded.sidecar.entries.length - hidden.length);
+    expect(placed.stale.map((s) => bodyOf(s.id))).toEqual(stale);
+    expect(placed.unplaced.map(bodyOf)).toEqual(orphaned);
   });
 
   it("follows a function moved within a TypeScript file", async () => {

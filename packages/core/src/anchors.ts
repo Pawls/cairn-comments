@@ -37,6 +37,15 @@ export function nodeHash(spec: LanguageSpec, node: Node, withBodies = false): st
   return digest(serialize(spec, node, { start: node.startIndex, end: node.endIndex }, skipped));
 }
 
+/**
+ * Hash of a declaration with its bodies but without its name, so a renamed function keeps
+ * it (design.md § Anchoring, "Renames").
+ */
+export function bodyHash(spec: LanguageSpec, declaration: Node): string {
+  const name = declaration.childForFieldName("name");
+  return digest(serialize(spec, declaration, { start: declaration.startIndex, end: declaration.endIndex }, new Set(name ? [name.id] : [])));
+}
+
 function ownLineAnchor(spec: LanguageSpec, root: Node, source: string, lines: readonly Line[], indent: string, lastRow: number): string | undefined {
   for (let r = lastRow + 1; r < lines.length; r++) {
     const line = lines[r]!;

@@ -1,9 +1,9 @@
 import type { Node } from "web-tree-sitter";
-import { nodeHash } from "./anchors.js";
+import { bodyHash, nodeHash } from "./anchors.js";
 import { resolveIds } from "./ids.js";
 import { languageForPath, type LanguageSpec } from "./languages.js";
 import { applySplices, dominantEol, lineIndexAt, splitLines, type Line, type Splice } from "./lines.js";
-import { markersFrom, type Marker } from "./markers.js";
+import { STALE_TAG, markersFrom, type Marker } from "./markers.js";
 import { commentsIn, parseWith } from "./parser.js";
 import { normalizeBody, type Sidecar, type SidecarEntry } from "./sidecar.js";
 
@@ -12,7 +12,7 @@ import { normalizeBody, type Sidecar, type SidecarEntry } from "./sidecar.js";
  * `stripComments` is the clean filter, `placeComments` the smudge, and `recordComments`
  * writes each comment's position into its sidecar entry as these metadata keys.
  */
-const PLACEMENT_KEYS = ["pos", "scope", "body", "node", "nth", "skip", "seq", "indent", "gap", "eof"] as const;
+const PLACEMENT_KEYS = ["pos", "scope", "body", "stmts", "in", "node", "nth", "decl", "skip", "seq", "indent", "gap", "eof"] as const;
 
 type Pos = "before" | "after" | "trail" | "row";
 
@@ -28,8 +28,14 @@ interface Placement {
   pos: Pos;
   /** Path of the enclosing function or class (`Ledger.settle`, `@n` for the nth duplicate); absent at module level. */
   scope?: string;
-  /** Full hash of the enclosing function: its comments are placed only while it is unchanged. */
+  /** Hash of the enclosing function, name left out (`bodyHash`): while it matches, placement is exact. */
   body?: string;
+  /** Short hashes of the function's top-level statements, diffed to place its comments once it changes. */
+  stmts?: string[];
+  /** The top-level statement holding `node` (`k`), and which of its nodes with that hash it is (`m`). */
+  in?: { k: number; m: number };
+  /** Path of the declaration `node` is (a comment above a function): found by name once its signature changes. */
+  decl?: string;
   node?: string;
   nth: number;
   skip: number;
@@ -62,6 +68,9 @@ function placementMeta(p: Placement): Map<string, string> {
   const meta = new Map<string, string>([["pos", p.pos]]);
   if (p.scope !== undefined) meta.set("scope", p.scope);
   if (p.body !== undefined) meta.set("body", p.body);
+  if (p.stmts !== undefined) meta.set("stmts", p.stmts.join(".") || "-");
+  if (p.in !== undefined) meta.set("in", p.in.m ? `${p.in.k}.${p.in.m}` : String(p.in.k));
+  if (p.decl !== undefined) meta.set("decl", p.decl);
   if (p.node !== undefined) meta.set("node", p.node);
   if (p.nth) meta.set("nth", String(p.nth));
   if (p.skip) meta.set("skip", String(p.skip));
@@ -77,10 +86,15 @@ function placementOf(entry: SidecarEntry): Placement | undefined {
   if (pos !== "before" && pos !== "after" && pos !== "trail" && pos !== "row") return undefined;
   const count = (key: string) => Number(entry.meta.get(key) ?? 0) || 0;
   const eof = entry.meta.get("eof");
+  const stmts = entry.meta.get("stmts");
+  const within = /^(\d+)(?:\.(\d+))?$/.exec(entry.meta.get("in") ?? "");
   return {
     pos,
     scope: entry.meta.get("scope"),
     body: entry.meta.get("body"),
+    stmts: stmts === undefined ? undefined : stmts.split(".").filter((h) => h !== "-"),
+    in: within ? { k: Number(within[1]), m: Number(within[2] ?? 0) } : undefined,
+    decl: entry.meta.get("decl"),
     node: entry.meta.get("node"),
     nth: count("nth"),
     skip: count("skip"),
@@ -129,6 +143,7 @@ class Layout {
   readonly lines: Line[];
   readonly rows: Row[];
   private readonly hashes = new Map<number, string>();
+  private readonly bodies = new Map<number, string>();
   private readonly candidates = new Map<number, Node[]>();
   private readonly keys = new Map<number, string>();
   private readonly byKey = new Map<string, Node>();
@@ -206,6 +221,51 @@ class Layout {
     let hash = this.hashes.get(node.id);
     if (hash === undefined) this.hashes.set(node.id, (hash = nodeHash(this.spec, node)));
     return hash;
+  }
+
+  bodyHashOf(scope: Node): string {
+    let hash = this.bodies.get(scope.id);
+    if (hash === undefined) this.bodies.set(scope.id, (hash = bodyHash(this.spec, scope)));
+    return hash;
+  }
+
+  /**
+   * A function's top-level statements: the children of its block, a property's accessors,
+   * or an expression body as one statement.
+   */
+  statements(scope: Node): Node[] {
+    const body = scope.childForFieldName("body") ?? scope.childForFieldName("accessors") ?? scope.childForFieldName("value");
+    if (!body) return [];
+    if (!/block|body|accessor_list/.test(body.type)) return [body];
+    return body.namedChildren.filter((c): c is Node => !!c && !this.spec.commentTypes.includes(c.type));
+  }
+
+  statementHash(statement: Node): string {
+    return nodeHash(this.spec, statement, true).slice(0, 4);
+  }
+
+  /** Candidates of `scope` inside `statement`. */
+  candidatesWithin(scope: Node, statement: Node): Node[] {
+    return this.candidatesIn(scope).filter((c) => c.startIndex >= statement.startIndex && c.startIndex < statement.endIndex);
+  }
+
+  /**
+   * The path of the declaration `node` is, through `export`, decorators, and a name bound
+   * to a function (`const f = () => {}`); undefined for any other statement.
+   */
+  declarationAt(node: Node): string | undefined {
+    for (let n: Node | null = node; n; ) {
+      const key = this.keys.get(n.id);
+      if (key !== undefined) return key;
+      const named: Node[] = n.namedChildren.filter((c): c is Node => !!c && !this.spec.commentTypes.includes(c.type));
+      n = n.childForFieldName("definition") ?? n.childForFieldName("declaration") ?? (named.length === 1 ? named[0]! : n.childForFieldName("value"));
+    }
+    return undefined;
+  }
+
+  /** Every named scope, in document order. */
+  scopes(): Node[] {
+    return [...this.byKey.values()];
   }
 
   /** Nodes that start a code line and belong to `scope` itself, not to a function inside it. */
@@ -328,10 +388,22 @@ function placementFor(layout: Layout, m: Marker, aiRows: Set<number>, cleanRow: 
     const scope = layout.scopeOf(node);
     const hash = layout.hashOf(node);
     const nth = layout.candidatesIn(scope).filter((c) => layout.hashOf(c) === hash).findIndex((c) => c.id === node.id);
+    let stmts: string[] | undefined;
+    let within: Placement["in"];
+    if (layout.isFunction(scope)) {
+      const statements = layout.statements(scope);
+      stmts = statements.map((s) => layout.statementHash(s));
+      const k = statements.findIndex((s) => node.startIndex >= s.startIndex && node.startIndex < s.endIndex);
+      const m = k < 0 ? -1 : layout.candidatesWithin(scope, statements[k]!).filter((c) => layout.hashOf(c) === hash).findIndex((c) => c.id === node.id);
+      if (m >= 0) within = { k, m };
+    }
     return {
       pos,
       scope: layout.keyOf(scope),
-      body: layout.isFunction(scope) ? nodeHash(layout.spec, scope, true) : undefined,
+      body: layout.isFunction(scope) ? layout.bodyHashOf(scope) : undefined,
+      stmts,
+      in: within,
+      decl: layout.declarationAt(node),
       node: hash,
       nth: Math.max(nth, 0),
       skip,
@@ -365,6 +437,113 @@ function placementFor(layout: Layout, m: Marker, aiRows: Set<number>, cleanRow: 
   return { pos: "row", nth: 0, skip: cleanRow(first), seq: 0, indent: m.indent || undefined };
 }
 
+/** A stale comment, and the row of the stripped file it was placed against. */
+export interface StalePlacement {
+  id: string;
+  row: number;
+}
+
+interface Located {
+  node: Node;
+  /** Whether the comment was placed after its declaration changed. */
+  stale: boolean;
+  /** Whether the recorded scope no longer resolved and was found as a rename. */
+  renamed: boolean;
+}
+
+/**
+ * Statement-set overlap (Jaccard) a function needs to count as the renamed one when its
+ * body changed too. The measured history never exercised it (design.md § Anchoring, "Measured").
+ */
+const RENAME_OVERLAP = 0.5;
+
+/**
+ * The code node an entry goes against. While its function is unchanged, that is the
+ * recorded node; once it changed, the same node if its statement is in an unchanged run.
+ * A comment above a declaration whose signature changed follows the declaration by name.
+ * A scope that no longer resolves is looked up as a rename first. Anything else is an
+ * orphan, kept in the sidecar.
+ */
+function locate(layout: Layout, p: Placement): Located | undefined {
+  // `null` is module level; `undefined` is a scope path that no longer resolves.
+  const resolved = layout.scopeFor(p.scope);
+  const scope = resolved === undefined ? renamedScope(layout, p) : resolved;
+  if (scope === undefined) return undefined;
+  const renamed = resolved === undefined;
+  const exact = p.body === undefined || (layout.isFunction(scope) && layout.bodyHashOf(scope) === p.body);
+  const node = exact ? layout.candidatesIn(scope).filter((c) => layout.hashOf(c) === p.node)[p.nth] : inUnchangedRun(layout, scope, p);
+  if (node) return { node, stale: !exact, renamed };
+  // A declaration whose signature changed: the comment above it follows it by name, to the
+  // line that starts it (decorators, `export`), never an `if` block around it.
+  if (p.decl === undefined) return undefined;
+  const wrapper = layout.candidatesIn(scope).find((c) => layout.declarationAt(c) === p.decl);
+  return wrapper && { node: wrapper, stale: true, renamed };
+}
+
+/**
+ * The recorded node, found through a diff of the function's statement hashes: only while
+ * the statement holding it is in an unchanged run. A comment on a replaced statement is
+ * not moved onto its replacement; the measurement found such moves wrong a third of the
+ * time (design.md § Anchoring, "Measured").
+ */
+function inUnchangedRun(layout: Layout, scope: Node | null, p: Placement): Node | undefined {
+  if (!layout.isFunction(scope) || !p.stmts || !p.in) return undefined;
+  const statements = layout.statements(scope);
+  const now = matchRuns(p.stmts, statements.map((s) => layout.statementHash(s))).get(p.in.k);
+  if (now === undefined) return undefined;
+  return layout.candidatesWithin(scope, statements[now]!).filter((c) => layout.hashOf(c) === p.node)[p.in.m];
+}
+
+/** Old index to new index for every statement in the longest common subsequence of the two. */
+function matchRuns(old: readonly string[], now: readonly string[]): Map<number, number> {
+  const lengths = Array.from({ length: old.length + 1 }, () => new Array<number>(now.length + 1).fill(0));
+  for (let i = old.length - 1; i >= 0; i--) {
+    for (let j = now.length - 1; j >= 0; j--) {
+      lengths[i]![j] = old[i] === now[j] ? lengths[i + 1]![j + 1]! + 1 : Math.max(lengths[i + 1]![j]!, lengths[i]![j + 1]!);
+    }
+  }
+  const matched = new Map<number, number>();
+  let i = 0;
+  let j = 0;
+  while (i < old.length && j < now.length) {
+    if (old[i] === now[j]) matched.set(i++, j++);
+    else if (lengths[i + 1]![j]! >= lengths[i]![j + 1]!) i++;
+    else j++;
+  }
+  return matched;
+}
+
+/**
+ * The declaration a scope that no longer resolves was renamed to: the one function whose
+ * body hash is unchanged, else the function whose statements overlap most (at least
+ * `RENAME_OVERLAP`); for a class, the one class holding the anchor node.
+ */
+function renamedScope(layout: Layout, p: Placement): Node | undefined {
+  if (p.scope === undefined) return undefined;
+  const scopes = layout.scopes();
+  if (p.body === undefined) {
+    const holders = scopes.filter((s) => !layout.isFunction(s) && layout.candidatesIn(s).filter((c) => layout.hashOf(c) === p.node).length > p.nth);
+    return holders.length === 1 ? holders[0] : undefined;
+  }
+  const functions = scopes.filter((s) => layout.isFunction(s));
+  const same = functions.filter((f) => layout.bodyHashOf(f) === p.body);
+  if (same.length === 1) return same[0];
+  if (same.length > 1 || !p.stmts?.length) return undefined;
+  const old = new Set(p.stmts);
+  let best: Node | undefined;
+  let bestScore = 0;
+  let tied = false;
+  for (const f of functions) {
+    const now = new Set(layout.statements(f).map((s) => layout.statementHash(s)));
+    const shared = [...now].filter((h) => old.has(h)).length;
+    // One shared statement (a lone `pass` or `return`) says nothing about identity.
+    const score = shared < 2 ? 0 : shared / (old.size + now.size - shared);
+    if (score > bestScore) [best, bestScore, tied] = [f, score, false];
+    else if (score === bestScore) tied = true;
+  }
+  return best && !tied && bestScore >= RENAME_OVERLAP ? best : undefined;
+}
+
 interface Insertion {
   row: number;
   seq: number;
@@ -374,10 +553,20 @@ interface Insertion {
 }
 
 /** Where each placeable entry goes in a stripped file; ids absent from the result could not be placed. */
-function resolve(layout: Layout, entries: readonly SidecarEntry[]): { own: Insertion[]; trailing: Map<number, { id: string; text: string }[]>; placed: string[] } {
+interface Resolved {
+  own: Insertion[];
+  trailing: Map<number, { id: string; text: string }[]>;
+  placed: string[];
+  stale: StalePlacement[];
+  renamed: string[];
+}
+
+function resolve(layout: Layout, entries: readonly SidecarEntry[]): Resolved {
   const own: Insertion[] = [];
   const trailing = new Map<number, { id: string; text: string }[]>();
   const placed: string[] = [];
+  const staleRows: StalePlacement[] = [];
+  const renamed: string[] = [];
   const { lines, rows, spec } = layout;
   const clamp = (row: number, low: number, high: number) => Math.min(Math.max(row, low), high);
 
@@ -388,15 +577,15 @@ function resolve(layout: Layout, entries: readonly SidecarEntry[]): { own: Inser
 
     let row: number;
     let defaultIndent = "";
+    let stale = false;
     if (p.pos === "row") {
       row = clamp(p.skip, 0, rows.length);
     } else {
-      const scope = layout.scopeFor(p.scope);
-      if (scope === undefined) return;
-      if (p.body !== undefined && (!layout.isFunction(scope) || nodeHash(spec, scope, true) !== p.body)) return;
-      const node = layout.candidatesIn(scope).filter((c) => layout.hashOf(c) === p.node)[p.nth];
-      if (!node) return;
-      const start = node.startPosition.row;
+      const found = locate(layout, p);
+      if (!found) return;
+      stale = found.stale;
+      if (found.renamed) renamed.push(entry.id);
+      const start = found.node.startPosition.row;
       if (p.pos === "trail") {
         row = start;
       } else if (p.pos === "before") {
@@ -405,7 +594,7 @@ function resolve(layout: Layout, entries: readonly SidecarEntry[]): { own: Inser
         row = clamp(start - p.skip, low + 1, start);
         defaultIndent = rows[start]!.indent;
       } else {
-        const end = layout.lastCodeRow(node);
+        const end = layout.lastCodeRow(found.node);
         let high = end + 1;
         while (high < rows.length && !layout.isContent(high)) high++;
         row = clamp(end + 1 + p.skip, end + 1, high);
@@ -414,9 +603,11 @@ function resolve(layout: Layout, entries: readonly SidecarEntry[]): { own: Inser
     }
 
     placed.push(entry.id);
+    if (stale) staleRows.push({ id: entry.id, row });
+    const tag = stale ? STALE_TAG + " " : "";
     if (p.pos === "trail" || (p.pos === "row" && p.gap !== undefined)) {
       const onRow = trailing.get(row) ?? [];
-      onRow.push({ id: entry.id, text: `${p.gap ?? "  "}${spec.lineSigil}${entry.id} ${body.split("\n").join(" ")}` });
+      onRow.push({ id: entry.id, text: `${p.gap ?? "  "}${spec.lineSigil}${entry.id} ${tag}${body.split("\n").join(" ")}` });
       trailing.set(row, onRow);
       return;
     }
@@ -426,7 +617,7 @@ function resolve(layout: Layout, entries: readonly SidecarEntry[]): { own: Inser
       row,
       seq: p.seq,
       order,
-      lines: [`${indent}${spec.lineSigil}${entry.id} ${head!}`, ...rest.map((l) => indent + spec.lineSigil + (l ? " " + l : ""))],
+      lines: [`${indent}${spec.lineSigil}${entry.id} ${tag}${head!}`, ...rest.map((l) => indent + spec.lineSigil + (l ? " " + l : ""))],
       eof: p.eof,
     });
   });
@@ -442,7 +633,7 @@ function resolve(layout: Layout, entries: readonly SidecarEntry[]): { own: Inser
     }
     trailing.set(row, keep);
   }
-  return { own, trailing, placed };
+  return { own, trailing, placed, stale: staleRows, renamed };
 }
 
 /** The terminator of `row`, else the one before it, else the file's usual one. */
@@ -458,13 +649,17 @@ export interface PlaceResult {
   source: string;
   /** Ids placed, in sidecar order. */
   placed: string[];
-  /** Ids of placement entries whose scope, function body, or code node no longer matches. */
+  /** Ids of placement entries that could not be placed: orphans (`check --orphans`). */
   unplaced: string[];
+  /** Comments placed after their function changed, shown behind `STALE_TAG` (design.md § Anchoring). */
+  stale: StalePlacement[];
+  /** Ids placed in a declaration found as a rename of the recorded one. */
+  renamed: string[];
 }
 
 function placeIn(layout: Layout, sidecar: Sidecar): PlaceResult {
   const managed = sidecar.entries.filter(isPlaced);
-  const { own, trailing, placed } = resolve(layout, managed);
+  const { own, trailing, placed, stale, renamed } = resolve(layout, managed);
   const { lines, source } = layout;
   const splices: Splice[] = [];
   for (const [row, items] of trailing) {
@@ -489,13 +684,15 @@ function placeIn(layout: Layout, sidecar: Sidecar): PlaceResult {
     source: applySplices(source, splices),
     placed,
     unplaced: managed.filter((e) => e.body && !placedSet.has(e.id)).map((e) => e.id),
+    stale,
+    renamed,
   };
 }
 
 /** Inserts each placement entry's comment into a stripped file; entries that no longer match stay out. */
 export async function placeComments(path: string, source: string, sidecar: Sidecar): Promise<PlaceResult> {
   const spec = languageForPath(path);
-  if (!spec || !sidecar.entries.some(isPlaced)) return { source, placed: [], unplaced: [] };
+  if (!spec || !sidecar.entries.some(isPlaced)) return { source, placed: [], unplaced: [], stale: [], renamed: [] };
   return withLayout(spec, source, (layout) => placeIn(layout, sidecar));
 }
 
@@ -514,6 +711,22 @@ export interface RecordOptions {
    * another commit's sidecar and must not be written back into this one.
    */
   knownOnly?: boolean;
+  /**
+   * The file as committed (HEAD). A comment whose function changed since its placement was
+   * recorded keeps that placement, and so stays stale, while the function matches the
+   * baseline: the change was not made here, by an agent with the comment in view
+   * (design.md § Anchoring, "Who saw it"). Without a baseline every comment is re-recorded.
+   */
+  baseline?: string;
+  /** Ids re-recorded whatever the baseline says: `confirm`. */
+  confirm?: ReadonlySet<string>;
+}
+
+/** Whether `now`'s function changed since `entry` was placed, somewhere other than this working file. */
+function unseenChange(entry: SidecarEntry, now: Placement, baselineBodies: ReadonlyMap<string, string> | undefined): boolean {
+  const before = placementOf(entry);
+  if (!baselineBodies || !before || before.body === undefined || now.scope === undefined || before.scope !== now.scope) return false;
+  return before.body !== now.body && baselineBodies.get(now.scope) === now.body;
 }
 
 export interface RecordResult {
@@ -592,6 +805,10 @@ export async function recordComments(path: string, source: string, sidecar: Side
     });
     return { markers, ids, placements };
   });
+  const baselineBodies =
+    options.baseline === undefined
+      ? undefined
+      : await withLayout(spec, options.baseline, (layout) => new Map(layout.scopes().filter((s) => layout.isFunction(s)).map((s) => [layout.keyOf(s)!, layout.bodyHashOf(s)])));
 
   const entries = sidecar.entries.map((e) => ({ ...e, meta: new Map(e.meta) }));
   let sidecarChanged = false;
@@ -608,7 +825,8 @@ export async function recordComments(path: string, source: string, sidecar: Side
     let entry = entries.find((e) => e.id === id);
     const text = m.text === undefined ? undefined : normalizeBody(m.text);
     const flat = (body: string) => (m.placement === "trailing" ? body.split("\n").join(" ") : body);
-    if (text !== undefined && (!entry || flat(entry.body) !== text)) {
+    const written = text !== undefined && (!entry || flat(entry.body) !== text);
+    if (written) {
       if (!entry) {
         entry = { id, meta: new Map(), body: text };
         entries.push(entry);
@@ -617,7 +835,14 @@ export async function recordComments(path: string, source: string, sidecar: Side
       for (const [k, v] of options.meta ?? []) entry.meta.set(k, v);
       sidecarChanged = true;
     }
-    if (entry && setPlacement(entry, recorded.placements[i]!)) sidecarChanged = true;
+    if (!entry) return;
+    const placement = recorded.placements[i]!;
+    if (!written && !options.confirm?.has(id) && unseenChange(entry, placement, baselineBodies)) return;
+    if (setPlacement(entry, placement)) sidecarChanged = true;
+    if (m.staleTag) {
+      const tagStart = m.start + spec.lineSigil.length + id.length + 1;
+      splices.push({ start: tagStart, end: tagStart + STALE_TAG.length + 1, text: "" });
+    }
   });
 
   const deleted = entries.filter((e) => options.seen?.has(e.id) && !present.has(e.id)).map((e) => e.id);

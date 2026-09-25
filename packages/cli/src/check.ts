@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { BRAND, LANGUAGES, SIDECAR_ROOT, findMarkers, languageForPath, parseSidecar, sidecarPathFor, type Marker, type Sidecar } from "@cairn-comments/core";
+import { BRAND, LANGUAGES, SIDECAR_ROOT, findMarkers, languageForPath, parseSidecar, placeComments, sidecarPathFor, type Marker, type Sidecar } from "@cairn-comments/core";
 import { decodeExact, readSidecar, writeSidecar } from "./files.js";
 import { grepTokens, ignoredByPattern, indexBlobs, managedFiles, markerless, stage, stagedFiles, toRepoPath, trackedFiles } from "./git.js";
 
@@ -8,15 +8,24 @@ export type Problem =
   /** A sigil comment whose text reached the index: a clone without the filter, or a failed `clean`. */
   | { kind: "expanded"; file: string; line: number; id?: string; text: string }
   | { kind: "missing-body"; file: string; line: number; id: string; sidecar: string }
-  | { kind: "orphan-body"; file: string; id: string; source: string; hint?: string };
+  | { kind: "orphan-body"; file: string; id: string; source: string; hint?: string }
+  /** Markerless: an entry that no longer places in its source; `scope` is its last known declaration. */
+  | { kind: "unplaced"; file: string; id: string; source: string; scope?: string; text: string };
 
-export type Fix = { kind: "relocated"; id: string; from: string; to: string } | { kind: "pruned"; id: string; from: string };
+export type Fix =
+  | { kind: "relocated"; id: string; from: string; to: string }
+  | { kind: "pruned"; id: string; from: string }
+  | { kind: "pruned-unplaced"; id: string; from: string };
 
 export interface CheckOptions {
   files: string[];
   /** Staged sources, their sidecars, and staged sidecar changes: what a commit is about to record. */
   staged: boolean;
   fix: boolean;
+  /** Markerless: also list entries that no longer place in their source. */
+  orphans?: boolean;
+  /** Markerless, with `fix`: remove those entries. Nothing else ever deletes them. */
+  prune?: boolean;
 }
 
 export interface CheckReport {
@@ -79,8 +88,8 @@ export async function check(root: string, options: CheckOptions): Promise<CheckR
   const markerIds = async (file: string) => new Set((await indexed(file))?.markers.flatMap((m) => (m.id ? [m.id] : [])) ?? []);
 
   const problems: Problem[] = [];
-  // Markerless blobs hold no markers, so bodies cannot be matched to them (A16 ports the rest);
-  // any sigil comment in a blob is a leak.
+  // Markerless blobs hold no markers: any sigil comment in one is a leak, and an entry is an
+  // orphan when it no longer places in its source's blob (design.md § Anchoring).
   if (markerless(root)) {
     for (const file of sources) {
       const found = await indexed(file);
@@ -88,7 +97,23 @@ export async function check(root: string, options: CheckOptions): Promise<CheckR
         problems.push({ kind: "expanded", file, line: lineAt(found!.text, m.start), id: m.id, text: (m.text ?? "").split("\n")[0]! });
       }
     }
-    return { problems: sortProblems(problems), fixes: [] };
+    if (!options.orphans && !options.prune) return { problems: sortProblems(problems), fixes: [] };
+    const fixes: Fix[] = [];
+    for (const sidecar of sidecars) {
+      if (!blobs.has(sidecar)) continue;
+      const entries = sidecarIn(sidecar).entries;
+      const source = sourceOf(sidecar);
+      const text = blobs.has(source) ? decodeExact(blobs.get(source)!) : undefined;
+      // A sidecar whose source is gone places nothing.
+      const unplaced = text === undefined ? entries.filter((e) => e.meta.has("pos")).map((e) => e.id) : (await placeComments(source, text, { preamble: "", entries })).unplaced;
+      for (const id of unplaced) {
+        const entry = entries.find((e) => e.id === id)!;
+        if (options.fix && options.prune) fixes.push({ kind: "pruned-unplaced", id, from: sidecar });
+        else problems.push({ kind: "unplaced", file: sidecar, id, source, scope: entry.meta.get("scope"), text: entry.body.split("\n")[0]! });
+      }
+    }
+    await applyFixes(root, fixes, sidecarIn);
+    return { problems: sortProblems(problems), fixes };
   }
   // Zero-trace mode (design.md § Decisions): with the folder ignored, markers dangle by choice.
   const bodiesKept = !ignoredByPattern(root, `${PREFIX}x.md`);
@@ -199,12 +224,15 @@ async function applyFixes(root: string, fixes: Fix[], staged: (sidecar: string) 
 export function formatCheck(report: CheckReport): string {
   const lines: string[] = [];
   for (const f of report.fixes) {
-    lines.push(f.kind === "relocated" ? `relocated ${f.id}: ${f.from} -> ${f.to}` : `removed ${f.id} from ${f.from}: its marker is gone from ${sourceOf(f.from)}`);
+    if (f.kind === "relocated") lines.push(`relocated ${f.id}: ${f.from} -> ${f.to}`);
+    else if (f.kind === "pruned") lines.push(`removed ${f.id} from ${f.from}: its marker is gone from ${sourceOf(f.from)}`);
+    else lines.push(`removed ${f.id} from ${f.from}: it no longer places in ${sourceOf(f.from)}`);
   }
   for (const p of report.problems) {
     if (p.kind === "expanded") {
       lines.push(`${p.file}:${p.line}: comment committed with its text${p.id ? ` (${p.id})` : ""}: ${p.text}`);
     } else if (p.kind === "missing-body") lines.push(`${p.file}:${p.line}: marker ${p.id} has no body in ${p.sidecar}`);
+    else if (p.kind === "unplaced") lines.push(`${p.file}: ${p.id} no longer places in ${p.source}${p.scope ? ` (last in ${p.scope})` : ""}: ${p.text}`);
     else lines.push(`${p.file}: body ${p.id} has no marker in ${p.source}${p.hint ? ` (${p.hint})` : ""}`);
   }
   if (report.problems.some((p) => p.kind === "expanded")) {

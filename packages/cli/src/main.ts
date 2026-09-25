@@ -59,6 +59,11 @@ const USAGE = `usage: ${BRAND} <command>
   check --stale [--json] [files...]
                                 list comments whose code changed while their body did not;
                                 exits 1 when any are found
+  check --orphans [--json] [files...]
+                                markerless: list comments that no longer place in their code,
+                                with their last known declaration; exits 1 when any are found
+  check --fix --prune [files...]
+                                markerless: remove those comments from their sidecars
   confirm <id|file:id>...       accept the current code for a stale comment, clearing its flag
   promote <id|file:id>... | --all [files...]
                                 turn AI comments into ordinary committed comments
@@ -163,11 +168,14 @@ async function runCheck(args: string[]): Promise<void> {
       json: { type: "boolean", default: false },
       staged: { type: "boolean", default: false },
       fix: { type: "boolean", default: false },
+      orphans: { type: "boolean", default: false },
+      prune: { type: "boolean", default: false },
     },
   });
+  if (values.prune && !values.fix) throw new Error("--prune removes entries only together with --fix");
   const root = repoRoot();
   if (values.stale) return runStaleCheck(root, positionals, values.json);
-  const report = await check(root, { files: positionals, staged: values.staged, fix: values.fix });
+  const report = await check(root, { files: positionals, staged: values.staged, fix: values.fix, orphans: values.orphans, prune: values.prune });
   if (values.json) printJson(report);
   else process.stdout.write(formatCheck(report));
   if (report.problems.length) process.exitCode = 1;

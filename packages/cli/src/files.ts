@@ -23,10 +23,9 @@ import {
   stripComments,
   sync,
   type Sidecar,
-  type StaleMarker,
   type SyncOptions,
 } from "@cairn-comments/core";
-import { filesContaining, managedFiles, markerless, restat, smudges, stage, stagedFiles, toRepoPath, trackedFiles, worktreeGitDir } from "./git.js";
+import { filesContaining, indexBlobs, managedFiles, markerless, restat, smudges, stage, stagedFiles, toRepoPath, trackedFiles, worktreeGitDir } from "./git.js";
 
 /** Text of a buffer, or undefined when it is not UTF-8 that re-encodes to the same bytes. */
 export function decodeExact(bytes: Buffer): string | undefined {
@@ -209,6 +208,8 @@ async function rewriteMarkerless(
   options: SyncOptions & { afterCheckout?: boolean } = {},
 ): Promise<string[]> {
   const gitDir = smudges(root) ? worktreeGitDir(root) : undefined;
+  // What HEAD holds tells an edit made here from one that arrived by merge or checkout.
+  const committed = indexBlobs(root, files, "HEAD");
   const done: string[] = [];
   for (const file of files) {
     const absolute = path.join(root, file);
@@ -216,7 +217,13 @@ async function rewriteMarkerless(
     if (original === undefined) continue;
     // After a checkout, comments on disk may belong to the previous commit's sidecar.
     const seen = gitDir && !options.afterCheckout ? readSeen(gitDir, file) : undefined;
-    const recorded = await recordComments(file, original, readSidecarSync(root, file), { meta: options.meta, seen, knownOnly: options.afterCheckout });
+    const head = committed.get(file);
+    const recorded = await recordComments(file, original, readSidecarSync(root, file), {
+      meta: options.meta,
+      seen,
+      knownOnly: options.afterCheckout,
+      baseline: head && decodeExact(head),
+    });
     if (recorded.sidecarChanged) writeSidecar(root, file, recorded.sidecar);
     let source = recorded.source;
     let onDisk = recorded.ids;
@@ -262,23 +269,34 @@ export async function collapseFiles(root: string, files: string[], options: Sync
   else await rewriteFiles(root, files, (file, source) => clean(file, source), options);
 }
 
-export interface StaleReport extends StaleMarker {
+export interface StaleReport {
   file: string;
-  /** 1-based line of the marker. */
+  /**
+   * 1-based line of the comment; in markerless mode, where the file shows no comments, the
+   * line of the code it would be placed against.
+   */
   line: number;
+  id: string;
+  body: string;
 }
 
 /** Possibly stale comments across `files` (design.md § Staleness); reads only, so CI can run it. */
 export async function staleIn(root: string, files: string[]): Promise<StaleReport[]> {
   const found: StaleReport[] = [];
-  // A markerless comment is placed only while its code matches, so none on disk is stale.
-  if (markerless(root)) return found;
+  const lineOf = (source: string, offset: number) => source.slice(0, offset).split("\n").length;
   for (const file of files) {
     const source = decodeExact(readFileSync(path.join(root, file)));
     if (source === undefined) continue;
-    for (const s of await staleMarkers(file, source, readSidecarSync(root, file))) {
-      found.push({ ...s, file, line: source.slice(0, s.marker.start).split("\n").length });
+    const sidecar = readSidecarSync(root, file);
+    if (!markerless(root)) {
+      for (const s of await staleMarkers(file, source, sidecar)) found.push({ file, line: lineOf(source, s.marker.start), id: s.id, body: s.body });
+      continue;
     }
+    if (!sidecar.entries.length) continue;
+    const placed = await placeComments(file, await stripComments(file, source), sidecar);
+    const shown = new Map((await findMarkers(languageForPath(file)!, source)).map((m) => [m.id, lineOf(source, m.start)]));
+    const bodies = bodiesOf(sidecar);
+    for (const s of placed.stale) found.push({ file, line: shown.get(s.id) ?? s.row + 1, id: s.id, body: bodies.get(s.id) ?? "" });
   }
   return found;
 }
@@ -290,6 +308,18 @@ export async function staleIn(root: string, files: string[]): Promise<StaleRepor
 export async function confirmIds(root: string, file: string, ids: string[], expand: boolean): Promise<string[]> {
   const source = decodeExact(readFileSync(path.join(root, file)));
   if (source === undefined) return ids;
+  if (markerless(root)) {
+    const sidecar = readSidecarSync(root, file);
+    const code = await stripComments(file, source);
+    const placed = await placeComments(file, code, sidecar);
+    const missing = ids.filter((id) => !placed.placed.includes(id));
+    if (missing.length) return missing;
+    // The code as it stands is the baseline: only the named ids take their new placement.
+    const recorded = await recordComments(file, placed.source, sidecar, { baseline: code, confirm: new Set(ids) });
+    if (recorded.sidecarChanged) writeSidecar(root, file, recorded.sidecar);
+    if (expand) await expandFiles(root, [file]);
+    return [];
+  }
   const result = await confirm(file, source, readSidecarSync(root, file), ids);
   if (result.changed) writeSidecar(root, file, result.sidecar);
   if (expand) await expandFiles(root, [file]);

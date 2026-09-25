@@ -14,6 +14,7 @@ markers through a git filter, bodies live in `.agents/comments/`. Start with
 | `npm run package -w packages/vscode` | Build `packages/vscode/cairn-comments.vsix` (after `npm run build`). Packaging only; nothing is published. |
 | `npm run lint` | eslint over the whole workspace. |
 | `npm run bench` | 2,000-file checkout benchmark (design.md § Filter process). Slow; run only when touching the filter path. |
+| `npm run replay -- --repo <path>` | Markerless placement replayed over a repository's history (design.md § Anchoring, "Measured"). Minutes per repository; run when changing placement. |
 
 A change is signed off on Windows (`autocrlf=true` scenarios included) and on an LF
 platform (WSL Ubuntu so far). The integration suites already run each scenario under both

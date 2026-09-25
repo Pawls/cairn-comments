@@ -473,25 +473,53 @@ sync); the CLI switches on `filter.cairn.markerless`. Tests:
     `languages.ts` (a C# property counts as a function). A function or class expression is
     a scope only when bound to a name (`const f = () => {}`, a class field,
     `exports.run = function () {}`), which becomes its path segment; a callback or lambda
-    has none, so its comments belong to the declaration around it and hide when it
-    changes. C#'s file-scoped `namespace A;` is left out of paths: it is a sibling of the
-    file's types, not their parent, and a file has only one;
-  - `body`: the enclosing function's full hash, when the scope is a function;
+    has none, so its comments belong to the declaration around it, and a change to the
+    callback is a change to the statement holding it. C#'s file-scoped `namespace A;` is
+    left out of paths: it is a sibling of the file's types, not their parent, and a file
+    has only one;
+  - `body`: the enclosing function's hash with its name left out (`bodyHash`), so a
+    rename keeps it; `stmts`: four-hex hashes of the function's top-level statements
+    (block children, a C# property's accessors, or an expression body as one), dot-joined;
+    `in`: which of those statements holds the anchor node, and `.m` for which of its nodes
+    with that hash;
   - `node`, `nth`: the anchor node's hash (§ Staleness normalization; a declaration counts
     its signature only) and which of the scope's line-starting nodes with that hash it is;
+  - `decl`: when the anchor node is a declaration (through decorators, `export`, and a
+    name bound to a function), that declaration's path;
   - `skip`: kept lines (blank, human comments) between the comment and its node; `seq`:
     order among blocks that land on one line; `indent`, `gap` as runs (`4s`, `1t`) when
     they differ from the line placed against; `eof`, the terminator taken from before a
     comment on an unterminated last line.
-- **When it is placed.** Smudge places an entry only when its scope resolves, its node is
-  found, and, in a function scope, the function hashes to `body`. So a change anywhere in
-  a function hides the comments inside it, while moving the function, editing its
-  siblings, or reformatting the file (whitespace, quotes, redundant parentheses; the A7
-  normalization) keeps every comment. An entry that does not place is kept, never
-  dropped. A14 places changed-function comments with a stale flag instead of hiding them.
-- **Seen by the editor.** A comment on disk has been seen by whoever edited the file, so
-  `sync` re-records the placement of every comment present. The owner's checkout has no
-  comments on disk, which is what makes the owner's edits hide comments.
+- **When it is placed.** Smudge (`placeComments`, through `locate`) places an entry
+  exactly when its scope resolves, its node is found, and, in a function scope, the
+  function hashes to `body`: moving the function, editing its siblings, or reformatting
+  the file (whitespace, quotes, redundant parentheses; the A7 normalization) keeps every
+  comment as it was. Otherwise, in order:
+  - the function changed: the recorded `stmts` are diffed against the current ones (a
+    longest common subsequence). A comment whose statement is in an unchanged run goes
+    back on its node, shown behind `[stale?]`: the declaration it lives in changed, so it
+    may no longer be true;
+  - the anchor node is gone and `decl` names a declaration that still resolves (its
+    signature changed: a parameter, a decorator, a return type): the comment goes above
+    that declaration, stale;
+  - the scope no longer resolves: see "Renames";
+  - anything else, including a comment whose own statement was replaced or deleted, is an
+    orphan. It is kept in the sidecar, never dropped, and listed by `check --orphans`.
+    Moving it to the start of the replacement was built and measured wrong a third of the
+    time ("Measured"), which fired A14's kill criterion.
+- **Renames.** A scope path that no longer resolves is looked for as a rename: the one
+  function whose `body` is unchanged (the name is not hashed), else the function whose
+  statement-hash set overlaps most by Jaccard index, at least 0.5 and with two statements
+  shared, then placed as a changed function. A class is the one class holding the anchor
+  node. Only functions match functions; the node type is not recorded.
+- **Who saw it.** A comment on disk has been seen by whoever edited the file, so `sync`
+  re-records its placement, which clears its stale flag, and removes a `[stale?]` tag it
+  carries. The exception is a stale comment in a declaration the agent did not edit: its
+  function now matches HEAD's version (`sync` reads it as the baseline), so the change
+  arrived by merge or checkout from someone who never had the comment in view, and the
+  recorded placement is kept, still stale. The owner's checkout has no comments on disk,
+  so the owner's edits never re-record anything. `confirm <id>` re-records the named
+  comments against the code as it stands, in any checkout.
 - **Deleting.** A comment is deleted when it was in the file the last time the tool wrote
   it and is absent now. Each smudging worktree keeps that record per file under its git
   dir (`<git-dir>/cairn/seen/<sha1 of path>`), written by smudge, `sync`, `expand`, and
@@ -508,16 +536,39 @@ sync); the CLI switches on `filter.cairn.markerless`. Tests:
   The sidecar must be staged first: the hook adapters' `sync` writes it after every agent
   edit, then `git add` (or `commit -a` once the sidecar is tracked) carries it. The
   pre-commit hook's `sync --staged` also covers every file that still holds a sigil.
-- **Check.** `check` in markerless mode only reports sigil comments that reached a blob;
-  the marker and body cross-checks wait for A16.
+- **Check.** `check` in markerless mode reports sigil comments that reached a blob.
+  `check --stale` places each file's sidecar against the working file and lists the
+  stale comments, by the comment's line in an agent worktree and by the code line in the
+  owner's checkout. `check --orphans` places each sidecar against the index blob of its
+  source and lists the entries that do not place, with their last `scope`; `--fix` never
+  touches them, and only `--fix --prune` removes them and stages the sidecar.
+- **Measured (2026-09-25, `npm run replay -- --repo <path>`).** At commit N a synthetic
+  comment goes above every function and before the middle statement of its body; the
+  sidecar is placed against N+20, as an owner's commits reach a worktree that never
+  touched those functions. Shares are of comments in files that changed by N+20:
+
+  | Repository | Windows | Exact | Diff (stale) | Rename | Orphan | File deleted |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | pallets/click (Python, 1,383 commits) | 12 | 94.3% | 3.6% | 0.1% | 1.6% | 0.4% |
+  | this repository (TypeScript, 28 commits) | 8, overlapping | 74.3% | 8.3% | 0% | 16.5% | 0.9% |
+
+  A sample of 50 diff placements per repository, read by hand: 0 wrong in each (42 and 47
+  sit on an unchanged code line; the rest are the same declaration after a signature or
+  decorator change). With replaced-run moves still in, 17 and 19 of 50 moved placements
+  were wrong (34% and 38%): a comment on a removed `print` landing on the new
+  `ctx.obj = Repo(...)`, one on a null check landing on a new docstring. All 9 renames in
+  click (a class renamed `Context` to `Environment`, a nested function, a test) matched
+  on an unchanged body; an overlap threshold of 0.3 or 0.5 changed nothing, so 0.5 stays,
+  unexercised by these windows. This repository's orphans are mostly comments inside
+  `describe`/`it` callbacks (§ Known gaps).
 - **Rejected: scored fuzzy placement.** The earlier zero-trace idea stored a fingerprint
   per comment (symbol path, the anchor statement's tokens, hashes of two statements on
   each side, the original line) and placed it at the best-scoring position above a
   threshold and margin. Rejected because its worst failure is silent: a confident wrong
   placement attaches a true comment to the wrong code, repeated lines (`return None`)
   make that common, small edits flip the winner, and every weight needs tuning per
-  language. Exact matching per declaration replaces it; A14 adds a deterministic diff of
-  statement hashes for changed functions, with similarity only for renames.
+  language. Exact matching per declaration replaces it, with a deterministic diff of
+  statement hashes for changed functions and similarity only for renames.
 
 ## Promote and demote
 
@@ -665,6 +716,12 @@ heading and the second branch's `<!-- ... -->` metadata line read back as body t
   starts its own line inside an expression (an argument on its own line) does not place
   once a formatter joins that line into the statement; the entry is kept. A14's
   fallbacks cover it.
+- **Markerless: comments in module-level callbacks orphan on any edit to the callback.**
+  A test's `it("...", () => { ... })` is not a scope, so a comment inside it anchors at
+  module level to a node inside the call, and the call's hash covers the whole callback
+  (a callback's body counts, § Staleness). One edit anywhere in that test orphans it:
+  most of the 16.5% orphans measured on this repository ("Measured"). Scoping a callback
+  by its call's first string argument would fix test files; not done.
 - **Markerless: unnamed declarations anchor at module level.** A default-exported
   anonymous function or class (`export default function () {}`) has no name to put in a
   scope path, so its comments anchor at module level with no `body` hash: an edit inside

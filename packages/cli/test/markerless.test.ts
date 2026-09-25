@@ -138,16 +138,42 @@ describe.each(MODES)("markerless round trip through git (autocrlf=$autocrlf, one
     expect(box.status(wt2)).toBe("");
   });
 
-  it("an owner edit inside a function hides that function's comments without deleting them", () => {
+  it("an owner edit inside a function shows its comments stale until the agent edits there or confirms", () => {
     box.write(box.path("main", SOURCE), box.read(box.path("main", SOURCE)).replace("notify(order)", "notify(order, now)"));
     box.git(main, "commit", "-qam", "owner edits settle");
     box.git(wt2, "merge", "-q", "--no-edit", "main");
-    const placed = box.read(box.path("wt2", SOURCE));
-    expect(placed).toContain("settles one order");
-    expect(placed).not.toContain("retries are safe");
-    box.cli(wt2, "sync", SOURCE);
-    expect(box.read(box.path("wt2", SIDECAR))).toContain("retries are safe");
+    const file = box.path("wt2", SOURCE);
+    expect(box.read(file)).toMatch(/#~[0-9a-z]{4} settles one order/);
+    expect(box.read(file)).toMatch(/#~[0-9a-z]{4} \[stale\?\] retries are safe/);
+    expect(box.read(file)).toMatch(/#~[0-9a-z]{4} \[stale\?\] keyed on order\.id/);
     expect(box.status(wt2)).toBe("");
+
+    // Both checkouts report them; the owner's names the code line, since it shows no comments.
+    const owner = box.cliResult(main, "check", "--stale", "--json");
+    expect(owner.status).toBe(1);
+    const rows = JSON.parse(owner.stdout) as { line: number; id: string; text: string }[];
+    expect(rows.map((r) => r.text)).toEqual(["retries are safe: ledger write is idempotent\nthe ledger rejects a duplicate order id", "keyed on order.id"]);
+    expect(box.read(box.path("main", SOURCE)).split(/\r?\n/)[rows[0]!.line - 1]).toMatch(/ledger\.write/);
+    expect(box.cliResult(wt2, "check", "--stale").status).toBe(1);
+
+    // A sync with no edit in settle leaves them stale: the change came from the owner.
+    box.cli(wt2, "sync", SOURCE);
+    expect(box.read(file)).toContain("[stale?] retries are safe");
+    expect(box.status(wt2)).toBe("");
+
+    box.cli(wt2, "confirm", rows[1]!.id);
+    expect(box.read(file)).not.toContain("[stale?] keyed on order.id");
+    expect(box.read(file)).toContain("[stale?] retries are safe");
+    box.git(wt2, "commit", "-qam", "agent confirms a comment");
+
+    // The agent edits settle with the comments in view, so they are current again.
+    const eol = box.read(file).includes("\r\n") ? "\r\n" : "\n";
+    box.write(file, box.read(file).replace("notify(order, now)", `notify(order, now)${eol}    audit(order)`));
+    box.cli(wt2, "sync", SOURCE);
+    expect(box.read(file)).not.toContain("[stale?]");
+    box.git(wt2, "commit", "-qam", "agent edits settle");
+    expect(box.status(wt2)).toBe("");
+    expect(box.cliResult(wt2, "check", "--stale").status).toBe(0);
   });
 
   it("deleting a comment in an agent worktree deletes its entry", () => {
@@ -167,6 +193,27 @@ describe.each(MODES)("markerless round trip through git (autocrlf=$autocrlf, one
     expect(box.status(main)).toBe("");
   });
 
+  it("an owner deleting the code under a comment orphans it; only check --fix --prune removes it", () => {
+    box.git(main, "merge", "-q", "--no-edit", "agent2");
+    box.write(box.path("main", SOURCE), box.read(box.path("main", SOURCE)).replace(/ {4}ledger\.write\([^\n]*\n/, ""));
+    box.git(main, "commit", "-qam", "owner drops the ledger write");
+    const listed = box.cliResult(main, "check", "--orphans");
+    expect(listed.status).toBe(1);
+    expect(listed.stdout).toMatch(new RegExp(`^${SIDECAR}: [0-9a-z]{4} no longer places in ${SOURCE} \\(last in settle\\): retries are safe`, "m"));
+    expect(listed.stdout).toContain("keyed on order.id");
+
+    box.cliResult(main, "check", "--fix");
+    expect(box.read(box.path("main", SIDECAR))).toContain("retries are safe");
+    expect(box.cliResult(main, "check", "--prune").status).not.toBe(0);
+
+    expect(box.cli(main, "check", "--fix", "--prune")).toMatch(/^removed [0-9a-z]{4} from .*: it no longer places in /m);
+    expect(box.read(box.path("main", SIDECAR))).not.toContain("retries are safe");
+    expect(box.read(box.path("main", SIDECAR))).toContain("settles one order");
+    expect(box.status(main)).toBe(`M  ${SIDECAR}\n`);
+    box.git(main, "commit", "-qm", "prune orphans");
+    expect(box.cliResult(main, "check", "--orphans").status).toBe(0);
+  });
+
   it("check reports a sigil comment that reached a blob and nothing else", () => {
     expect(box.cliResult(main, "check").stdout).toBe("");
     const leak = box.path("main", "src/leak.py");
@@ -175,6 +222,6 @@ describe.each(MODES)("markerless round trip through git (autocrlf=$autocrlf, one
     const result = box.cliResult(main, "check", "--staged");
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("src/leak.py:1: comment committed with its text");
-    expect(readFileSync(box.path("main", SIDECAR), "utf8")).toContain("keyed on order.id");
+    expect(readFileSync(box.path("main", SIDECAR), "utf8")).toContain("settles one order");
   });
 });

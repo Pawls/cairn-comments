@@ -63,14 +63,17 @@ export function stagedFiles(root: string, filter = "ACM"): string[] {
   return nulSeparated(git(["diff", "--cached", "--name-only", "--no-renames", `--diff-filter=${filter}`, "-z"], { cwd: root }));
 }
 
-/** Staged blobs by path, read in one `git cat-file --batch`; paths not in the index are absent. */
-export function indexBlobs(root: string, files: Iterable<string>): Map<string, Buffer> {
+/**
+ * Blobs by path, read in one `git cat-file --batch`: staged ones, or those of `rev`. Paths
+ * the index or `rev` lacks are absent.
+ */
+export function indexBlobs(root: string, files: Iterable<string>, rev = ""): Map<string, Buffer> {
   const paths = [...new Set(files)].filter((f) => !f.includes("\n"));
   const blobs = new Map<string, Buffer>();
   if (!paths.length) return blobs;
   const out = execFileSync("git", ["cat-file", "--batch"], {
     cwd: root,
-    input: paths.map((p) => `:${p}\n`).join(""),
+    input: paths.map((p) => `${rev}:${p}\n`).join(""),
     stdio: ["pipe", "pipe", "inherit"],
     maxBuffer: 1 << 30,
   });
