@@ -124,7 +124,18 @@ Each is pinned by a test in `packages/core/test/` or `packages/cli/test/`.
   a hook already there to `pre-commit.<brand>-chained`, and runs it after `sync` and
   `check --staged --fix`. The
   managed hook does nothing unless `filter.<brand>.clean` is set, because a global
-  `core.hooksPath` directory is shared by every repository on the machine.
+  `core.hooksPath` directory is shared by every repository on the machine. For the same
+  reason `uninstall` leaves a hook in a directory outside the repository's git dir in
+  place and says so: removing it once disarmed every other repository still using the
+  tool, which then committed markers with no bodies.
+- **Hook adapters follow the worktrees.** Agents run in linked worktrees, and an
+  untracked settings file (Claude Code's `settings.local.json`) never reaches one through a
+  checkout. `init --hooks` installs into every existing worktree whose copy is untracked,
+  `worktree add` installs whatever adapters the repository has, and `uninstall` removes
+  them all. A tracked settings file travels by commit instead.
+- **`extensions.worktreeConfig`** is turned off by `uninstall` only when `init` turned it
+  on (recorded as `filter.<brand>.worktreeConfigByInit`) and no worktree config other than
+  the tool's own remains.
 - **Non-UTF-8 input** passes through the filter byte for byte.
 - **`filter.<brand>.required` stays unset.** Git treats a required driver with no smudge
   command as a failure, which would force a smudge process per file onto the owner's
@@ -447,6 +458,9 @@ both as code actions. Tests: `packages/core/test/promote.test.ts`,
   (the sigil minus `~`: `#`, `//`), one comment line per body line at the marker's indent
   (a blank body line becomes a bare `#`), or one line for a trailing marker. The sidecar
   entry goes with it, anchor and provenance included; an emptied sidecar file is deleted.
+  Promoting hands the comment to a person, so a later demote records no provenance: an
+  ordinary comment has nowhere to keep it, and the old harness and session no longer
+  describe who owns the text.
   An expanded marker's own text wins over the stored body, so an unsynced edit is what
   gets promoted. Outside an agent worktree the rest of the file is collapsed, as `collapse`
   would.

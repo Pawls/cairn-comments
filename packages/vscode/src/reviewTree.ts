@@ -19,6 +19,7 @@ export interface ReviewApi {
   /** Runs `scan --apply` and rescans; resolves to the CLI's report. */
   apply(): Promise<string>;
   message(): string | undefined;
+  visible(): boolean;
 }
 
 const checkbox = (on: boolean) => (on ? vscode.TreeItemCheckboxState.Checked : vscode.TreeItemCheckboxState.Unchecked);
@@ -75,14 +76,25 @@ export function registerReviewTree(context: vscode.ExtensionContext): ReviewApi 
     changed.fire();
   };
 
+  /** The workspace folder of the active editor's file, else the first one. */
+  function scanFolder(): vscode.WorkspaceFolder | undefined {
+    const active = vscode.window.activeTextEditor?.document.uri;
+    return (active && vscode.workspace.getWorkspaceFolder(active)) || vscode.workspace.workspaceFolders?.[0];
+  }
+
   async function scan(): Promise<void> {
-    const folder = vscode.workspace.workspaceFolders?.[0];
+    const folder = scanFolder();
     repo = folder ? await findRepo(folder.uri.fsPath) : undefined;
     model.load([]);
     if (!repo?.cli) {
       setMessage(repo ? `Run \`${BRAND} init\` in this repository to review AI comments.` : "Open a git repository to review AI comments.");
     } else {
-      const review = JSON.parse(await runCli(repo.cli, "scan --json", repo.root)) as { comments: ReviewComment[] };
+      const cli = repo.cli;
+      const root = repo.root;
+      setMessage(`Scanning ${path.basename(root)}…`);
+      changed.fire();
+      const output = await vscode.window.withProgress({ location: { viewId: REVIEW_VIEW } }, () => runCli(cli, "scan --json", root));
+      const review = JSON.parse(output) as { comments: ReviewComment[] };
       model.load(review.comments);
       const count = review.comments.length;
       setMessage(count ? `${count} likely AI comment(s). Uncheck the ones to keep as they are, then apply.` : "No likely AI comments found.");
@@ -116,9 +128,16 @@ export function registerReviewTree(context: vscode.ExtensionContext): ReviewApi 
       }
       changed.fire();
     }),
-    vscode.commands.registerCommand(REVIEW_COMMANDS.scan, guarded(scan)),
+    // From the palette the view may be collapsed or closed, so bring it forward first.
+    vscode.commands.registerCommand(
+      REVIEW_COMMANDS.scan,
+      guarded(async () => {
+        await vscode.commands.executeCommand(`${REVIEW_VIEW}.focus`);
+        await scan();
+      }),
+    ),
     vscode.commands.registerCommand(REVIEW_COMMANDS.apply, guarded(apply)),
   );
   setMessage(`Scan to list likely AI comments. Rejected ones are remembered in ${SCAN_IGNORE}.`);
-  return { scan, files: () => model.files(), setAccepted, apply, message: () => view.message };
+  return { scan, files: () => model.files(), setAccepted, apply, message: () => view.message, visible: () => view.visible };
 }

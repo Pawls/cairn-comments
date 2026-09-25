@@ -1,4 +1,5 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Sandbox } from "./harness.js";
 
@@ -51,5 +52,91 @@ describe("init with a global-style core.hooksPath", () => {
     expect(box.git(other, "show", "HEAD:b.py")).toBe("y = 2  #~ untouched\n");
     expect(existsSync(box.path("other", ".agents"))).toBe(false);
     expect(readFileSync(box.path("previous-hook.log"), "utf8").trim()).toBe("ran\nran");
+  });
+});
+
+describe("uninstall with a shared hooks directory", () => {
+  let box: Sandbox;
+  let hooks: string;
+  const repos = ["one", "two"];
+
+  beforeAll(() => {
+    box = new Sandbox({ autocrlf: false });
+    hooks = box.path("global-hooks").replaceAll("\\", "/");
+    box.git(box.dir, "config", "--global", "core.hooksPath", hooks);
+    for (const name of repos) {
+      box.git(box.dir, "init", "-q", name);
+      box.write(box.path(name, "a.py"), "x = 1\n");
+      box.git(box.path(name), "add", "-A");
+      box.git(box.path(name), "commit", "-qm", "base");
+    }
+  });
+  afterAll(() => box.dispose());
+
+  it("init says the hook directory is shared", () => {
+    expect(box.cli(box.path("one"), "init")).toContain("pre-commit: install (a shared hooks directory from core.hooksPath");
+    box.cli(box.path("two"), "init");
+  });
+
+  it("keeps the hook, so a repository still set up keeps moving bodies into sidecars", () => {
+    const report = box.cli(box.path("one"), "uninstall");
+    expect(report).toContain("pre-commit: kept, since core.hooksPath shares it with other repositories");
+    expect(existsSync(`${hooks}/pre-commit`)).toBe(true);
+    expect(box.cli(box.path("one"), "uninstall")).toBe("nothing to change\n");
+
+    const two = box.path("two");
+    box.write(box.path("two", "a.py"), "x = 1  #~ why one\n");
+    box.git(two, "add", "-A");
+    box.git(two, "commit", "-qm", "with a comment");
+    expect(box.git(two, "show", "HEAD:.agents/comments/a.py.md")).toMatch(/\nwhy one\n$/);
+    expect(box.cliResult(two, "check").status).toBe(0);
+  });
+});
+
+describe("hook adapters in linked worktrees", () => {
+  let box: Sandbox;
+  let main: string;
+  const settings = (...worktree: string[]) => box.path(...worktree, ".claude", "settings.local.json");
+
+  beforeAll(() => {
+    box = new Sandbox({ autocrlf: false });
+    main = box.path("main");
+    box.git(box.dir, "init", "-q", "main");
+    box.write(box.path("main", "a.py"), "x = 1\n");
+    box.git(main, "add", "-A");
+    box.git(main, "commit", "-qm", "base");
+    box.cli(main, "init");
+    box.git(main, "add", "-A");
+    box.git(main, "commit", "-qm", "init");
+  });
+  afterAll(() => box.dispose());
+
+  it("init --hooks installs into a worktree added before it", () => {
+    box.cli(main, "worktree", "add", box.path("early"), "-b", "early");
+    const report = box.cli(main, "init", "--hooks", "claude-code");
+    expect(report).toContain(".claude/settings.local.json: create with the claude-code hook\n");
+    expect(report).toContain(`${settings("early").split(path.sep).join("/")}: create with the claude-code hook\n`);
+    expect(readFileSync(settings("early"), "utf8")).toContain("hook claude-code");
+  });
+
+  it("worktree add carries the installed adapter into the new worktree", () => {
+    box.cli(main, "worktree", "add", box.path("late"), "-b", "late");
+    expect(readFileSync(settings("late"), "utf8")).toContain("hook claude-code");
+    expect(box.status(box.path("late"))).toBe("?? .claude/\n");
+  });
+
+  it("uninstall removes the adapter from every worktree and turns worktreeConfig back off", () => {
+    const report = box.cli(main, "uninstall");
+    expect(report).toContain("git config: unset extensions.worktreeConfig (init turned it on)\n");
+    for (const wt of [["main"], ["early"], ["late"]]) expect(existsSync(settings(...wt))).toBe(false);
+    expect(box.gitResult(main, "config", "--local", "--list").stdout).not.toMatch(/worktreeconfig|cairn/i);
+    expect(box.cli(main, "uninstall")).toBe("nothing to change\n");
+  });
+
+  it("leaves worktreeConfig on when init found it already on", () => {
+    box.git(main, "config", "--local", "extensions.worktreeConfig", "true");
+    box.cli(main, "init");
+    box.cli(main, "uninstall");
+    expect(box.git(main, "config", "--local", "--get", "extensions.worktreeConfig").trim()).toBe("true");
   });
 });

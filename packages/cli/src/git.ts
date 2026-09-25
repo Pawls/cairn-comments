@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { FILTER_DRIVER } from "@cairn-comments/core";
 
@@ -28,6 +28,21 @@ export function gitQuiet(args: string[], cwd: string): string | undefined {
 
 export function repoRoot(cwd = process.cwd()): string {
   return realpathSync.native(git(["rev-parse", "--show-toplevel"], { cwd }).trim());
+}
+
+/** Every worktree of the repository that still exists on disk, main first, in `repoRoot` form. */
+export function worktreeRoots(root: string): string[] {
+  return git(["worktree", "list", "--porcelain"], { cwd: root })
+    .split(/\r?\n/)
+    .filter((l) => l.startsWith("worktree "))
+    .map((l) => l.slice("worktree ".length))
+    .filter((p) => existsSync(p))
+    .map((p) => realpathSync.native(p));
+}
+
+/** Whether `file` (repo-relative) is tracked in the worktree at `root`. */
+export function isTracked(root: string, file: string): boolean {
+  return gitQuiet(["ls-files", "--error-unmatch", "--", file], root) !== undefined;
 }
 
 /** Repo-relative, forward-slash form of a path given relative to `cwd`. */

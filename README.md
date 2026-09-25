@@ -83,7 +83,9 @@ sidecar entry records the harness, model, session, and time.
 | Cursor | `cairn init --hooks cursor` | `.cursor/hooks.json` (`afterFileEdit`) |
 | Anything else | `cairn init --agents-md` teaches the sigil in `AGENTS.md`; or run `cairn tag --changed` after the agent's turn | |
 
-Combine them: `cairn init --hooks claude-code,codex,cursor --agents-md`. Hooks see only
+Combine them: `cairn init --hooks claude-code,codex,cursor --agents-md`. The hooks go into
+every worktree of the repository, and `cairn worktree add` copies them into new ones, so
+an agent in its own worktree is covered either way. Hooks see only
 edits made through the harness's own edit tools. A comment an agent writes with `sed` or a
 script is picked up by `tag --changed`, or by the pre-commit hook if it already carries the
 sigil.
@@ -183,7 +185,9 @@ markers inside that body. A clone without `init` falls back to git's ordinary te
 
 **Does a hook or `init` touch other repositories?** No. With a global `core.hooksPath`,
 `init` chains any hook already there and the managed hook does nothing in repositories
-without Cairn Comments's filter.
+without Cairn Comments's filter. For that reason `uninstall` leaves a hook in a shared
+directory in place, since other repositories may still rely on it; delete it by hand once
+none do.
 
 ## Development
 

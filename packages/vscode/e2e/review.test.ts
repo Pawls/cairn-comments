@@ -30,7 +30,9 @@ const listing =(a: TestApi) => a.review.files().map((f) => [f.file, f.comments.m
 suite("scan review", () => {
   test("scan groups likely AI comments by file, all accepted", async () => {
     const a = await api();
+    await vscode.commands.executeCommand("workbench.action.closeSidebar");
     await vscode.commands.executeCommand(COMMANDS.scan);
+    assert.equal(a.review.visible(), true, "the palette command brings the review view forward");
     assert.deepEqual(listing(a), [
       ["src/app.py", [[2, true], [6, true]]],
       ["src/util.ts", [[2, true]]],

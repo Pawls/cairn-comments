@@ -1,6 +1,7 @@
 import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { BRAND } from "@cairn-comments/core";
+import { isTracked, worktreeRoots } from "./git.js";
 import type { Provenance } from "./tag.js";
 
 /** What one post-edit hook call tells us, whatever the harness. */
@@ -218,6 +219,20 @@ export function planAdapterInstall(root: string, harness: string, command: strin
 export function planAdapterUninstall(root: string, harness: string): SettingsChange | undefined {
   if (!existsSync(path.join(root, adapterFor(harness).settingsFile))) return undefined;
   return editSettings(root, harness, (adapter, settings) => adapter.uninstall(settings));
+}
+
+export function adapterInstalled(root: string, harness: string): boolean {
+  return planAdapterUninstall(root, harness) !== undefined;
+}
+
+/**
+ * The worktrees a harness's hook goes into: `root`, plus every other worktree whose
+ * settings file is untracked. Agents run in linked worktrees, and an untracked file never
+ * reaches them through a checkout; a tracked one does, through a commit.
+ */
+export function adapterRoots(root: string, harness: string): string[] {
+  const file = adapterFor(harness).settingsFile;
+  return [root, ...worktreeRoots(root).filter((wt) => wt !== root && !isTracked(wt, file))];
 }
 
 export function applySettingsChange(change: SettingsChange): void {

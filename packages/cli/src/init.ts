@@ -2,11 +2,13 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, wri
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { BRAND, FILTER_DRIVER, LANGUAGES, SCAN_IGNORE, SIDECAR_ROOT } from "@cairn-comments/core";
-import { ADAPTERS, applySettingsChange, planAdapterInstall, planAdapterUninstall, type SettingsChange } from "./adapters.js";
-import { git, gitQuiet } from "./git.js";
+import { ADAPTERS, adapterRoots, applySettingsChange, planAdapterInstall, planAdapterUninstall, type SettingsChange } from "./adapters.js";
+import { git, gitQuiet, worktreeRoots } from "./git.js";
 
 const HOOK_TAG = `managed by ${BRAND} init`;
 const CHAINED_HOOK = `pre-commit.${BRAND}-chained`;
+/** Set when `init` turned `extensions.worktreeConfig` on, so `uninstall` turns it off only then. */
+const WORKTREE_CONFIG_MARK = `filter.${FILTER_DRIVER}.worktreeConfigByInit`;
 
 /** How git and the hook invoke this CLI: by absolute path, so nothing depends on PATH. */
 export function defaultCommand(): string {
@@ -103,6 +105,13 @@ function hooksDir(root: string): string {
   return path.resolve(root, git(["rev-parse", "--git-path", "hooks"], { cwd: root }).trim());
 }
 
+/** A hooks directory outside this repository's git dir (a global `core.hooksPath`) serves other repositories too. */
+function isSharedHooksDir(root: string, dir: string): boolean {
+  const common = path.resolve(root, git(["rev-parse", "--git-common-dir"], { cwd: root }).trim());
+  const relative = path.relative(common, dir);
+  return relative.startsWith("..") || path.isAbsolute(relative);
+}
+
 /**
  * Installs into the effective hooks directory, which a `core.hooksPath` may have moved
  * away from `.git/hooks` (design.md § Git behavior, item 4). An existing hook is renamed and
@@ -135,7 +144,8 @@ function hookChange(root: string, command: string): Change | undefined {
     chmodSync(hook, 0o755);
   };
   const what = foreign ? "install; the previous hook now runs after it as " + CHAINED_HOOK : existing === undefined ? "install" : "update";
-  return { what: `${hook}: ${what}`, apply: write };
+  const shared = isSharedHooksDir(root, dir) ? ` (a shared hooks directory from core.hooksPath; inert in repositories without ${BRAND})` : "";
+  return { what: `${hook}: ${what}${shared}`, apply: write };
 }
 
 const SNIPPET_BEGIN = `<!-- ${BRAND}:begin -->`;
@@ -195,7 +205,9 @@ function agentsMdChange(root: string, remove: boolean): Change | undefined {
 
 function settingsChange(root: string, harness: string, change: SettingsChange | undefined, installing: boolean): Change | undefined {
   if (!change) return undefined;
-  const file = path.relative(root, change.file).split(path.sep).join("/");
+  const relative = path.relative(root, change.file);
+  // A linked worktree's copy is named in full; a `../` path would hide which worktree it is.
+  const file = (relative.startsWith("..") ? change.file : relative).split(path.sep).join("/");
   const what =
     change.next === null ? "delete (nothing else was in it)" : !change.existed ? `create with the ${harness} hook` : `${installing ? "set" : "remove"} the ${harness} hook`;
   return { what: `${file}: ${what}`, apply: () => applySettingsChange(change) };
@@ -210,9 +222,12 @@ function settingsChange(root: string, harness: string, change: SettingsChange | 
 export function planInit(root: string, options: InitOptions = {}): Change[] {
   const command = options.command ?? defaultCommand();
   const hooks = options.hooks ?? [];
+  const worktreeConfigOn = localConfig(root, "extensions.worktreeConfig") === "true";
   const changes: (Change | undefined)[] = [
     ...configChanges(root, {
       "extensions.worktreeConfig": "true",
+      // Recorded only when this run turns it on; an existing mark is kept as it is.
+      [WORKTREE_CONFIG_MARK]: worktreeConfigOn ? localConfig(root, WORKTREE_CONFIG_MARK) : "true",
       [`filter.${FILTER_DRIVER}.clean`]: `${command} clean %f`,
       [`filter.${FILTER_DRIVER}.process`]: options.oneShot ? undefined : `${command} filter-process`,
       [`merge.${FILTER_DRIVER}.name`]: `${BRAND} sidecar merge`,
@@ -220,17 +235,38 @@ export function planInit(root: string, options: InitOptions = {}): Change[] {
     }),
     attributesChange(root, attributeLines(), LEGACY_ATTRIBUTES),
     hookChange(root, command),
-    ...hooks.map((h) => settingsChange(root, h, planAdapterInstall(root, h, command), true)),
+    ...hooks.flatMap((h) => adapterRoots(root, h).map((wt) => settingsChange(root, h, planAdapterInstall(wt, h, command), true))),
     options.agentsMd ? agentsMdChange(root, false) : undefined,
   ];
   return changes.filter((c): c is Change => !!c);
 }
 
-function worktreeRoots(root: string): string[] {
-  return git(["worktree", "list", "--porcelain"], { cwd: root })
-    .split(/\r?\n/)
-    .filter((l) => l.startsWith("worktree "))
-    .map((l) => l.slice("worktree ".length));
+/**
+ * Removes the managed hook, putting a chained one back. A hook in a shared hooks directory
+ * stays: other repositories may still depend on it, and without the filter config it does
+ * nothing here. That is reported only while this repository is configured, so a second
+ * `uninstall` still finds nothing to change.
+ */
+function hookRemoval(root: string, configured: boolean): Change | undefined {
+  const dir = hooksDir(root);
+  const hook = path.join(dir, "pre-commit");
+  const chained = path.join(dir, CHAINED_HOOK);
+  if (!existsSync(hook) || !readFileSync(hook, "utf8").includes(HOOK_TAG)) return undefined;
+  if (isSharedHooksDir(root, dir)) {
+    if (!configured) return undefined;
+    return { what: `${hook}: kept, since core.hooksPath shares it with other repositories (inert here from now on)`, apply: () => {} };
+  }
+  const restore = existsSync(chained);
+  return {
+    what: `${hook}: ${restore ? `remove; ${CHAINED_HOOK} goes back to pre-commit` : "remove"}`,
+    apply: () => (restore ? renameSync(chained, hook) : rmSync(hook, { force: true })),
+  };
+}
+
+/** Entries in a worktree's own config other than this tool's filter section. */
+function otherWorktreeConfig(wt: string): string[] {
+  const list = gitQuiet(["config", "--worktree", "--list"], wt) ?? "";
+  return list.split(/\r?\n/).filter((l) => l && !l.startsWith(`filter.${FILTER_DRIVER}.`));
 }
 
 /**
@@ -239,33 +275,33 @@ function worktreeRoots(root: string): string[] {
  */
 export function planUninstall(root: string): Change[] {
   const changes: (Change | undefined)[] = [];
+  const configured = localConfig(root, `filter.${FILTER_DRIVER}.clean`) !== undefined;
+  const worktreeConfigByInit = localConfig(root, WORKTREE_CONFIG_MARK) === "true";
   for (const section of [`filter.${FILTER_DRIVER}`, `merge.${FILTER_DRIVER}`]) {
     if (gitQuiet(["config", "--local", "--get-regexp", `^${section.replace(".", "\\.")}\\.`], root) !== undefined) {
       changes.push({ what: `git config: remove [${section.replace(".", ' "')}"]`, apply: () => git(["config", "--local", "--remove-section", section], { cwd: root }) });
     }
   }
   // Agent worktrees carry their own smudge settings (worktree add).
+  const worktrees = worktreeRoots(root);
   if (localConfig(root, "extensions.worktreeConfig") === "true") {
-    for (const wt of worktreeRoots(root)) {
-      if (!existsSync(wt) || gitQuiet(["config", "--worktree", "--get-regexp", `^filter\\.${FILTER_DRIVER}\\.`], wt) === undefined) continue;
+    for (const wt of worktrees) {
+      if (gitQuiet(["config", "--worktree", "--get-regexp", `^filter\\.${FILTER_DRIVER}\\.`], wt) === undefined) continue;
       changes.push({
         what: `git config --worktree (${wt}): remove [filter "${FILTER_DRIVER}"]`,
         apply: () => git(["config", "--worktree", "--remove-section", `filter.${FILTER_DRIVER}`], { cwd: wt }),
       });
     }
+    // After the per-worktree removals, which need the extension on. Kept if anything else now relies on it.
+    if (worktreeConfigByInit && !worktrees.some((wt) => otherWorktreeConfig(wt).length)) {
+      changes.push({ what: "git config: unset extensions.worktreeConfig (init turned it on)", apply: () => git(["config", "--local", "--unset", "extensions.worktreeConfig"], { cwd: root }) });
+    }
   }
   changes.push(attributesChange(root, [], [...attributeLines(), ...LEGACY_ATTRIBUTES]));
-  const dir = hooksDir(root);
-  const hook = path.join(dir, "pre-commit");
-  const chained = path.join(dir, CHAINED_HOOK);
-  if (existsSync(hook) && readFileSync(hook, "utf8").includes(HOOK_TAG)) {
-    const restore = existsSync(chained);
-    changes.push({
-      what: `${hook}: ${restore ? `remove; ${CHAINED_HOOK} goes back to pre-commit` : "remove"}`,
-      apply: () => (restore ? renameSync(chained, hook) : rmSync(hook, { force: true })),
-    });
+  changes.push(hookRemoval(root, configured));
+  for (const harness of Object.keys(ADAPTERS)) {
+    for (const wt of adapterRoots(root, harness)) changes.push(settingsChange(root, harness, planAdapterUninstall(wt, harness), false));
   }
-  for (const harness of Object.keys(ADAPTERS)) changes.push(settingsChange(root, harness, planAdapterUninstall(root, harness), false));
   changes.push(agentsMdChange(root, true));
   return changes.filter((c): c is Change => !!c);
 }
