@@ -1,6 +1,8 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { placeComments, recordComments, stripComments, type Sidecar } from "../src/index.js";
+import { Language, Parser } from "web-tree-sitter";
+import { LANGUAGES, findMarkers, languageForPath, placeComments, recordComments, stripComments, type Sidecar } from "../src/index.js";
+import { resolveWasm } from "../src/languages.js";
 
 const EMPTY: Sidecar = { preamble: "", entries: [] };
 
@@ -14,8 +16,8 @@ async function roundTrip(path: string, working: string, sidecar: Sidecar = EMPTY
 
 async function expectExact(path: string, working: string): Promise<void> {
   const { recorded, stripped, placed } = await roundTrip(path, working);
-  // A sigil comment starts a line or follows whitespace; the one inside a string literal stays.
-  expect(stripped).not.toMatch(/(^|[ \t])#~/m);
+  // A sigil inside a string literal or JSX text is not a comment, and stays.
+  expect(await findMarkers(languageForPath(path)!, stripped)).toEqual([]);
   expect(placed.unplaced).toEqual([]);
   expect(placed.source).toBe(recorded.source);
 }
@@ -220,6 +222,258 @@ describe("recordComments", () => {
     const kept = await recordComments("a.py", withoutOne, recorded.sidecar, { seen: new Set([two!]) });
     expect(kept.deleted).toEqual([]);
     expect(kept.sidecar.entries.map((e) => e.body)).toEqual(["one", "two"]);
+  });
+});
+
+const TYPESCRIPT = [
+  'import { ledger } from "./ledger";',
+  "",
+  "//~ settles one order; safe to retry",
+  "export function settle(order: Order): void {",
+  "  //~ retries are safe: the write is idempotent",
+  "  ledger.write(order.id); //~ keyed on order.id",
+  "  order.items.forEach((item) => {",
+  "    //~ inside a callback, so it belongs to settle",
+  "    notify(item);",
+  "  });",
+  "  //~ nothing after notify on purpose",
+  "}",
+  "",
+  "export const refund = async (order: Order) => {",
+  "  //~ reverse before notifying",
+  "  await ledger.reverse(order.id);",
+  "};",
+  "",
+  "export class Ledger {",
+  "  //~ one per process",
+  "  static instance?: Ledger;",
+  "",
+  "  write(id: string): void {",
+  "    function check() {",
+  "      //~ inside a nested function",
+  "      return id.length > 0;",
+  "    }",
+  "    check();",
+  "  }",
+  "",
+  "  handler = () => {",
+  "    //~ a field bound to an arrow function",
+  "    return 1;",
+  "  };",
+  "}",
+  "",
+  "namespace Tools {",
+  "  //~ in a namespace",
+  "  export const x = 1;",
+  "}",
+  "",
+].join("\n");
+
+const TSX = [
+  "export function App({ items }: Props) {",
+  "  //~ render note",
+  "  return (",
+  '    <ul className="list">',
+  "      {items.map((item) => (",
+  "        //~ keyed by id; index keys broke reordering",
+  "        <li key={item.id}>{item.name}</li>",
+  "      ))}",
+  "      <li>",
+  "        {/* a human JSX comment */}",
+  "        tail //~ JSX text, not a comment",
+  "      </li>",
+  "    </ul>",
+  "  );",
+  "}",
+  "",
+].join("\n");
+
+const JAVASCRIPT = [
+  "const Ledger = class {",
+  "  //~ a class expression bound to a name",
+  "  run() {",
+  "    return 1; //~ trailing in a method",
+  "  }",
+  "};",
+  "",
+  "module.exports.handle = function (req) {",
+  "  //~ an assigned function expression",
+  "  return Ledger;",
+  "};",
+  "",
+  "function* ids() {",
+  "  //~ a generator",
+  "  yield 1;",
+  "}",
+  "",
+].join("\n");
+
+const CSHARP = [
+  "using System;",
+  "",
+  "namespace Shop.Orders",
+  "{",
+  "    //~ one ledger per process",
+  "    public class Ledger",
+  "    {",
+  "        //~ cached count",
+  "        public int Size",
+  "        {",
+  "            get",
+  "            {",
+  "                //~ inside a getter",
+  "                return count;",
+  "            }",
+  "        }",
+  "",
+  "        public int Double => count * 2; //~ an expression-bodied property",
+  "",
+  "        //~ an expression-bodied method",
+  "        int Triple() => count * 3;",
+  "",
+  "        [Obsolete]",
+  "        public void Write(string id)",
+  "        {",
+  "            bool Check()",
+  "            {",
+  "                //~ inside a local function",
+  "                return id.Length > 0;",
+  "            }",
+  "            Check();",
+  "        }",
+  "    }",
+  "}",
+  "",
+].join("\n");
+
+const JAVA = [
+  "package shop;",
+  "",
+  "//~ one ledger per process",
+  "public class Ledger {",
+  "    //~ cached count",
+  "    private int count;",
+  "",
+  "    @Override",
+  "    public String toString() {",
+  "        Runnable r = () -> {",
+  "            //~ inside a lambda, so it belongs to toString",
+  "            log();",
+  "        };",
+  '        return "Ledger";',
+  "    }",
+  "",
+  "    class Entry {",
+  "        void touch() {",
+  "            count++; //~ an inner class method",
+  "        }",
+  "    }",
+  "}",
+  "",
+].join("\n");
+
+/** Each fixture, and the `scope` its comments record, in file order. */
+const LANGUAGE_FIXTURES: [string, string, (string | undefined)[]][] = [
+  ["a.ts", TYPESCRIPT, [undefined, "settle", "settle", "settle", "settle", "refund", "Ledger", "Ledger.write.check", "Ledger.handler", "Tools"]],
+  ["a.tsx", TSX, ["App", "App"]],
+  ["a.js", JAVASCRIPT, ["Ledger", "Ledger.run", "module.exports.handle", "ids"]],
+  [
+    "a.cs",
+    CSHARP,
+    ["Shop.Orders", "Shop.Orders.Ledger", "Shop.Orders.Ledger.Size", "Shop.Orders.Ledger", "Shop.Orders.Ledger", "Shop.Orders.Ledger.Write.Check"],
+  ],
+  ["a.java", JAVA, [undefined, "Ledger", "Ledger.toString", "Ledger.Entry.touch"]],
+];
+
+describe("markerless in every language", () => {
+  it.each(LANGUAGE_FIXTURES)("restores %s exactly, LF and CRLF", async (path, working) => {
+    await expectExact(path, working);
+    await expectExact(path, working.replaceAll("\n", "\r\n"));
+  });
+
+  it.each(LANGUAGE_FIXTURES)("records the enclosing named declaration as scope in %s", async (path, working, scopes) => {
+    const { recorded } = await roundTrip(path, working);
+    expect(recorded.sidecar.entries.map((e) => e.meta.get("scope"))).toEqual(scopes);
+  });
+
+  it("keeps JSX text that looks like a comment in the stripped file", async () => {
+    const { stripped } = await roundTrip("a.tsx", TSX);
+    expect(stripped).toContain("tail //~ JSX text, not a comment");
+    expect(stripped).not.toContain("keyed by id");
+  });
+
+  it("anchors the comments of a default-exported anonymous function at module level", async () => {
+    const working = "export default function () {\n  //~ note\n  go();\n}\n";
+    await expectExact("a.ts", working);
+    const { recorded } = await roundTrip("a.ts", working);
+    expect(recorded.sidecar.entries[0]!.meta.get("scope")).toBeUndefined();
+  });
+
+  it("anchors C# types to their names under a file-scoped namespace", async () => {
+    const { recorded } = await roundTrip("a.cs", "namespace Shop;\n\npublic class A\n{\n    void M()\n    {\n        //~ note\n        Go();\n    }\n}\n");
+    expect(recorded.sidecar.entries[0]!.meta.get("scope")).toBe("A.M");
+  });
+
+  // Each edit changes one declaration's body: the comments inside it hide, every other one stays.
+  const EDITS: [string, string, string, string, string[]][] = [
+    ["a.ts", TYPESCRIPT, "return 1;", "return 2;", ["a field bound to an arrow function"]],
+    [
+      "a.ts",
+      TYPESCRIPT,
+      "notify(item);",
+      "notify(item, 1);",
+      [
+        "retries are safe: the write is idempotent",
+        "keyed on order.id",
+        "inside a callback, so it belongs to settle",
+        "nothing after notify on purpose",
+      ],
+    ],
+    ["a.js", JAVASCRIPT, "return Ledger;", "return null;", ["an assigned function expression"]],
+    ["a.cs", CSHARP, "return count;", "return 0;", ["inside a getter"]],
+    ["a.java", JAVA, "log();", "log(1);", ["inside a lambda, so it belongs to toString"]],
+  ];
+
+  it.each(EDITS)("in %s, changing `%s` hides only the comments inside that declaration", async (path, working, from, to, hidden) => {
+    const { recorded, stripped } = await roundTrip(path, working);
+    const placed = await placeComments(path, stripped.replace(from, to), recorded.sidecar);
+    const bodyOf = (id: string) => recorded.sidecar.entries.find((e) => e.id === id)!.body;
+    expect(placed.unplaced.map(bodyOf)).toEqual(hidden);
+    expect(placed.placed).toHaveLength(recorded.sidecar.entries.length - hidden.length);
+  });
+
+  it("follows a function moved within a TypeScript file", async () => {
+    const { recorded, stripped } = await roundTrip("a.ts", TYPESCRIPT);
+    const refund = stripped.slice(stripped.indexOf("export const refund"), stripped.indexOf("export class"));
+    const moved = stripped.replace(refund, "").replace("export function settle", refund + "export function settle");
+    const placed = await placeComments("a.ts", moved, recorded.sidecar);
+    expect(placed.unplaced).toEqual([]);
+    expect(placed.source).toMatch(/export const refund = async \(order: Order\) => \{\n {2}\/\/~[0-9a-z]{4} reverse before notifying\n/);
+  });
+
+  // The non-Python pairs of stale.test.ts's FORMATTER_ONLY (A7), with a comment in place of the bare marker.
+  const FORMATTER_PAIRS: [string, string, string][] = [
+    ["a.ts", "//~ why\nconst f = y => y\n", "const f = (y) => y;\n"],
+    ["a.ts", "//~ why\nconst o = {a:1,b:[1,2,],}\n", "const o = { a: 1, b: [1, 2] };\n"],
+    ["a.js", "//~ why\ncall('a', b)\n", 'call(\n  "a",\n  b,\n);\n'],
+    ["a.tsx", "//~ why\nconst v = <div>{x}</div>\n", "const v = (\n  <div>{x}</div>\n);\n"],
+    ["a.cs", "class C {\n  void M() {\n    //~ why\n    int x=1;\n  }\n}\n", "class C\n{\n  void M()\n  {\n    int x = 1;\n  }\n}\n"],
+    ["a.java", "class C {\n  void m() {\n    //~ why\n    int x=foo(a,b);\n  }\n}\n", "class C {\n  void m() {\n    int x = foo(\n        a, b);\n  }\n}\n"],
+  ];
+
+  it.each(FORMATTER_PAIRS)("places a comment across a formatter's rewrite (%s: %j)", async (path, before, after) => {
+    const { recorded } = await roundTrip(path, before);
+    const placed = await placeComments(path, after, recorded.sidecar);
+    expect(placed.unplaced).toEqual([]);
+    expect(placed.source).toMatch(/\/\/~[0-9a-z]{4} why\n/);
+  });
+
+  it("names only node types that exist in each grammar", async () => {
+    await Parser.init();
+    for (const spec of LANGUAGES) {
+      const language = await Language.load(resolveWasm(spec));
+      for (const type of [...spec.functionTypes, ...spec.namespaceTypes]) expect(language.idForNodeType(type, true), `${spec.id}: ${type}`).toBeTruthy();
+    }
   });
 });
 

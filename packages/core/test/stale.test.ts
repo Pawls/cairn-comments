@@ -59,6 +59,18 @@ describe("anchors", () => {
     expect(await anchor("a.py", after)).toBe(await anchor("a.py", before));
     const ts = (body: string) => `//~ab12\nexport function k(a: number) {\n  ${body}\n}\n`;
     expect(await anchor("a.ts", ts("return a;"))).toBe(await anchor("a.ts", ts("return a + 1;")));
+    const bound = (body: string) => `//~ab12\nexport const k = (a: number) => {\n  ${body}\n};\n`;
+    expect(await anchor("a.ts", bound("return a;"))).toBe(await anchor("a.ts", bound("return a + 1;")));
+    const assigned = (body: string) => `//~ab12\nexports.k = function (a) {\n  ${body}\n};\n`;
+    expect(await anchor("a.js", assigned("return a;"))).toBe(await anchor("a.js", assigned("return a + 1;")));
+    const property = (body: string) => `class C {\n  //~ab12\n  int P { get { ${body} } }\n}\n`;
+    expect(await anchor("a.cs", property("return 1;"))).toBe(await anchor("a.cs", property("return 2;")));
+  });
+
+  it("counts a callback's body and an arrow function's expression body", async () => {
+    const callback = (body: string) => `//~ab12\nitems.forEach((a) => {\n  ${body}\n});\n`;
+    expect(await anchor("a.ts", callback("use(a);"))).not.toBe(await anchor("a.ts", callback("drop(a);")));
+    expect(await anchor("a.ts", "//~ab12\nconst k = (a) => a;\n")).not.toBe(await anchor("a.ts", "//~ab12\nconst k = (a) => a + 1;\n"));
   });
 
   it("anchors a comment above a block's first statement to that statement", async () => {

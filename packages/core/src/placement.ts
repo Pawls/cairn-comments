@@ -96,6 +96,21 @@ function isPlaced(entry: SidecarEntry): boolean {
   return placementOf(entry) !== undefined;
 }
 
+/**
+ * A scope's name in its path. A function or class expression takes the name it is bound to
+ * (`const f = () => {}`, a class field, `exports.run = function () {}`); one with no such
+ * name is a callback, and its comments belong to the scope around it.
+ */
+function scopeName(node: Node): string | undefined {
+  const own = node.childForFieldName("name");
+  if (own) return own.text;
+  const parent = node.parent;
+  if (!parent) return undefined;
+  if (parent.childForFieldName("value")?.id === node.id) return (parent.childForFieldName("name") ?? parent.childForFieldName("property"))?.text;
+  if (parent.type === "assignment_expression" && parent.childForFieldName("right")?.id === node.id) return parent.childForFieldName("left")?.text;
+  return undefined;
+}
+
 type RowKind = "blank" | "comment" | "code" | "continuation";
 
 interface Row {
@@ -128,7 +143,7 @@ class Layout {
     const scopeTypes = [...spec.functionTypes, ...spec.namespaceTypes];
     const seen = new Map<string, number>();
     for (const node of scopeTypes.length ? root.descendantsOfType(scopeTypes) : []) {
-      if (!node) continue;
+      if (!node || scopeName(node) === undefined) continue;
       const path = this.pathOf(node);
       const n = seen.get(path) ?? 0;
       seen.set(path, n + 1);
@@ -155,18 +170,23 @@ class Layout {
 
   private pathOf(scope: Node): string {
     const names: string[] = [];
+    const types = [...this.spec.functionTypes, ...this.spec.namespaceTypes];
     for (let n: Node | null = scope; n; n = n.parent) {
-      if (this.spec.functionTypes.includes(n.type) || this.spec.namespaceTypes.includes(n.type)) {
-        names.unshift(n.childForFieldName("name")?.text ?? "?");
-      }
+      if (!types.includes(n.type)) continue;
+      const name = scopeName(n);
+      if (name !== undefined) names.unshift(name);
     }
     return names.join(".");
   }
 
-  /** The innermost function around `node`, else its innermost class; null at module level. */
+  private isScope(node: Node, types: readonly string[]): boolean {
+    return types.includes(node.type) && scopeName(node) !== undefined;
+  }
+
+  /** The innermost named function around `node`, else its innermost class; null at module level. */
   scopeOf(node: Node): Node | null {
-    for (let p = node.parent; p; p = p.parent) if (this.spec.functionTypes.includes(p.type)) return p;
-    for (let p = node.parent; p; p = p.parent) if (this.spec.namespaceTypes.includes(p.type)) return p;
+    for (let p = node.parent; p; p = p.parent) if (this.isScope(p, this.spec.functionTypes)) return p;
+    for (let p = node.parent; p; p = p.parent) if (this.isScope(p, this.spec.namespaceTypes)) return p;
     return null;
   }
 

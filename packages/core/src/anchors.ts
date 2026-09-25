@@ -56,21 +56,35 @@ function ownLineAnchor(spec: LanguageSpec, root: Node, source: string, lines: re
   return undefined;
 }
 
-const DECLARATION = /function|method|class|interface|struct|enum|namespace|constructor|record/;
+const DECLARATION = /function|method|class|interface|struct|enum|namespace|internal_module|constructor|record|property/;
+/** Statements that wrap one declaration: `namespace N {}` in TypeScript, `const f = () => {}`. */
+const WRAPPER = /^(?:expression_statement|lexical_declaration|variable_declaration)$/;
 
 /**
  * A comment above a declaration describes its signature, so the body is left out: an edit
  * deep inside a class would otherwise flag every comment above it. Only the anchor's own
- * spine counts (through `export` and decorators), so a callback's body still does.
+ * spine counts (through `export`, decorators, and a name bound to a function), so a
+ * callback's body still does.
  */
 function declarationBodies(anchor: Node): Set<number> {
   const skipped = new Set<number>();
-  for (let node: Node | null = anchor; node; ) {
-    const body = node.childForFieldName("body");
-    if (body && DECLARATION.test(node.type)) skipped.add(body.id);
-    node = node.childForFieldName("definition") ?? node.childForFieldName("declaration");
+  for (let node: Node | null = anchor; node; node = spineChild(node)) {
+    if (!DECLARATION.test(node.type)) continue;
+    // A C# property keeps its block bodies in `accessors`. An arrow function's expression
+    // body is all it says (`() => a()`), so only a block body is left out.
+    const body = node.childForFieldName(node.type.includes("property") ? "accessors" : "body");
+    if (body && (node.type !== "arrow_function" || body.type === "statement_block")) skipped.add(body.id);
   }
   return skipped;
+}
+
+function spineChild(node: Node): Node | null {
+  const next = node.childForFieldName("definition") ?? node.childForFieldName("declaration");
+  if (next) return next;
+  if (WRAPPER.test(node.type) && node.namedChildCount === 1) return node.namedChild(0);
+  const value = node.childForFieldName("value") ?? node.childForFieldName("right");
+  const bound = node.type === "variable_declarator" || node.type === "assignment_expression" || /field_definition$/.test(node.type);
+  return bound && value && /function|class/.test(value.type) ? value : null;
 }
 
 const QUOTE = /^[A-Za-z]*(?:'''|"""|'|")$/;

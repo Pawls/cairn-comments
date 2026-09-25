@@ -418,9 +418,12 @@ Implemented in `packages/core/src/anchors.ts` (what a marker anchors to, and the
   The code line must sit at the marker's indent, so the last comment of a block anchors
   to nothing. A trailing marker anchors to the tokens before it on its own line.
 - **Declarations track their signature.** When the anchor is a function, method, class,
-  interface, struct, enum, namespace, constructor, or record (through `export`,
-  decorators, and annotations), its `body` field is left out, so an edit deep inside a
-  class does not flag the comment above it. A callback's or loop's body still counts.
+  interface, struct, enum, namespace, constructor, record, or C# property (through
+  `export`, decorators, annotations, and a name bound to a function or class, as in
+  `const f = () => {}`), its `body` field (a property's `accessors`) is left out, so an
+  edit deep inside a class does not flag the comment above it. A callback's or loop's
+  body still counts, and so does an arrow function's expression body (`() => a()`),
+  which is all the function says.
 - **Normalization.** The hash covers tokens plus the types of named nodes, so
   `(a + b) * c` and `a + b * c` differ. It ignores what formatters change: whitespace,
   comments, `;`, a comma right before a closing bracket, redundant parentheses (a
@@ -449,8 +452,7 @@ Implemented in `packages/core/src/anchors.ts` (what a marker anchors to, and the
 
 ## Anchoring
 
-Markerless mode, `init --markerless` (v1 A12, Python; the other languages anchor every
-comment at module level until A13). Implemented in `packages/core/src/placement.ts`
+Markerless mode, `init --markerless` (v1 A12 for Python, A13 for the other v1 languages). Implemented in `packages/core/src/placement.ts`
 (`stripComments` is the clean filter, `placeComments` the smudge, `recordComments` the
 sync); the CLI switches on `filter.cairn.markerless`. Tests:
 `packages/core/test/placement.test.ts` (including a round-trip property) and
@@ -467,7 +469,13 @@ sync); the CLI switches on `filter.cairn.markerless`. Tests:
     the node starts), or `row` (a line number, when no code node anchors the comment);
   - `scope`: the enclosing function, else class, as a dotted path (`Ledger.size`), with
     `@n` for the nth declaration of that path (a property and its setter); absent at
-    module level;
+    module level. The node types per language are `functionTypes` and `namespaceTypes` in
+    `languages.ts` (a C# property counts as a function). A function or class expression is
+    a scope only when bound to a name (`const f = () => {}`, a class field,
+    `exports.run = function () {}`), which becomes its path segment; a callback or lambda
+    has none, so its comments belong to the declaration around it and hide when it
+    changes. C#'s file-scoped `namespace A;` is left out of paths: it is a sibling of the
+    file's types, not their parent, and a file has only one;
   - `body`: the enclosing function's full hash, when the scope is a function;
   - `node`, `nth`: the anchor node's hash (§ Staleness normalization; a declaration counts
     its signature only) and which of the scope's line-starting nodes with that hash it is;
@@ -657,6 +665,11 @@ heading and the second branch's `<!-- ... -->` metadata line read back as body t
   starts its own line inside an expression (an argument on its own line) does not place
   once a formatter joins that line into the statement; the entry is kept. A14's
   fallbacks cover it.
+- **Markerless: unnamed declarations anchor at module level.** A default-exported
+  anonymous function or class (`export default function () {}`) has no name to put in a
+  scope path, so its comments anchor at module level with no `body` hash: an edit inside
+  it does not hide them. Naming it `default` was not done, since two such exports in one
+  file's history would share the path.
 - **Markerless: the refresh hooks visit every file with a sidecar.** Cost grows with the
   number of commented files per checkout or commit; narrowing to the sidecars the
   operation changed (from the hook's old and new revisions) is the fix if it shows up.

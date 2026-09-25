@@ -16,8 +16,9 @@ export interface LanguageSpec {
   wasm: string;
   /**
    * Node types that scope markerless anchors (placement.ts): a comment inside a function is
-   * placed only while that function is unchanged; classes only name the path. Empty means
-   * every comment anchors at module level.
+   * placed only while that function is unchanged; classes only name the path. A node of
+   * these types with no name (a callback) is not a scope; see `scopeName` there. C#'s
+   * file-scoped namespace is left out: it is a sibling of the file's types, not their parent.
    */
   functionTypes: readonly string[];
   namespaceTypes: readonly string[];
@@ -41,8 +42,8 @@ export const LANGUAGES: readonly LanguageSpec[] = [
     lineSigil: "//~",
     commentTypes: ["comment"],
     wasm: "tree-sitter-typescript/tree-sitter-typescript.wasm",
-    functionTypes: [],
-    namespaceTypes: [],
+    functionTypes: ["function_declaration", "generator_function_declaration", "method_definition", "function_expression", "generator_function", "arrow_function"],
+    namespaceTypes: ["class_declaration", "abstract_class_declaration", "class", "interface_declaration", "enum_declaration", "internal_module", "module"],
   },
   {
     id: "tsx",
@@ -51,8 +52,8 @@ export const LANGUAGES: readonly LanguageSpec[] = [
     lineSigil: "//~",
     commentTypes: ["comment"],
     wasm: "tree-sitter-typescript/tree-sitter-tsx.wasm",
-    functionTypes: [],
-    namespaceTypes: [],
+    functionTypes: ["function_declaration", "generator_function_declaration", "method_definition", "function_expression", "generator_function", "arrow_function"],
+    namespaceTypes: ["class_declaration", "abstract_class_declaration", "class", "interface_declaration", "enum_declaration", "internal_module", "module"],
   },
   {
     id: "javascript",
@@ -61,8 +62,8 @@ export const LANGUAGES: readonly LanguageSpec[] = [
     lineSigil: "//~",
     commentTypes: ["comment"],
     wasm: "tree-sitter-javascript/tree-sitter-javascript.wasm",
-    functionTypes: [],
-    namespaceTypes: [],
+    functionTypes: ["function_declaration", "generator_function_declaration", "method_definition", "function_expression", "generator_function", "arrow_function"],
+    namespaceTypes: ["class_declaration", "class"],
   },
   {
     id: "csharp",
@@ -71,8 +72,8 @@ export const LANGUAGES: readonly LanguageSpec[] = [
     lineSigil: "//~",
     commentTypes: ["comment"],
     wasm: "tree-sitter-c-sharp/tree-sitter-c_sharp.wasm",
-    functionTypes: [],
-    namespaceTypes: [],
+    functionTypes: ["method_declaration", "constructor_declaration", "destructor_declaration", "local_function_statement", "property_declaration"],
+    namespaceTypes: ["namespace_declaration", "class_declaration", "struct_declaration", "interface_declaration", "record_declaration", "enum_declaration"],
   },
   {
     id: "java",
@@ -81,8 +82,8 @@ export const LANGUAGES: readonly LanguageSpec[] = [
     lineSigil: "//~",
     commentTypes: ["line_comment", "block_comment"],
     wasm: "tree-sitter-java/tree-sitter-java.wasm",
-    functionTypes: [],
-    namespaceTypes: [],
+    functionTypes: ["method_declaration", "constructor_declaration", "compact_constructor_declaration"],
+    namespaceTypes: ["class_declaration", "interface_declaration", "enum_declaration", "record_declaration", "annotation_type_declaration"],
   },
 ];
 
