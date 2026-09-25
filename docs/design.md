@@ -247,7 +247,19 @@ Verified in VS Code 1.138 on Windows with screenshots taken by the e2e suite
 - **Hover is a provider, not a decoration message.** A `display: none` span has no width,
   so the mouse never rests on it and `hoverMessage` would never fire. The hover provider
   answers for any position from the sigil to the end of its line and carries an
-  `Edit comment` command link.
+  `Edit comment` command link. In practice the mouse cannot reach it on a hidden line
+  either: the `after` label is not document text, so VS Code maps the pointer past the
+  line's end and no hover fires. The hover works only on the cursor's (raw) line.
+- **Hiding marker lines outright (measured 2026-09-24, VS Code 1.139).** The stable API
+  has no hidden-lines call, so the only way to remove a marker line from view is folding
+  it into the line above. Manual ranges (`editor.createFoldingRangeFromSelection` over
+  `[marker - 1, marker]`) hid exactly the marker lines, including one directly under a
+  block opener, left indentation folding working, and `cursorUp` skipped the hidden line.
+  A `FoldingRangeProvider` returning the same ranges replaced Python's indentation
+  folding (a `def` no longer folded), and one that also returned the block ranges lost
+  the marker under the opener (same start line) and hid a code line instead. Costs of the
+  manual route: a marker on line 1 cannot be hidden, the line above shows a chevron, a
+  `···` and the fold background, line numbers skip, and Unfold All reveals the markers.
 - **Sidecar root.** The extension resolves a source file's sidecar against the nearest
   ancestor holding `.agents/comments` or `.git`, whichever appears first walking up, so a
   fixture or nested workspace inside a larger repository keeps its own sidecars.
@@ -539,8 +551,11 @@ heading and the second branch's `<!-- ... -->` metadata line read back as body t
   from a hook, takes over its provenance). A bare marker never absorbs lines, so this
   cannot happen in the owner's checkout.
 - **Scan precision on real repositories.** The corpus gate (§ Scan detectors) is synthetic.
-  Recording hit counts from `scan` on a few agent-written repositories would show whether
-  narrates-steps, at 0.81, is worth keeping on by default.
+  First real data, 2026-09-24: default `scan` found 0 hits in two agent-written
+  repositories (173 and 216 source files). With `--all`, the first drew 17 hits, all false
+  positives: 16 `# -- section ----` divider banners as restates-code and one
+  `0 = loop.MAX_STEPS`. It missed plainly agent-written prose (a nine-line dated incident
+  note). Recall on real agent output, not precision, is the open problem.
 
 - **Checkout overhead in Node.** Process mode
   misses the +20% checkout budget; § Filter process has the numbers and where the time
