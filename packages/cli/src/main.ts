@@ -8,6 +8,8 @@ import {
   confirmIds,
   expandFiles,
   filterContent,
+  filterMode,
+  refreshFiles,
   promotableIds,
   promoteIds,
   readSidecar,
@@ -16,7 +18,7 @@ import {
   syncFiles,
 } from "./files.js";
 import { ADAPTERS } from "./adapters.js";
-import { repoRoot, smudges, toRepoPath, trackedFiles } from "./git.js";
+import { markerless, repoRoot, smudges, toRepoPath, trackedFiles } from "./git.js";
 import { runHook } from "./hook.js";
 import { agentsSnippet, planInit, planUninstall, runPlan } from "./init.js";
 import { serveFilterProcess } from "./process.js";
@@ -26,18 +28,21 @@ import { addWorktree } from "./worktree.js";
 
 const USAGE = `usage: ${BRAND} <command>
 
-  init [--command <cli>] [--one-shot] [--hooks <harness,...>] [--agents-md] [--dry-run]
+  init [--command <cli>] [--one-shot] [--hooks <harness,...>] [--agents-md] [--markerless] [--dry-run]
                                 configure the filter, merge driver, .gitattributes, and pre-commit
                                 hook, printing each change; --one-shot runs a process per file
                                 instead of one per git command; --hooks installs post-edit adapters
                                 (${Object.keys(ADAPTERS).join(", ")}); --agents-md writes the sigil
-                                convention into AGENTS.md; --dry-run prints without changing
+                                convention into AGENTS.md; --markerless keeps no markers in committed
+                                code, only in the sidecar; --dry-run prints without changing
   uninstall [--dry-run]         undo init, adapters and AGENTS.md included; sidecars and markers stay
   worktree add <git args...>    add a worktree whose checkout shows full comments
   sync [--staged] [--add] [files...]
                                 move comment bodies into sidecars and stamp new ids
   expand [files...]             show full comments in working files
-  collapse [files...]           reduce working files to bare markers
+  collapse [files...]           reduce working files to bare markers (markerless: remove the comments)
+  refresh                       in a smudged markerless worktree, place the comments of every file
+                                with a sidecar (the post-checkout, post-merge, post-commit hooks)
   scan [--json] [--all] [files...]
                                 list likely AI comments; --all adds detectors that ship disabled
   scan --apply <review.json|->  convert the accepted comments of a reviewed \`scan --json\` list to
@@ -78,7 +83,7 @@ function printJson(value: unknown): void {
 /** Git runs filters from the worktree root and passes a root-relative path. */
 async function runFilter(mode: "clean" | "smudge", file: string | undefined): Promise<void> {
   if (!file) throw new Error(`${mode} needs the path git passes as %f`);
-  const output = await filterContent(mode, process.cwd(), file, await readStdin());
+  const output = await filterContent(mode, process.cwd(), file, await readStdin(), filterMode(process.cwd(), mode === "smudge"));
   await new Promise<void>((resolve, reject) => {
     process.stdout.write(output, (err) => (err ? reject(err) : resolve()));
   });
@@ -87,7 +92,8 @@ async function runFilter(mode: "clean" | "smudge", file: string | undefined): Pr
 async function runFilterProcess(args: string[]): Promise<void> {
   const { values } = parseArgs({ args, options: { smudge: { type: "boolean", default: false } } });
   const log = (message: string) => process.stderr.write(`${BRAND}: ${message}\n`);
-  return serveFilterProcess(process.stdin, process.stdout, { root: process.cwd(), smudge: values.smudge, log });
+  const root = process.cwd();
+  return serveFilterProcess(process.stdin, process.stdout, { root, smudge: values.smudge, mode: filterMode(root, values.smudge), log });
 }
 
 async function runSync(args: string[]): Promise<void> {
@@ -263,11 +269,12 @@ async function runInit(args: string[]): Promise<void> {
       "one-shot": { type: "boolean", default: false },
       hooks: { type: "string" },
       "agents-md": { type: "boolean", default: false },
+      markerless: { type: "boolean", default: false },
       "dry-run": { type: "boolean", default: false },
     },
   });
   const hooks = values.hooks?.split(",").map((h) => h.trim()).filter(Boolean);
-  const options = { command: values.command, oneShot: values["one-shot"], hooks, agentsMd: values["agents-md"] };
+  const options = { command: values.command, oneShot: values["one-shot"], hooks, agentsMd: values["agents-md"], markerless: values.markerless };
   for (const line of runPlan(planInit(repoRoot(), options), values["dry-run"])) console.log(line);
 }
 
@@ -297,6 +304,13 @@ async function runMergeSidecar(args: string[]): Promise<void> {
   }
 }
 
+/** Places comments that a git operation brought in without smudging their source. */
+async function runRefresh(): Promise<void> {
+  const root = repoRoot();
+  if (!markerless(root) || !smudges(root)) return;
+  await refreshFiles(root);
+}
+
 async function runWorktree(args: string[]): Promise<void> {
   if (args[0] !== "add") throw new Error("only `worktree add` is supported");
   console.log(`worktree ready: ${addWorktree(repoRoot(), args.slice(1))}`);
@@ -309,6 +323,7 @@ const COMMANDS = new Map<string, (args: string[]) => Promise<void>>([
   ["sync", runSync],
   ["expand", (args) => runRewrite(args, expandFiles)],
   ["collapse", (args) => runRewrite(args, collapseFiles)],
+  ["refresh", runRefresh],
   ["scan", runScan],
   ["tag", runTag],
   ["check", runCheck],

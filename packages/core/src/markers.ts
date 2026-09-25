@@ -72,7 +72,8 @@ export async function findMarkers(spec: LanguageSpec, source: string, options: F
   });
 }
 
-function markersFrom(spec: LanguageSpec, source: string, lines: Line[], comments: readonly CommentSpan[]): Marker[] {
+/** Markers among `comments`, for callers that hold the parse tree themselves. */
+export function markersFrom(spec: LanguageSpec, source: string, lines: Line[], comments: readonly CommentSpan[]): Marker[] {
   const form = new RegExp(`^${escapeRegExp(spec.lineSigil)}(${ID_PATTERN})?(?: (.*))?$`, "s");
   const tagged = new RegExp(`^${escapeRegExp(STALE_TAG)}(?: |$)`);
 

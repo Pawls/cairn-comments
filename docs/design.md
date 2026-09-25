@@ -34,7 +34,7 @@ Committed blob / owner checkout          Agent worktree (smudged)
 | Decision | Choice | Why |
 | --- | --- | --- |
 | Agent view | Real bytes on disk in agent worktrees | Agents touch files through Read, Grep, exact-string Edit, LSP, ast-grep, and shell. Virtualizing all of those per harness does not hold; an Edit whose `old_string` includes text that is not on disk fails. |
-| Anchoring | ID marker left in committed code | Exact, survives merges, rebases, and refactors by people without the tool. Zero-trace fuzzy anchoring (symbol path + statement hash) was rejected for v1 as heuristic and the costliest part to build; the statement hash is still stored per entry (staleness needs it), which keeps a zero-trace mode possible later. |
+| Anchoring | Being replaced (2026-09-25): no markers in committed code; the sidecar records where each comment goes (§ Anchoring). Behind `init --markerless` until v1 A16 removes marker mode. | The owner judged that id markers in committed code would stop serious developers from adopting the tool, overlay or not. The earlier reason to keep markers, that zero-trace anchoring meant fuzzy matching, no longer holds: placement is exact per declaration (§ Anchoring, "Rejected: scored fuzzy placement"). |
 | Pure pointer links (no filter) | Rejected | Every pointer costs tokens on every read, and using a comment costs an extra Read call plus the whole sidecar file. Strictly more tokens than inline whenever comments are used. |
 | Sidecar storage | Tracked markdown under `.agents/comments/`, mirroring source paths | Travels with clones, cloud agents, and PRs; human-readable; users who want zero trace can gitignore the folder and are left with harmless dangling markers. |
 | Human view | Virtual overlay in VS Code | Files on disk stay collapsed. The marker line itself is the render site, so own-line comments display in place (no CodeLens needed); long bodies show the first line plus a hover or comment thread. |
@@ -447,6 +447,70 @@ Implemented in `packages/core/src/anchors.ts` (what a marker anchors to, and the
   process mode, medians of 5, every entry anchored and stale) measured checkout at
   1,847 ms against 1,841 ms with `--no-anchors`; warm status unchanged at 51 ms.
 
+## Anchoring
+
+Markerless mode, `init --markerless` (v1 A12, Python; the other languages anchor every
+comment at module level until A13). Implemented in `packages/core/src/placement.ts`
+(`stripComments` is the clean filter, `placeComments` the smudge, `recordComments` the
+sync); the CLI switches on `filter.cairn.markerless`. Tests:
+`packages/core/test/placement.test.ts` (including a round-trip property) and
+`packages/cli/test/markerless.test.ts` (both `autocrlf`, process and one-shot).
+
+- **What is committed.** A blob is the working file with every sigil comment removed:
+  own-line comments with their lines and terminators, trailing ones with the whitespace
+  before them. Nothing else changes, so the owner's checkout and every clone see exactly
+  the code. Agent worktrees show `#~a1b2 text`; the id never leaves the worktree and the
+  sidecar, and keeps identity exact through body edits.
+- **Where a comment goes.** `sync` records, on the entry's metadata line:
+  - `pos`: `before` a code node (the next code line; own-line comments), `after` one (the
+    last comment of a block, whose next code line dedents), `trail` (end of the line where
+    the node starts), or `row` (a line number, when no code node anchors the comment);
+  - `scope`: the enclosing function, else class, as a dotted path (`Ledger.size`), with
+    `@n` for the nth declaration of that path (a property and its setter); absent at
+    module level;
+  - `body`: the enclosing function's full hash, when the scope is a function;
+  - `node`, `nth`: the anchor node's hash (§ Staleness normalization; a declaration counts
+    its signature only) and which of the scope's line-starting nodes with that hash it is;
+  - `skip`: kept lines (blank, human comments) between the comment and its node; `seq`:
+    order among blocks that land on one line; `indent`, `gap` as runs (`4s`, `1t`) when
+    they differ from the line placed against; `eof`, the terminator taken from before a
+    comment on an unterminated last line.
+- **When it is placed.** Smudge places an entry only when its scope resolves, its node is
+  found, and, in a function scope, the function hashes to `body`. So a change anywhere in
+  a function hides the comments inside it, while moving the function, editing its
+  siblings, or reformatting the file (whitespace, quotes, redundant parentheses; the A7
+  normalization) keeps every comment. An entry that does not place is kept, never
+  dropped. A14 places changed-function comments with a stale flag instead of hiding them.
+- **Seen by the editor.** A comment on disk has been seen by whoever edited the file, so
+  `sync` re-records the placement of every comment present. The owner's checkout has no
+  comments on disk, which is what makes the owner's edits hide comments.
+- **Deleting.** A comment is deleted when it was in the file the last time the tool wrote
+  it and is absent now. Each smudging worktree keeps that record per file under its git
+  dir (`<git-dir>/cairn/seen/<sha1 of path>`), written by smudge, `sync`, `expand`, and
+  `collapse`. Absence alone was the first design and was rejected: a cherry-pick, `reset`,
+  or `restore` can add entries to a sidecar without rewriting the source, and those
+  entries would have read as deleted.
+- **Refresh hooks.** For the same reason, `init --markerless` installs `post-checkout`,
+  `post-merge`, `post-commit` (which cherry-pick and rebase run), and `post-rewrite`
+  hooks that run `refresh` in smudging worktrees: every file with a sidecar or a leftover
+  sigil is placed again from the sidecar it now has. A comment whose id that sidecar lacks
+  belonged to another commit and is dropped from the file, not written back.
+- **Comment-only commits.** A comment-only edit cleans to the committed blob, so git sees
+  nothing to commit, and git decides a commit is empty before its pre-commit hook runs.
+  The sidecar must be staged first: the hook adapters' `sync` writes it after every agent
+  edit, then `git add` (or `commit -a` once the sidecar is tracked) carries it. The
+  pre-commit hook's `sync --staged` also covers every file that still holds a sigil.
+- **Check.** `check` in markerless mode only reports sigil comments that reached a blob;
+  the marker and body cross-checks wait for A16.
+- **Rejected: scored fuzzy placement.** The earlier zero-trace idea stored a fingerprint
+  per comment (symbol path, the anchor statement's tokens, hashes of two statements on
+  each side, the original line) and placed it at the best-scoring position above a
+  threshold and margin. Rejected because its worst failure is silent: a confident wrong
+  placement attaches a true comment to the wrong code, repeated lines (`return None`)
+  make that common, small edits flip the winner, and every weight needs tuning per
+  language. Exact matching per declaration replaces it; A14 adds a deterministic diff of
+  statement hashes for changed functions, with similarity only for renames.
+
 ## Promote and demote
 
 Implemented in `packages/core/src/filter.ts` (`promote`) and `scan.ts` (`demoteTarget`);
@@ -587,6 +651,15 @@ heading and the second branch's `<!-- ... -->` metadata line read back as body t
   lost. The `clean undoes smudge` property in `packages/core/test/filter.test.ts` catches
   it on some seeds, so `npm test` fails intermittently until the grammar resolves the
   ambiguity (for example, `clean` normalizing a text-less id-less sigil line).
+- **Markerless: a file of nothing but AI comments.** It strips to an empty blob, which
+  keeps no terminator, so placing it back uses LF. Any code line in the file avoids it.
+- **Markerless: comments on lines a formatter joins.** A comment anchored to a node that
+  starts its own line inside an expression (an argument on its own line) does not place
+  once a formatter joins that line into the statement; the entry is kept. A14's
+  fallbacks cover it.
+- **Markerless: the refresh hooks visit every file with a sidecar.** Cost grows with the
+  number of commented files per checkout or commit; narrowing to the sidecars the
+  operation changed (from the hook's old and new revisions) is the fix if it shows up.
 - **Marker ambiguity.** A new comment written without the space and exactly four
   alphanumerics (`#~todo`) parses as an id. Hook tagging does not fix it (the comment is
   already a sigil comment, so `tag` never sees it); the AGENTS.md snippet warns against

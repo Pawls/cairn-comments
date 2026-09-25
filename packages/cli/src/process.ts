@@ -1,5 +1,5 @@
 import type { Writable } from "node:stream";
-import { filterContent } from "./files.js";
+import { filterContent, type FilterMode } from "./files.js";
 import { contentPackets, FLUSH, PacketReader, textPacket } from "./pktline.js";
 
 export interface FilterProcessOptions {
@@ -7,6 +7,8 @@ export interface FilterProcessOptions {
   root: string;
   /** Advertise smudge. Only agent worktrees set it, through their per-worktree config. */
   smudge: boolean;
+  /** Markerless mode and where smudge keeps its seen record; marker mode when absent. */
+  mode?: FilterMode;
   log: (message: string) => void;
   /** Most source bytes held for delayed smudges before answering synchronously again. */
   delayBudget?: number;
@@ -40,7 +42,7 @@ class DelayedSmudges {
   start(pathname: string, content: Buffer): void {
     this.held += content.length;
     this.unsettled++;
-    const result = filterContent("smudge", this.options.root, pathname, content).catch((error: unknown) => {
+    const result = filterContent("smudge", this.options.root, pathname, content, this.options.mode).catch((error: unknown) => {
       this.options.log(`${pathname}: ${describe(error)}; checked out unfiltered`);
       return content;
     });
@@ -114,7 +116,7 @@ export async function serveFilterProcess(input: AsyncIterable<Buffer | string>, 
         await send(output, [textPacket("status=delayed"), FLUSH]);
         continue;
       } else {
-        result = await filterContent(command, options.root, pathname, content);
+        result = await filterContent(command, options.root, pathname, content, options.mode);
       }
     } catch (error) {
       options.log(`${pathname ?? "?"}: ${describe(error)}`);

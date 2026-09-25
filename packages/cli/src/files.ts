@@ -1,7 +1,11 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
+  BRAND,
+  LANGUAGES,
+  SIDECAR_ROOT,
   anchorsOf,
   bodiesOf,
   clean,
@@ -9,17 +13,20 @@ import {
   findMarkers,
   languageForPath,
   parseSidecar,
+  placeComments,
   promote,
+  recordComments,
   serializeSidecar,
   sidecarPathFor,
   smudge,
   staleMarkers,
+  stripComments,
   sync,
   type Sidecar,
   type StaleMarker,
   type SyncOptions,
 } from "@cairn-comments/core";
-import { managedFiles, restat, stage, stagedFiles, toRepoPath, trackedFiles } from "./git.js";
+import { filesContaining, managedFiles, markerless, restat, smudges, stage, stagedFiles, toRepoPath, trackedFiles, worktreeGitDir } from "./git.js";
 
 /** Text of a buffer, or undefined when it is not UTF-8 that re-encodes to the same bytes. */
 export function decodeExact(bytes: Buffer): string | undefined {
@@ -50,20 +57,61 @@ function smudgeFrom(file: string, source: string, sidecar: Sidecar): Promise<str
 }
 
 /**
+ * Ids the tool last wrote into a working file of a smudged worktree, kept under that
+ * worktree's git dir: what `recordComments` needs to tell a deleted comment from one that
+ * was never placed (design.md § Anchoring).
+ */
+function seenPath(gitDir: string, file: string): string {
+  return path.join(gitDir, BRAND, "seen", createHash("sha1").update(file).digest("hex"));
+}
+
+function readSeen(gitDir: string, file: string): Set<string> {
+  const record = seenPath(gitDir, file);
+  return new Set(existsSync(record) ? readFileSync(record, "utf8").split("\n").filter(Boolean) : []);
+}
+
+function writeSeen(gitDir: string, file: string, ids: readonly string[]): void {
+  const record = seenPath(gitDir, file);
+  if (!ids.length) {
+    rmSync(record, { force: true });
+    return;
+  }
+  mkdirSync(path.dirname(record), { recursive: true });
+  writeFileSync(record, ids.join("\n") + "\n");
+}
+
+export interface FilterMode {
+  markerless: boolean;
+  /** Set on a smudging worktree in markerless mode, where smudge keeps the seen record. */
+  gitDir?: string;
+}
+
+/** How this worktree filters, read once per command or filter process. */
+export function filterMode(root: string, smudging: boolean): FilterMode {
+  const on = markerless(root);
+  return { markerless: on, gitDir: on && smudging ? worktreeGitDir(root) : undefined };
+}
+
+/**
  * One file through a filter endpoint, for the one-shot commands and the filter process
  * alike. Returns `input` itself when nothing changes, so non-UTF-8 passes byte for byte.
  */
 export async function filterContent(
-  mode: "clean" | "smudge",
+  endpoint: "clean" | "smudge",
   root: string,
   file: string,
   input: Buffer,
+  mode: FilterMode = { markerless: false },
 ): Promise<Buffer> {
   const text = decodeExact(input);
   if (text === undefined) return input;
   let result: string;
-  if (mode === "clean") {
-    result = await clean(file, text);
+  if (endpoint === "clean") {
+    result = mode.markerless ? await stripComments(file, text) : await clean(file, text);
+  } else if (mode.markerless) {
+    const placed = await placeComments(file, text, await readSidecar(root, file));
+    if (mode.gitDir) writeSeen(mode.gitDir, file, placed.placed);
+    result = placed.source;
   } else {
     result = await smudgeFrom(file, text, await readSidecar(root, file));
   }
@@ -81,10 +129,25 @@ export function selectFiles(root: string, selection: Selection): string[] {
   return managedFiles(root, candidates).filter((f) => existsSync(path.join(root, f)));
 }
 
+const SIGILS = [...new Set(LANGUAGES.map((l) => l.lineSigil))];
+
+/**
+ * In markerless mode a comment-only edit cleans to the committed blob, so git never
+ * stages it; the staged set grows by every file that still holds a sigil.
+ */
 function selectionCandidates(root: string, selection: Selection): string[] {
   if (selection.files.length) return selection.files.map((f) => toRepoPath(root, f));
-  if (selection.staged) return stagedFiles(root);
+  if (selection.staged) return markerless(root) ? [...new Set([...stagedFiles(root), ...filesContaining(root, SIGILS)])] : stagedFiles(root);
   return trackedFiles(root);
+}
+
+/** Sources whose tracked sidecar exists: every file a refresh could place comments in. */
+function filesWithSidecars(root: string): string[] {
+  const prefix = `${SIDECAR_ROOT}/`;
+  const sources = trackedFiles(root)
+    .filter((f) => f.startsWith(prefix) && f.endsWith(".md"))
+    .map((f) => f.slice(prefix.length, -".md".length));
+  return managedFiles(root, sources).filter((f) => existsSync(path.join(root, f)));
 }
 
 /** A new source, or a new source and sidecar when the rewrite moves bodies itself. */
@@ -134,18 +197,69 @@ export function writeSidecar(root: string, file: string, sidecar: Sidecar): void
   writeFileSync(sidecarFile, serializeSidecar(sidecar));
 }
 
+/**
+ * The markerless counterpart of `rewriteFiles`: records every file, then leaves its
+ * comments as they are (`sync`), places all of them (`expand`), or strips them
+ * (`collapse`). Where git smudges, the seen record follows each write.
+ */
+async function rewriteMarkerless(
+  root: string,
+  files: string[],
+  then: "sync" | "expand" | "collapse",
+  options: SyncOptions & { afterCheckout?: boolean } = {},
+): Promise<string[]> {
+  const gitDir = smudges(root) ? worktreeGitDir(root) : undefined;
+  const done: string[] = [];
+  for (const file of files) {
+    const absolute = path.join(root, file);
+    const original = decodeExact(readFileSync(absolute));
+    if (original === undefined) continue;
+    // After a checkout, comments on disk may belong to the previous commit's sidecar.
+    const seen = gitDir && !options.afterCheckout ? readSeen(gitDir, file) : undefined;
+    const recorded = await recordComments(file, original, readSidecarSync(root, file), { meta: options.meta, seen, knownOnly: options.afterCheckout });
+    if (recorded.sidecarChanged) writeSidecar(root, file, recorded.sidecar);
+    let source = recorded.source;
+    let onDisk = recorded.ids;
+    if (then === "expand") {
+      const placed = await placeComments(file, await stripComments(file, source), recorded.sidecar);
+      source = placed.source;
+      onDisk = placed.placed;
+    } else if (then === "collapse") {
+      source = await stripComments(file, source);
+      onDisk = [];
+    }
+    if (source !== original) writeFileSync(absolute, source);
+    if (gitDir) writeSeen(gitDir, file, onDisk);
+    done.push(file);
+  }
+  restat(root, done);
+  return done;
+}
+
 export async function syncFiles(root: string, files: string[], options: SyncOptions & { add: boolean }): Promise<void> {
-  const done = await rewriteFiles(root, files, undefined, options);
+  const done = markerless(root) ? await rewriteMarkerless(root, files, "sync", options) : await rewriteFiles(root, files, undefined, options);
   if (options.add) stage(root, done.map(sidecarPathFor).filter((s) => existsSync(path.join(root, s))));
 }
 
-/** Expands bare markers and brings every `[stale?]` tag up to date. */
+/** Expands bare markers and brings every `[stale?]` tag up to date; in markerless mode, places every comment. */
 export async function expandFiles(root: string, files: string[]): Promise<void> {
-  await rewriteFiles(root, files, smudgeFrom);
+  if (markerless(root)) await rewriteMarkerless(root, files, "expand");
+  else await rewriteFiles(root, files, smudgeFrom);
+}
+
+/**
+ * Brings a smudged markerless worktree in line with its sidecars after a git operation
+ * that changed them without rewriting the sources: every file with a sidecar or a
+ * leftover sigil comment is placed again from the sidecar it now has.
+ */
+export async function refreshFiles(root: string): Promise<void> {
+  const files = new Set([...filesWithSidecars(root), ...managedFiles(root, filesContaining(root, SIGILS))]);
+  await rewriteMarkerless(root, [...files].filter((f) => existsSync(path.join(root, f))), "expand", { afterCheckout: true });
 }
 
 export async function collapseFiles(root: string, files: string[], options: SyncOptions = {}): Promise<void> {
-  await rewriteFiles(root, files, (file, source) => clean(file, source), options);
+  if (markerless(root)) await rewriteMarkerless(root, files, "collapse", options);
+  else await rewriteFiles(root, files, (file, source) => clean(file, source), options);
 }
 
 export interface StaleReport extends StaleMarker {
@@ -157,6 +271,8 @@ export interface StaleReport extends StaleMarker {
 /** Possibly stale comments across `files` (design.md § Staleness); reads only, so CI can run it. */
 export async function staleIn(root: string, files: string[]): Promise<StaleReport[]> {
   const found: StaleReport[] = [];
+  // A markerless comment is placed only while its code matches, so none on disk is stale.
+  if (markerless(root)) return found;
   for (const file of files) {
     const source = decodeExact(readFileSync(path.join(root, file)));
     if (source === undefined) continue;

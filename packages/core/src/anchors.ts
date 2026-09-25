@@ -21,7 +21,20 @@ export function anchorHash(
     marker.placement === "trailing"
       ? serialize(spec, root, { start: lines[row.first]!.start, end: marker.start }, new Set())
       : ownLineAnchor(spec, root, source, lines, marker.indent, row.last);
-  return text ? createHash("sha256").update(text).digest("hex").slice(0, 8) : undefined;
+  return text ? digest(text) : undefined;
+}
+
+function digest(text: string): string {
+  return createHash("sha256").update(text).digest("hex").slice(0, 8);
+}
+
+/**
+ * Hash of a node's normalized tokens, as `anchorHash` computes it for the node below an
+ * own-line marker: a declaration contributes its signature only, unless `withBodies`.
+ */
+export function nodeHash(spec: LanguageSpec, node: Node, withBodies = false): string {
+  const skipped = withBodies ? new Set<number>() : declarationBodies(node);
+  return digest(serialize(spec, node, { start: node.startIndex, end: node.endIndex }, skipped));
 }
 
 function ownLineAnchor(spec: LanguageSpec, root: Node, source: string, lines: readonly Line[], indent: string, lastRow: number): string | undefined {

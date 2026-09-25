@@ -6,7 +6,14 @@ import { ADAPTERS, adapterRoots, applySettingsChange, planAdapterInstall, planAd
 import { git, gitQuiet, worktreeRoots } from "./git.js";
 
 const HOOK_TAG = `managed by ${BRAND} init`;
-const CHAINED_HOOK = `pre-commit.${BRAND}-chained`;
+const chainedName = (hook: string) => `${hook}.${BRAND}-chained`;
+/**
+ * In markerless mode a git operation can bring new sidecar entries without touching the
+ * source they belong to (a cherry-pick of a comment-only commit), so nothing smudges it;
+ * these hooks place the comments afterwards (design.md § Anchoring).
+ */
+const REFRESH_HOOKS = ["post-checkout", "post-merge", "post-commit", "post-rewrite"];
+const MARKERLESS_KEY = `filter.${FILTER_DRIVER}.markerless`;
 /** Set when `init` turned `extensions.worktreeConfig` on, so `uninstall` turns it off only then. */
 const WORKTREE_CONFIG_MARK = `filter.${FILTER_DRIVER}.worktreeConfigByInit`;
 
@@ -52,6 +59,8 @@ export interface InitOptions {
   hooks?: string[];
   /** Write the sigil convention into AGENTS.md. */
   agentsMd?: boolean;
+  /** Keep no markers in committed code (design.md § Anchoring). Never turned off by a later `init`. */
+  markerless?: boolean;
 }
 
 const localConfig = (root: string, key: string) => gitQuiet(["config", "--local", "--get", key], root)?.trim();
@@ -112,27 +121,41 @@ function isSharedHooksDir(root: string, dir: string): boolean {
   return relative.startsWith("..") || path.isAbsolute(relative);
 }
 
+function hookScript(name: string, body: string[]): string {
+  return [
+    "#!/bin/sh",
+    `# ${HOOK_TAG}`,
+    ...body,
+    `chained="$(dirname "$0")/${chainedName(name)}"`,
+    'if [ -x "$chained" ]; then exec "$chained" "$@"; fi',
+    "",
+  ].join("\n");
+}
+
+/** The pre-commit hook, plus the refresh hooks in markerless mode. */
+function hookChanges(root: string, command: string, markerless: boolean): (Change | undefined)[] {
+  const preCommit = hookScript("pre-commit", [
+    `if git config --get filter.${FILTER_DRIVER}.clean >/dev/null 2>&1; then`,
+    `  ${command} sync --staged --add || exit 1`,
+    `  ${command} check --staged --fix || exit 1`,
+    "fi",
+  ]);
+  // A failed refresh must not fail the git command that already happened.
+  const refresh = (name: string) =>
+    hookScript(name, [`if git config --get filter.${FILTER_DRIVER}.smudge >/dev/null 2>&1; then`, `  ${command} refresh || true`, "fi"]);
+  return [hookChange(root, "pre-commit", preCommit), ...(markerless ? REFRESH_HOOKS.map((h) => hookChange(root, h, refresh(h))) : [])];
+}
+
 /**
  * Installs into the effective hooks directory, which a `core.hooksPath` may have moved
  * away from `.git/hooks` (design.md § Git behavior, item 4). An existing hook is renamed and
  * run after ours. The filter-config test keeps the hook inert in any other repository
  * that shares a global hooks directory.
  */
-function hookChange(root: string, command: string): Change | undefined {
+function hookChange(root: string, name: string, script: string): Change | undefined {
   const dir = hooksDir(root);
-  const hook = path.join(dir, "pre-commit");
-  const chained = path.join(dir, CHAINED_HOOK);
-  const script = [
-    "#!/bin/sh",
-    `# ${HOOK_TAG}`,
-    `if git config --get filter.${FILTER_DRIVER}.clean >/dev/null 2>&1; then`,
-    `  ${command} sync --staged --add || exit 1`,
-    `  ${command} check --staged --fix || exit 1`,
-    "fi",
-    `chained="$(dirname "$0")/${CHAINED_HOOK}"`,
-    'if [ -x "$chained" ]; then exec "$chained" "$@"; fi',
-    "",
-  ].join("\n");
+  const hook = path.join(dir, name);
+  const chained = path.join(dir, chainedName(name));
   const existing = existsSync(hook) ? readFileSync(hook, "utf8") : undefined;
   if (existing === script) return undefined;
   const foreign = existing !== undefined && !existing.includes(HOOK_TAG);
@@ -143,7 +166,7 @@ function hookChange(root: string, command: string): Change | undefined {
     writeFileSync(hook, script);
     chmodSync(hook, 0o755);
   };
-  const what = foreign ? "install; the previous hook now runs after it as " + CHAINED_HOOK : existing === undefined ? "install" : "update";
+  const what = foreign ? "install; the previous hook now runs after it as " + chainedName(name) : existing === undefined ? "install" : "update";
   const shared = isSharedHooksDir(root, dir) ? ` (a shared hooks directory from core.hooksPath; inert in repositories without ${BRAND})` : "";
   return { what: `${hook}: ${what}${shared}`, apply: write };
 }
@@ -232,9 +255,11 @@ export function planInit(root: string, options: InitOptions = {}): Change[] {
       [`filter.${FILTER_DRIVER}.process`]: options.oneShot ? undefined : `${command} filter-process`,
       [`merge.${FILTER_DRIVER}.name`]: `${BRAND} sidecar merge`,
       [`merge.${FILTER_DRIVER}.driver`]: `${command} merge-sidecar %O %A %B`,
+      // Switching an existing repository back would strand every placed comment, so only on.
+      [MARKERLESS_KEY]: options.markerless ? "true" : localConfig(root, MARKERLESS_KEY),
     }),
     attributesChange(root, attributeLines(), LEGACY_ATTRIBUTES),
-    hookChange(root, command),
+    ...hookChanges(root, command, options.markerless || localConfig(root, MARKERLESS_KEY) === "true"),
     ...hooks.flatMap((h) => adapterRoots(root, h).map((wt) => settingsChange(root, h, planAdapterInstall(wt, h, command), true))),
     options.agentsMd ? agentsMdChange(root, false) : undefined,
   ];
@@ -247,10 +272,10 @@ export function planInit(root: string, options: InitOptions = {}): Change[] {
  * nothing here. That is reported only while this repository is configured, so a second
  * `uninstall` still finds nothing to change.
  */
-function hookRemoval(root: string, configured: boolean): Change | undefined {
+function hookRemoval(root: string, name: string, configured: boolean): Change | undefined {
   const dir = hooksDir(root);
-  const hook = path.join(dir, "pre-commit");
-  const chained = path.join(dir, CHAINED_HOOK);
+  const hook = path.join(dir, name);
+  const chained = path.join(dir, chainedName(name));
   if (!existsSync(hook) || !readFileSync(hook, "utf8").includes(HOOK_TAG)) return undefined;
   if (isSharedHooksDir(root, dir)) {
     if (!configured) return undefined;
@@ -258,7 +283,7 @@ function hookRemoval(root: string, configured: boolean): Change | undefined {
   }
   const restore = existsSync(chained);
   return {
-    what: `${hook}: ${restore ? `remove; ${CHAINED_HOOK} goes back to pre-commit` : "remove"}`,
+    what: `${hook}: ${restore ? `remove; ${chainedName(name)} goes back to ${name}` : "remove"}`,
     apply: () => (restore ? renameSync(chained, hook) : rmSync(hook, { force: true })),
   };
 }
@@ -298,7 +323,7 @@ export function planUninstall(root: string): Change[] {
     }
   }
   changes.push(attributesChange(root, [], [...attributeLines(), ...LEGACY_ATTRIBUTES]));
-  changes.push(hookRemoval(root, configured));
+  for (const name of ["pre-commit", ...REFRESH_HOOKS]) changes.push(hookRemoval(root, name, configured));
   for (const harness of Object.keys(ADAPTERS)) {
     for (const wt of adapterRoots(root, harness)) changes.push(settingsChange(root, harness, planAdapterUninstall(wt, harness), false));
   }

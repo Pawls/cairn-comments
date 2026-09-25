@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { BRAND, LANGUAGES, SIDECAR_ROOT, findMarkers, languageForPath, parseSidecar, sidecarPathFor, type Marker, type Sidecar } from "@cairn-comments/core";
 import { decodeExact, readSidecar, writeSidecar } from "./files.js";
-import { grepTokens, ignoredByPattern, indexBlobs, managedFiles, stage, stagedFiles, toRepoPath, trackedFiles } from "./git.js";
+import { grepTokens, ignoredByPattern, indexBlobs, managedFiles, markerless, stage, stagedFiles, toRepoPath, trackedFiles } from "./git.js";
 
 export type Problem =
   /** A sigil comment whose text reached the index: a clone without the filter, or a failed `clean`. */
@@ -79,6 +79,17 @@ export async function check(root: string, options: CheckOptions): Promise<CheckR
   const markerIds = async (file: string) => new Set((await indexed(file))?.markers.flatMap((m) => (m.id ? [m.id] : [])) ?? []);
 
   const problems: Problem[] = [];
+  // Markerless blobs hold no markers, so bodies cannot be matched to them (A16 ports the rest);
+  // any sigil comment in a blob is a leak.
+  if (markerless(root)) {
+    for (const file of sources) {
+      const found = await indexed(file);
+      for (const m of found?.markers ?? []) {
+        problems.push({ kind: "expanded", file, line: lineAt(found!.text, m.start), id: m.id, text: (m.text ?? "").split("\n")[0]! });
+      }
+    }
+    return { problems: sortProblems(problems), fixes: [] };
+  }
   // Zero-trace mode (design.md § Decisions): with the folder ignored, markers dangle by choice.
   const bodiesKept = !ignoredByPattern(root, `${PREFIX}x.md`);
   const missing: Extract<Problem, { kind: "missing-body" }>[] = [];

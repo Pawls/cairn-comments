@@ -156,6 +156,22 @@ export function smudges(root: string): boolean {
   }
 }
 
+/** Whether `init --markerless` set this repository up to keep no markers in committed code. */
+export function markerless(root: string): boolean {
+  return gitQuiet(["config", "--get", `filter.${FILTER_DRIVER}.markerless`], root)?.trim() === "true";
+}
+
+/** This worktree's own git directory (`.git/worktrees/<name>` for a linked one), absolute. */
+export function worktreeGitDir(root: string): string {
+  return path.resolve(root, git(["rev-parse", "--git-dir"], { cwd: root }).trim());
+}
+
+/** Tracked working files containing any of `tokens` as text, strings and all. */
+export function filesContaining(root: string, tokens: string[]): string[] {
+  const args = ["-c", "core.quotePath=false", "grep", "-l", "-z", "-F", ...tokens.flatMap((t) => ["-e", t])];
+  return nulSeparated(gitQuiet(args, root) ?? "");
+}
+
 /** Working-tree edits against the index, plus untracked files git does not ignore. */
 export function changedFiles(root: string): string[] {
   return [

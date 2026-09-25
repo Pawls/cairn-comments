@@ -14,6 +14,13 @@ export interface LanguageSpec {
   commentTypes: readonly string[];
   /** Module specifier of the grammar's prebuilt WASM. */
   wasm: string;
+  /**
+   * Node types that scope markerless anchors (placement.ts): a comment inside a function is
+   * placed only while that function is unchanged; classes only name the path. Empty means
+   * every comment anchors at module level.
+   */
+  functionTypes: readonly string[];
+  namespaceTypes: readonly string[];
 }
 
 export const LANGUAGES: readonly LanguageSpec[] = [
@@ -24,6 +31,8 @@ export const LANGUAGES: readonly LanguageSpec[] = [
     lineSigil: "#~",
     commentTypes: ["comment"],
     wasm: "tree-sitter-python/tree-sitter-python.wasm",
+    functionTypes: ["function_definition"],
+    namespaceTypes: ["class_definition"],
   },
   {
     id: "typescript",
@@ -32,6 +41,8 @@ export const LANGUAGES: readonly LanguageSpec[] = [
     lineSigil: "//~",
     commentTypes: ["comment"],
     wasm: "tree-sitter-typescript/tree-sitter-typescript.wasm",
+    functionTypes: [],
+    namespaceTypes: [],
   },
   {
     id: "tsx",
@@ -40,6 +51,8 @@ export const LANGUAGES: readonly LanguageSpec[] = [
     lineSigil: "//~",
     commentTypes: ["comment"],
     wasm: "tree-sitter-typescript/tree-sitter-tsx.wasm",
+    functionTypes: [],
+    namespaceTypes: [],
   },
   {
     id: "javascript",
@@ -48,6 +61,8 @@ export const LANGUAGES: readonly LanguageSpec[] = [
     lineSigil: "//~",
     commentTypes: ["comment"],
     wasm: "tree-sitter-javascript/tree-sitter-javascript.wasm",
+    functionTypes: [],
+    namespaceTypes: [],
   },
   {
     id: "csharp",
@@ -56,6 +71,8 @@ export const LANGUAGES: readonly LanguageSpec[] = [
     lineSigil: "//~",
     commentTypes: ["comment"],
     wasm: "tree-sitter-c-sharp/tree-sitter-c_sharp.wasm",
+    functionTypes: [],
+    namespaceTypes: [],
   },
   {
     id: "java",
@@ -64,6 +81,8 @@ export const LANGUAGES: readonly LanguageSpec[] = [
     lineSigil: "//~",
     commentTypes: ["line_comment", "block_comment"],
     wasm: "tree-sitter-java/tree-sitter-java.wasm",
+    functionTypes: [],
+    namespaceTypes: [],
   },
 ];
 

@@ -30,6 +30,14 @@ export {
   type SyncResult,
 } from "./filter.js";
 export { resolveIds } from "./ids.js";
+export {
+  placeComments,
+  recordComments,
+  stripComments,
+  type PlaceResult,
+  type RecordOptions,
+  type RecordResult,
+} from "./placement.js";
 export { mergeSidecars, type MergeResult } from "./merge.js";
 export { LANGUAGES, languageForPath, type LanguageSpec } from "./languages.js";
 export { STALE_TAG, findMarkers, type FindOptions, type Marker, type MarkerKind } from "./markers.js";
