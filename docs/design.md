@@ -723,6 +723,27 @@ heading and the second branch's `<!-- ... -->` metadata line read back as body t
   empty project, and runs the quickstart with it. The e2e suite also passes against an
   unpacked `.vsix` (`CAIRN_E2E_EXTENSION`), which holds no `node_modules`.
 - **Node 22 or later.** Node 20 left maintenance in April 2026; CI tests 22 and 24.
+- **The recorded CLI lives in a home the tool owns** (decided 2026-09-26, built in v1 A17).
+  `init` writes an absolute `node "<path>/main.js"` into the filter, merge driver, and
+  hooks, and git runs it in every initialized repository whether or not an editor is
+  open. A path that disappears makes every commit fail in the pre-commit hook and leaves
+  `status` and `diff` unfiltered. Today `defaultCommand` records wherever the running CLI
+  sits, and none of the ways to run it gives a path that lasts:
+  - The extension's own folder is versioned (`...-vscode-0.1.0`) and deleted on update.
+  - `npx` runs from `~/.npm/_npx/<hash>`, a cache npm prunes. Recording `npx cairn-comments`
+    itself instead would add package resolution to every git status, diff, and add.
+  - A global `npm i -g` path does last, but requires npm before the extension can set up a
+    repository.
+
+  So the CLI copies itself to `%LOCALAPPDATA%\cairn\cli\` (Windows) or
+  `$XDG_DATA_HOME/cairn/cli/` (default `~/.local/share`), and `init` always records that
+  copy. Every carrier of the CLI refreshes it: the extension on activation, the npm
+  package on `init`. A copy replaces the installed one only when its version is newer, so
+  an older global install never downgrades what the extension placed. `uninstall` leaves
+  the home in place, since other repositories may still record it.
+- **Rejected: VS Code's `globalStorage` as the home.** VS Code owns that folder and may clear
+  it when the extension is uninstalled, but a repository stays wired to the CLI until
+  `uninstall`, not until the extension goes.
 
 ## Known gaps
 
