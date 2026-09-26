@@ -367,6 +367,9 @@ Implemented in `packages/core/src/scan.ts` (grouping, protection, conversion) an
 - **The extension shells out to the CLI** recorded in `filter.<driver>.clean` for scan and
   apply, so the flow and the ignore rules live in one place. A repository without `init`
   gets a message in the view instead of a tree.
+- **Activation.** The extension activates on a supported language or on a workspace holding
+  `.agents/comments`. `init` does not create that folder, so a scan does, and the next
+  launch loads the extension before any source file is open.
 
 **Measured precision.** The labeled corpus (`packages/core/test/corpus/`, 98 AI, 112
 human, 48 protected cases across the six languages) sets each detector's `score` and

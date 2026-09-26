@@ -39,6 +39,7 @@
     "clean code"
   ],
   "activationEvents": [
+    "workspaceContains:.agents/comments",
     "onLanguage:python",
     "onLanguage:typescript",
     "onLanguage:typescriptreact",

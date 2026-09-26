@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import * as vscode from "vscode";
 import { screenshot } from "./capture.js";
@@ -23,9 +23,11 @@ const listing =(a: TestApi) => a.review.files().map((f) => [f.file, f.comments.m
 suite("scan review", () => {
   test("scan groups likely AI comments by file, all accepted", async () => {
     const a = await api();
+    assert.equal(existsSync(path.join(repo(), ".agents/comments")), false, "init leaves the sidecar folder to the first scan");
     await vscode.commands.executeCommand("workbench.action.closeSidebar");
     await vscode.commands.executeCommand(COMMANDS.scan);
     assert.equal(a.review.visible(), true, "the palette command brings the review view forward");
+    assert.equal(existsSync(path.join(repo(), ".agents/comments")), true, "scan creates the folder the extension activates on");
     assert.deepEqual(listing(a), [
       ["src/app.py", [[2, true], [6, true]]],
       ["src/util.ts", [[2, true]]],

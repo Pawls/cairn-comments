@@ -1,6 +1,7 @@
+import { mkdirSync } from "node:fs";
 import path from "node:path";
 import * as vscode from "vscode";
-import { BRAND, SCAN_IGNORE } from "@cairn-comments/core";
+import { BRAND, SCAN_IGNORE, SIDECAR_ROOT } from "@cairn-comments/core";
 import { ReviewModel, findRepo, runCli, type Repo, type ReviewComment, type ReviewFile } from "./review.js";
 
 export const REVIEW_VIEW = `${BRAND}.review`;
@@ -91,6 +92,8 @@ export function registerReviewTree(context: vscode.ExtensionContext): ReviewApi 
     } else {
       const cli = repo.cli;
       const root = repo.root;
+      // The extension activates on this folder (package.json), and `init` does not create it.
+      mkdirSync(path.join(root, SIDECAR_ROOT), { recursive: true });
       setMessage(`Scanning ${path.basename(root)}…`);
       changed.fire();
       const output = await vscode.window.withProgress({ location: { viewId: REVIEW_VIEW } }, () => runCli(cli, "scan --json", root));
