@@ -123,7 +123,7 @@ export const DETECTORS: readonly Detector[] = [
   {
     name: "narrates-steps",
     description: 'walks through the code as steps ("Step 1:", "Now we", "Let\'s")',
-    score: 0.81,
+    score: 0.83,
     enabled: true,
     test: ({ firstLine }) => anyOf(NARRATION, firstLine),
   },
@@ -145,14 +145,14 @@ export const DETECTORS: readonly Detector[] = [
     name: "filler-opener",
     description: 'opens with filler ("Note that", "This ensures", "IMPORTANT:")',
     // "Note that" and "Ensure that" are everyday human openers; design.md § Scan detectors.
-    score: 0.39,
+    score: 0.375,
     enabled: false,
     test: ({ firstLine }) => anyOf(FILLER, firstLine),
   },
   {
     name: "hedging",
     description: 'hedges or addresses the reader ("you may want to", "in a real app", "for simplicity")',
-    score: 0.92,
+    score: 0.93,
     enabled: true,
     test: ({ text }) => HEDGING.test(text),
   },

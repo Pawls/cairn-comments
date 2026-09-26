@@ -54,6 +54,8 @@ describe.each(MODES)("round trip through git (autocrlf=$autocrlf, oneShot=$oneSh
     expect(attributes).toContain("*.js filter=cairn");
     expect(attributes).toContain("*.cs filter=cairn");
     expect(attributes).toContain("*.java filter=cairn");
+    expect(attributes).toContain("*.kt filter=cairn");
+    expect(attributes).toContain("*.kts filter=cairn");
     expect(attributes).toContain(".agents/comments/** merge=cairn text eol=lf");
     expect(attributes).toContain(".agents/scan-ignore merge=union text eol=lf");
     expect(() => box.git(main, "config", "--get", "filter.cairn.smudge")).toThrow();

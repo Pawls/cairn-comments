@@ -40,7 +40,7 @@ Committed blob / owner checkout          Agent worktree (smudged)
 | Human view | Virtual overlay in VS Code | Files on disk stay collapsed. With markers, the marker line itself is the render site; long bodies show the first line plus a hover. Without markers, each comment renders against the site placement reports: a CodeLens above its code line (a trailing one at the end of its line), and a native comment thread with provenance and actions (§ Overlay rendering). |
 | Detection | Sigil is the source of truth; harness hooks auto-tag unmarked comments an agent just wrote; a repeatable `scan` finds existing AI comments by heuristic tells, with a mark-all mode | Covers users who never write agent instructions. |
 | Implementation | TypeScript everywhere, `web-tree-sitter` for parsing | One codebase for the CLI, the git filter, the hook adapters, and the extension. |
-| Languages in v1 | Python, TypeScript/JavaScript, C#, Java | Doc comments (docstrings, JSDoc, `///`, Javadoc), pragmas, license headers, and suppression directives are never stripped. Kotlin was dropped: no published package ships a `web-tree-sitter`-compatible grammar WASM (see § Languages). |
+| Languages in v1 | Python, TypeScript/JavaScript, C#, Java, Kotlin | Doc comments (docstrings, JSDoc, `///`, Javadoc, KDoc), pragmas, license headers, and suppression directives are never stripped. Kotlin arrived last, once a `web-tree-sitter`-compatible grammar WASM was found (see § Languages). |
 | Hook adapters in v1 | Claude Code, Codex CLI, Cursor, generic post-edit command | The sigil convention (AGENTS.md snippet) and the git filter work for every harness regardless. |
 | Audience | Public open source, MIT | Marketplace extension + npm CLI. |
 
@@ -149,8 +149,8 @@ for one-shot mode; § Filter process covers the long-running filter.
 
 ## Languages
 
-The round trip and marker grammar work in Python, TypeScript, TSX, JavaScript, C#, and
-Java.
+The round trip and marker grammar work in Python, TypeScript, TSX, JavaScript, C#, Java,
+and Kotlin.
 
 - **One `LanguageSpec` per language.** `clean`/`smudge`/`sync`/`findMarkers` are fully
   parameterized by `LanguageSpec`; a language is a table entry plus its grammar package,
@@ -163,28 +163,38 @@ Java.
 - **`commentTypes` differs per grammar and must be verified, not assumed.** Confirmed via
   each grammar's `node-types.json` (or, absent one, by parsing a probe file and walking
   the tree): Python, TypeScript, TSX, JavaScript, and C# each expose one `comment` node
-  type; Java's grammar splits `line_comment` and `block_comment`. `LanguageSpec.commentTypes`
-  lists both for Java.
+  type; Java's and Kotlin's grammars split `line_comment` and `block_comment`.
+  `LanguageSpec.commentTypes` lists both for each.
 - **Grammar sources.** `tree-sitter-typescript` ships two dialects as separate WASM files
   (`tree-sitter-typescript.wasm` for `.ts`/`.mts`/`.cts`, `tree-sitter-tsx.wasm` for `.tsx`);
   plain `.ts` cannot parse JSX. `tree-sitter-javascript`'s grammar parses JSX natively, so
   one dialect covers `.js`/`.jsx`/`.mjs`/`.cjs`. `tree-sitter-c-sharp` publishes its WASM as
   `tree-sitter-c_sharp.wasm` (underscore, not a hyphen).
-- **Kotlin is not supported.** No published npm package ships a Kotlin
-  grammar WASM compatible with `web-tree-sitter@0.27`: `tree-sitter-kotlin` ships only
-  native `node-gyp-build` bindings, and the community `tree-sitter-wasms` bundle's
-  `tree-sitter-kotlin.wasm` fails `Language.load` (`web-tree-sitter` requires a `dylink.0`
-  custom section; that WASM does not carry one, so it was very likely built against an
-  older/incompatible Emscripten toolchain). Building a compatible WASM from
-  `tree-sitter-kotlin`'s grammar source with the `tree-sitter` CLI is not done yet. A
-  grammar that cannot be loaded and parsed reliably is not shipped, so Kotlin waits until
-  a compatible WASM is sourced or built.
+- **Kotlin's grammar is `@tree-sitter-grammars/tree-sitter-kotlin`.** It ships a WASM that
+  `web-tree-sitter@0.27` loads. The alternatives do not load: `tree-sitter-kotlin` (fwcd)
+  ships only native bindings, and the `tree-sitter-wasms` bundle's Kotlin WASM lacks the
+  `dylink.0` section `Language.load` requires. Kotlin differs from the other grammars in
+  three ways the code handles:
+  - Bodies are unfielded children (`function_body`, `class_body`, a constructor's `block`),
+    so `bodyOf` in `anchors.ts` falls back to a child typed as a body where the other
+    grammars have a `body` field.
+  - Infix calls make runs of words valid Kotlin (`weak refs so listeners` parses), so the
+    commented-out-code test (`parsesCleanly`) treats a statement that is only an
+    `infix_expression` as prose.
+  - A secondary constructor has no name, so it is not a scope; its comments anchor to the
+    class. An unnamed companion object adds nothing to a scope path.
+  - The grammar fails on some one-line class bodies (§ Known gaps).
 - **Adding a language touches the extension manifest.** `init` picks it up on its own
   (`ensureAttributes` iterates `LANGUAGES`), but the extension's `activationEvents`, the
   command-palette `when` clause, and the hover provider's `DocumentSelector`
   (`packages/vscode/package.json`, `packages/vscode/src/extension.ts`) list every VS Code
   language id by hand: `typescriptreact`/`javascriptreact` in addition to `LANGUAGES`' own
-  extension-keyed ids, since VS Code gives JSX/TSX files their own language id.
+  extension-keyed ids, since VS Code gives JSX/TSX files their own language id. VS Code has
+  no built-in `kotlin` id, so the manifest's `contributes.languages` registers one for
+  `.kt`/`.kts`; VS Code merges it with a Kotlin extension's registration.
+- **An existing repository re-runs `init` for a new language.** `init` writes one
+  `.gitattributes` line per extension, so a repository initialized before Kotlin leaves
+  `.kt` files outside the filter until `init` runs again.
 
 ## Filter process
 
@@ -358,21 +368,21 @@ Implemented in `packages/core/src/scan.ts` (grouping, protection, conversion) an
   apply, so the flow and the ignore rules live in one place. A repository without `init`
   gets a message in the view instead of a tree.
 
-**Measured precision.** The labeled corpus (`packages/core/test/corpus/`, 90 AI, 105
-human, 42 protected cases across the five languages) sets each detector's `score` and
+**Measured precision.** The labeled corpus (`packages/core/test/corpus/`, 98 AI, 112
+human, 48 protected cases across the six languages) sets each detector's `score` and
 `enabled` flag, and `scan.corpus.test.ts` fails if either drifts from the numbers.
-Enabled detectors find 58 of the 90 AI cases (85 with the disabled two included): the
+Enabled detectors find 64 of the 98 AI cases (93 with the disabled two included): the
 disabled restatements are most of the difference, which is the price of the precision
 gate. `--mark-all` is the answer for repositories where restatements dominate.
 
 | Detector | TP | FP | Precision | Ships |
 | --- | --- | --- | --- | --- |
-| restates-code | 26 | 12 | 0.68 | disabled |
-| narrates-steps | 22 | 5 | 0.81 | enabled |
-| change-history | 15 | 0 | 1.00 | enabled |
-| emoji | 9 | 0 | 1.00 | enabled |
-| filler-opener | 9 | 14 | 0.39 | disabled |
-| hedging | 12 | 1 | 0.92 | enabled |
+| restates-code | 28 | 13 | 0.68 | disabled |
+| narrates-steps | 25 | 5 | 0.83 | enabled |
+| change-history | 16 | 0 | 1.00 | enabled |
+| emoji | 10 | 0 | 1.00 | enabled |
+| filler-opener | 9 | 15 | 0.38 | disabled |
+| hedging | 13 | 1 | 0.93 | enabled |
 
 The first version of the corpus measured 100% for every detector, because its human
 cases did not look like real human comments. Scanning real, pre-AI human code gave the
@@ -724,6 +734,14 @@ heading and the second branch's `<!-- ... -->` metadata line read back as body t
   Deleting the tag by hand is not a confirm either: the next smudge puts it back.
 - **Pasted duplicates share one anchor.** Two markers with one id (a pasted line whose
   text still matches) are judged against the first copy's anchor, so the copy reads stale.
+- **Kotlin's grammar errors on one-line class bodies.** `companion object { fun make() = 1 }`,
+  `object B { val x = 1 }`, and `abstract class S { abstract fun a(): Int }` each parse
+  with a `MISSING _class_member_semi` before the closing brace; the multi-line forms parse
+  cleanly. Alone the tree stays intact, but in a larger file error recovery can wrap an
+  enclosing class in an `ERROR` node. Markers inside still parse, since comments are
+  extras (`markers.test.ts` pins this). In markerless mode a lost class drops out of its
+  comments' scope paths and hashes. The fix belongs upstream in
+  `tree-sitter-grammars/tree-sitter-kotlin`.
 
 - **Live runs for the Codex and Cursor adapters.** See § Hook adapters, Evidence.
 - **A converted comment directly below an expanded sigil block joins it.** Inside an agent

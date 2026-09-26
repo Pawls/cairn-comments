@@ -40,6 +40,7 @@ describe("the published CLI package", () => {
       "bundle/grammars/tree-sitter-c_sharp.wasm",
       "bundle/grammars/tree-sitter-java.wasm",
       "bundle/grammars/tree-sitter-javascript.wasm",
+      "bundle/grammars/tree-sitter-kotlin.wasm",
       "bundle/grammars/tree-sitter-python.wasm",
       "bundle/grammars/tree-sitter-tsx.wasm",
       "bundle/grammars/tree-sitter-typescript.wasm",

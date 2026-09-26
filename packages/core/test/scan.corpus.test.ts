@@ -4,7 +4,7 @@ import { DETECTORS, analyzeSource, type ScannedComment } from "../src/index.js";
 
 // Labeled corpus (design.md § Scan detectors): each detector's precision decides whether it ships enabled.
 const CORPUS = new URL("./corpus/", import.meta.url);
-const EXTENSION: Record<string, string> = { python: "py", typescript: "ts", tsx: "tsx", javascript: "js", csharp: "cs", java: "java" };
+const EXTENSION: Record<string, string> = { python: "py", typescript: "ts", tsx: "tsx", javascript: "js", csharp: "cs", java: "java", kotlin: "kt" };
 // Detectors need a few hits before their precision means anything.
 const MIN_HITS = 3;
 const KILL_PRECISION = 0.8;

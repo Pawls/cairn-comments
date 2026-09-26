@@ -21,7 +21,7 @@ Overlay on: the comments render in place.
 ## How it works
 
 Agents mark their comments with a sigil: `#~` in Python, `//~` in TypeScript, JavaScript,
-C#, and Java. A git filter handles the rest.
+C#, Java, and Kotlin. A git filter handles the rest.
 
 ```text
 What is committed, and your checkout       An agent worktree
@@ -199,7 +199,9 @@ markers inside that body. A clone without `init` falls back to git's ordinary te
 **Can I keep the bodies out of the repository entirely?** Add `.agents/comments/` to
 `.gitignore`. The markers then dangle by design, and `check` stops asking for bodies.
 
-**Which languages?** Python, TypeScript (including TSX), JavaScript, C#, and Java.
+**Which languages?** Python, TypeScript (including TSX), JavaScript, C#, Java, and Kotlin.
+A repository initialized before Kotlin support needs `cairn init` again to put `.kt` and
+`.kts` files under the filter.
 
 **Does a hook or `init` touch other repositories?** No. With a global `core.hooksPath`,
 `init` chains any hook already there and the managed hook does nothing in repositories

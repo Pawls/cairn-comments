@@ -186,7 +186,7 @@ describe("init --dry-run, uninstall, and promote --all", () => {
     const before = config();
     const out = box.cli(main, "init", "--dry-run", "--hooks", "claude-code,cursor", "--agents-md");
     expect(out).toMatch(/^dry run; would change:\n {2}git config: set extensions\.worktreeConfig = true\n/);
-    expect(out).toContain("  .gitattributes: add 14 line(s), remove 1 line(s)\n");
+    expect(out).toContain("  .gitattributes: add 16 line(s), remove 1 line(s)\n");
     expect(out).toContain("  .claude/settings.local.json: set the claude-code hook\n");
     expect(out).toContain("  .cursor/hooks.json: create with the cursor hook\n");
     expect(out).toContain("  AGENTS.md: add the sigil convention\n");

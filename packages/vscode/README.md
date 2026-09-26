@@ -33,7 +33,7 @@ The overlay works on any checkout with markers and sidecars. Scanning, promoting
 demoting, and the stale list run the CLI that `cairn init` recorded for the
 repository.
 
-Languages: Python, TypeScript, TSX, JavaScript, C#, and Java.
+Languages: Python, TypeScript, TSX, JavaScript, C#, Java, and Kotlin.
 
 ## Settings
 

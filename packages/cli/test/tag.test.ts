@@ -122,7 +122,7 @@ describe.each([false, true])("tag and hook adapters (autocrlf=%s)", (autocrlf) =
     expect(box.cli(main, "init", "--agents-md")).toContain("AGENTS.md: add the sigil convention\n");
     const first = read("main", "AGENTS.md");
     expect(first).toMatch(/^# Project\n\nOur rules\.\n\n<!-- cairn:begin -->\n## AI comments\n/);
-    expect(first).toContain("`#~ text` in Python; `//~ text` in TypeScript, JavaScript, C#, and Java");
+    expect(first).toContain("`#~ text` in Python; `//~ text` in TypeScript, JavaScript, C#, Java, and Kotlin");
     expect(box.cli(main, "init", "--agents-md")).toBe("nothing to change\n");
     writeFileSync(agents, readFileSync(agents, "utf8").replace("## AI comments", "## stale copy") + "More rules.\n");
     box.cli(main, "init", "--agents-md");

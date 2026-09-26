@@ -42,8 +42,11 @@ const PASTE_SAVE_WINDOW_MS = 5_000;
 const STATE_KEY = "overlay.on";
 const DEBOUNCE_MS = 100;
 
-/** VS Code's built-in language ids for every extension `LANGUAGES` covers. */
-const VSCODE_LANGUAGE_IDS = ["python", "typescript", "typescriptreact", "javascript", "javascriptreact", "csharp", "java"];
+/**
+ * VS Code language ids for every extension `LANGUAGES` covers. `kotlin` is not built in, so
+ * the manifest registers it for `.kt`/`.kts`; VS Code merges that with a Kotlin extension's.
+ */
+const VSCODE_LANGUAGE_IDS = ["python", "typescript", "typescriptreact", "javascript", "javascriptreact", "csharp", "java", "kotlin"];
 
 /** What the e2e test (and a debugger) can reach through `activate`'s return value. */
 export interface TestApi {

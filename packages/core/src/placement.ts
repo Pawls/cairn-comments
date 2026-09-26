@@ -1,5 +1,5 @@
 import type { Node } from "web-tree-sitter";
-import { bodyHash, nodeHash } from "./anchors.js";
+import { bodyHash, bodyOf, nodeHash } from "./anchors.js";
 import { resolveIds } from "./ids.js";
 import { languageForPath, type LanguageSpec } from "./languages.js";
 import { applySplices, dominantEol, lineIndexAt, splitLines, type Line, type Splice } from "./lines.js";
@@ -234,7 +234,10 @@ class Layout {
    * or an expression body as one statement.
    */
   statements(scope: Node): Node[] {
-    const body = scope.childForFieldName("body") ?? scope.childForFieldName("accessors") ?? scope.childForFieldName("value");
+    let body = bodyOf(scope) ?? scope.childForFieldName("accessors") ?? scope.childForFieldName("value");
+    if (!body) return [];
+    // Kotlin wraps a function's block, or its `= expression`, in `function_body`.
+    if (body.type === "function_body") body = body.namedChildren.find((c): c is Node => !!c && !this.spec.commentTypes.includes(c.type)) ?? null;
     if (!body) return [];
     if (!/block|body|accessor_list/.test(body.type)) return [body];
     return body.namedChildren.filter((c): c is Node => !!c && !this.spec.commentTypes.includes(c.type));

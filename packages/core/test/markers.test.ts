@@ -176,3 +176,27 @@ describe("marker grammar (Java)", () => {
     expect(markers.map((m) => m.text)).toEqual(["real"]);
   });
 });
+
+const kotlin = languageForPath("x.kt")!;
+
+describe("marker grammar (Kotlin)", () => {
+  it("parses markers and ignores sigils inside strings, raw strings, templates, and KDoc", async () => {
+    const source = [
+      'val s = "//~ nope"',
+      'val t = """',
+      "    //~ nope",
+      '"""',
+      'val u = "${"//~ nope"}"',
+      "/** KDoc //~ nope */",
+      "val x = 1  //~ real",
+      "",
+    ].join("\n");
+    const markers = await findMarkers(kotlin, source);
+    expect(markers.map((m) => m.text)).toEqual(["real"]);
+  });
+
+  it("finds markers inside a one-line class body the grammar cannot parse", async () => {
+    const source = ["class G {", "    //~ still found", "    companion object { fun make() = 1 }", "}", ""].join("\n");
+    expect((await findMarkers(kotlin, source)).map((m) => m.text)).toEqual(["still found"]);
+  });
+});

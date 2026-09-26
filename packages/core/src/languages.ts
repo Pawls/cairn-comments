@@ -85,6 +85,18 @@ export const LANGUAGES: readonly LanguageSpec[] = [
     functionTypes: ["method_declaration", "constructor_declaration", "compact_constructor_declaration"],
     namespaceTypes: ["class_declaration", "interface_declaration", "enum_declaration", "record_declaration", "annotation_type_declaration"],
   },
+  {
+    id: "kotlin",
+    name: "Kotlin",
+    extensions: [".kt", ".kts"],
+    lineSigil: "//~",
+    commentTypes: ["line_comment", "block_comment"],
+    wasm: "@tree-sitter-grammars/tree-sitter-kotlin/tree-sitter-kotlin.wasm",
+    // A secondary constructor has no name, so its comments anchor to the class.
+    functionTypes: ["function_declaration"],
+    // `class_declaration` covers interfaces and enums; a companion object is a scope only when named.
+    namespaceTypes: ["class_declaration", "object_declaration", "companion_object"],
+  },
 ];
 
 export function languageForPath(path: string): LanguageSpec | undefined {

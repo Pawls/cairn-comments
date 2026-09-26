@@ -1,0 +1,125 @@
+Labeled scan corpus for Kotlin; format in python.txt.
+
+=== ai
+fun run() {
+    // Step 3: Persist the results to the database
+    repository.saveAll(results)
+}
+
+=== ai
+fun names(): List<String> {
+    // Create a new list to store the names
+    val names = mutableListOf<String>()
+    return names
+}
+
+=== ai
+fun close() {
+    // Close the connection
+    connection.close()
+}
+
+=== ai
+fun send(m: Message) {
+    // Updated to use the new Kafka producer API
+    producer.send(ProducerRecord(topic, m))
+}
+
+=== ai
+fun handle(e: Event) {
+    // ⚡ Fast path for cached events
+    if (e in cache) return
+}
+
+=== ai
+fun parse(s: String): Int {
+    // This function parses the string and returns an integer
+    return s.toInt()
+}
+
+=== ai
+fun init() {
+    // You might need to adjust the pool size depending on your workload
+    executor = Executors.newFixedThreadPool(4)
+}
+
+=== ai
+fun start() {
+    // Let's start by initializing the scheduler
+    scheduler.start()
+}
+
+=== human
+fun write(b: ByteArray) {
+    // FileChannel.force is expensive; the WAL fsyncs in batches instead
+    channel.write(ByteBuffer.wrap(b))
+}
+
+=== human
+fun size(): Int {
+    // not synchronized: callers only use this for metrics
+    return count
+}
+
+=== human
+fun register(l: Listener) {
+    // weak refs so listeners don't pin activities in memory (Android)
+    listeners.add(WeakReference(l))
+}
+
+=== human
+fun key(s: String): String {
+    // Locale.ROOT, or Turkish users get a dotless i
+    return s.lowercase(Locale.ROOT)
+}
+
+=== human
+suspend fun awaitReady() {
+    // runBlocking here would deadlock the single-threaded test dispatcher
+    while (!ready) delay(10)
+}
+
+=== protected doc
+/**
+ * Returns the number of elements.
+ */
+fun size(): Int = n
+
+=== protected pragma
+/* ktlint-disable max-line-length */
+val url = "https://example.com"
+
+=== protected pragma
+//noinspection UNCHECKED_CAST
+val list = value as List<String>
+
+=== protected license
+/*
+ * Copyright (C) 2019 The Example Project Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ */
+package com.example
+
+=== protected ticketed-todo
+fun migrate() {
+    // TODO JIRA-1234: This is a placeholder until the new API ships
+}
+
+=== protected commented-out-code
+fun run() {
+    // println("x = $x")
+    go()
+}
+
+=== human
+fun load() {
+    // Load the properties file
+    props.load(FileInputStream(file))
+}
+
+=== human
+fun merge(other: Node) {
+    // Note that this does not copy the children, only the attributes
+    attributes.putAll(other.attributes)
+}

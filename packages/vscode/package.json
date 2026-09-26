@@ -45,9 +45,22 @@
     "onLanguage:javascript",
     "onLanguage:javascriptreact",
     "onLanguage:csharp",
-    "onLanguage:java"
+    "onLanguage:java",
+    "onLanguage:kotlin"
   ],
   "contributes": {
+    "languages": [
+      {
+        "id": "kotlin",
+        "aliases": [
+          "Kotlin"
+        ],
+        "extensions": [
+          ".kt",
+          ".kts"
+        ]
+      }
+    ],
     "commands": [
       {
         "command": "cairn.toggleOverlay",
@@ -166,23 +179,23 @@
       "commandPalette": [
         {
           "command": "cairn.editComment",
-          "when": "editorLangId == python || editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact || editorLangId == csharp || editorLangId == java"
+          "when": "editorLangId == python || editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact || editorLangId == csharp || editorLangId == java || editorLangId == kotlin"
         },
         {
           "command": "cairn.confirmComment",
-          "when": "editorLangId == python || editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact || editorLangId == csharp || editorLangId == java"
+          "when": "editorLangId == python || editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact || editorLangId == csharp || editorLangId == java || editorLangId == kotlin"
         },
         {
           "command": "cairn.promoteComment",
-          "when": "editorLangId == python || editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact || editorLangId == csharp || editorLangId == java"
+          "when": "editorLangId == python || editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact || editorLangId == csharp || editorLangId == java || editorLangId == kotlin"
         },
         {
           "command": "cairn.demoteComment",
-          "when": "editorLangId == python || editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact || editorLangId == csharp || editorLangId == java"
+          "when": "editorLangId == python || editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact || editorLangId == csharp || editorLangId == java || editorLangId == kotlin"
         },
         {
           "command": "cairn.deleteComment",
-          "when": "editorLangId == python || editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact || editorLangId == csharp || editorLangId == java"
+          "when": "editorLangId == python || editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact || editorLangId == csharp || editorLangId == java || editorLangId == kotlin"
         },
         {
           "command": "cairn.saveComment",

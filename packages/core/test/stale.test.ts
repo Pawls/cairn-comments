@@ -25,6 +25,7 @@ const FORMATTER_ONLY: [string, string, string][] = [
   ["a.tsx", "//~ab12\nconst v = <div>{x}</div>\n", "//~ab12\nconst v = (\n  <div>{x}</div>\n);\n"],
   ["a.cs", "class C {\n  //~ab12\n  void M() { int x=1; }\n}\n", "class C\n{\n  //~ab12\n  void M()\n  {\n    int x = 1;\n  }\n}\n"],
   ["a.java", "class C {\n  //~ab12\n  int x=foo(a,b);\n}\n", "class C {\n  //~ab12\n  int x = foo(\n      a, b);\n}\n"],
+  ["a.kt", "class C {\n  //~ab12\n  val x=foo(a,b)\n}\n", "class C {\n    //~ab12\n    val x = foo(\n        a,\n        b,\n    )\n}\n"],
 ];
 
 /** Each pair is a real change to the anchored code. */
@@ -40,6 +41,8 @@ const REAL_CHANGES: [string, string, string][] = [
   ["a.ts", "//~ab12\nconst f = () => a();\n", "//~ab12\nconst f = () => b();\n"],
   ["a.cs", "class C {\n  //~ab12\n  int x = 1;\n}\n", "class C {\n  //~ab12\n  int x = 2;\n}\n"],
   ["a.java", "class C {\n  //~ab12\n  @A void m() {}\n}\n", "class C {\n  //~ab12\n  @B void m() {}\n}\n"],
+  ["a.kt", "//~ab12\nfun f(a: Int) = a + 1\n", "//~ab12\nfun f(a: Int) = a + 2\n"],
+  ["a.kt", "//~ab12\nfun f(a: Int) {}\n", "//~ab12\nfun f(a: Long) {}\n"],
 ];
 
 describe("anchors", () => {
@@ -65,6 +68,13 @@ describe("anchors", () => {
     expect(await anchor("a.js", assigned("return a;"))).toBe(await anchor("a.js", assigned("return a + 1;")));
     const property = (body: string) => `class C {\n  //~ab12\n  int P { get { ${body} } }\n}\n`;
     expect(await anchor("a.cs", property("return 1;"))).toBe(await anchor("a.cs", property("return 2;")));
+    // Kotlin's bodies are unfielded children: `function_body`, `class_body`, a constructor's `block`.
+    const kotlinFun = (body: string) => `//~ab12\nfun k(a: Int): Int {\n    ${body}\n}\n`;
+    expect(await anchor("a.kt", kotlinFun("return a"))).toBe(await anchor("a.kt", kotlinFun("return a + 1")));
+    const kotlinClass = (body: string) => `//~ab12\nclass K(val a: Int) {\n    ${body}\n}\n`;
+    expect(await anchor("a.kt", kotlinClass("fun f() = a"))).toBe(await anchor("a.kt", kotlinClass("fun g() = a")));
+    const kotlinObject = (body: string) => `//~ab12\nobject K {\n    ${body}\n}\n`;
+    expect(await anchor("a.kt", kotlinObject("val a = 1"))).toBe(await anchor("a.kt", kotlinObject("val a = 2")));
   });
 
   it("counts a callback's body and an arrow function's expression body", async () => {

@@ -34,6 +34,15 @@ const CASES: { name: string; file: string; base: string; note: string; edited: s
     scope: "settle",
   },
   {
+    name: "Kotlin",
+    file: "src/Settle.kt",
+    base: "fun settle(order: Order) {\n    ledger.write(order.id)\n}\n",
+    note: "retries are safe",
+    edited: "fun settle(order: Order) {\n    //~ retries are safe\n    ledger.write(order.id)\n}\n",
+    collapsed: /^fun settle\(order: Order\) \{\n {4}\/\/~[0-9a-z]{4}\n {4}ledger\.write\(order\.id\)\n\}\n$/,
+    scope: "settle",
+  },
+  {
     name: "JavaScript",
     file: "src/settle.js",
     base: "const settle = (order) => {\n  ledger.write(order.id);\n};\n",

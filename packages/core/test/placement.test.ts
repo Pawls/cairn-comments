@@ -471,6 +471,42 @@ const JAVA = [
   "",
 ].join("\n");
 
+const KOTLIN = [
+  "package shop",
+  "",
+  "//~ one ledger per process",
+  "class Ledger(private val store: Store) {",
+  "    //~ cached count",
+  "    private var count = 0",
+  "",
+  "    constructor() : this(Store()) {",
+  "        //~ a secondary constructor has no name, so it belongs to Ledger",
+  "        count = 1",
+  "    }",
+  "",
+  "    override fun toString(): String {",
+  "        val r = Runnable {",
+  "            //~ inside a lambda, so it belongs to toString",
+  "            log()",
+  "        }",
+  '        return "Ledger"',
+  "    }",
+  "",
+  "    companion object {",
+  "        fun make(): Ledger {",
+  "            return Ledger() //~ an unnamed companion adds nothing to the path",
+  "        }",
+  "    }",
+  "}",
+  "",
+  "object Registry {",
+  "    fun find(id: Int): Ledger? {",
+  "        return null //~ an object declaration names the path",
+  "    }",
+  "}",
+  "",
+].join("\n");
+
 /** Each fixture, and the `scope` its comments record, in file order. */
 const LANGUAGE_FIXTURES: [string, string, (string | undefined)[]][] = [
   ["a.ts", TYPESCRIPT, [undefined, "settle", "settle", "settle", "settle", "refund", "Ledger", "Ledger.write.check", "Ledger.handler", "Tools"]],
@@ -482,6 +518,7 @@ const LANGUAGE_FIXTURES: [string, string, (string | undefined)[]][] = [
     ["Shop.Orders", "Shop.Orders.Ledger", "Shop.Orders.Ledger.Size", "Shop.Orders.Ledger", "Shop.Orders.Ledger", "Shop.Orders.Ledger.Write.Check"],
   ],
   ["a.java", JAVA, [undefined, "Ledger", "Ledger.toString", "Ledger.Entry.touch"]],
+  ["a.kt", KOTLIN, [undefined, "Ledger", "Ledger", "Ledger.toString", "Ledger.make", "Registry.find"]],
 ];
 
 describe("markerless in every language", () => {
@@ -529,6 +566,7 @@ describe("markerless in every language", () => {
     ["a.js", JAVASCRIPT, "return Ledger;", "return null;", [], ["an assigned function expression"]],
     ["a.cs", CSHARP, "return count;", "return 0;", [], ["inside a getter"]],
     ["a.java", JAVA, "log();", "log(1);", [], ["inside a lambda, so it belongs to toString"]],
+    ["a.kt", KOTLIN, "log()", "log(1)", [], ["inside a lambda, so it belongs to toString"]],
   ];
 
   it.each(EDITS)("in %s, changing `%s` affects only the comments inside that declaration", async (path, working, from, to, stale, orphaned) => {
@@ -556,6 +594,7 @@ describe("markerless in every language", () => {
     ["a.tsx", "//~ why\nconst v = <div>{x}</div>\n", "const v = (\n  <div>{x}</div>\n);\n"],
     ["a.cs", "class C {\n  void M() {\n    //~ why\n    int x=1;\n  }\n}\n", "class C\n{\n  void M()\n  {\n    int x = 1;\n  }\n}\n"],
     ["a.java", "class C {\n  void m() {\n    //~ why\n    int x=foo(a,b);\n  }\n}\n", "class C {\n  void m() {\n    int x = foo(\n        a, b);\n  }\n}\n"],
+    ["a.kt", "class C {\n  fun m() {\n    //~ why\n    val x=foo(a,b)\n  }\n}\n", "class C {\n    fun m() {\n        val x = foo(\n            a,\n            b,\n        )\n    }\n}\n"],
   ];
 
   it.each(FORMATTER_PAIRS)("places a comment across a formatter's rewrite (%s: %j)", async (path, before, after) => {

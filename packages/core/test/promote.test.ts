@@ -68,6 +68,7 @@ describe("demote then promote", () => {
     ["a.ts", "export function f() {\r\n  // guard: callers pass null\r\n  return g();\r\n}\r\n", 2],
     ["a.cs", "class C {\n    // keep: reflection reads this\n    int x;\n}\n", 2],
     ["a.java", "class C {\n  int x; // units: ms\n}", 2],
+    ["a.kt", "class C {\n    // keep: reflection reads this\n    val x = 1\n}\n", 2],
   ];
 
   it.each(CASES)("restores the original bytes (%s, %j)", async (path, original, line) => {

@@ -7,7 +7,7 @@ Agents write comments with a sigil (`#~ text`, `//~ text`). On commit each one s
 a short marker such as `#~a1b2`, and its text moves to a tracked markdown file under
 `.agents/comments/`. Agent worktrees get the full comments back on checkout, so agents
 read and edit them as ordinary text. Your own checkout stays clean. Python,
-TypeScript/TSX, JavaScript, C#, and Java.
+TypeScript/TSX, JavaScript, C#, Java, and Kotlin.
 
 ```sh
 npm install -g cairn-comments

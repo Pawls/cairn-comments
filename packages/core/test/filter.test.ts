@@ -152,6 +152,11 @@ describe("round trip per language", () => {
       "src/Settle.java",
       ["void settle(Order order) {", "    //~ retries are safe", "    ledger.write(order.id);  //~ keyed on order.id", "}", ""].join("\n"),
     ],
+    [
+      "Kotlin",
+      "src/Settle.kt",
+      ["fun settle(order: Order) {", "    //~ retries are safe", "    ledger.write(order.id)  //~ keyed on order.id", '    log("//~ not a comment")', "}", ""].join("\n"),
+    ],
   ];
 
   for (const [name, path, expanded] of cases) {

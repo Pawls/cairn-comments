@@ -55,13 +55,22 @@ export function findComments(spec: LanguageSpec, source: string): Promise<Commen
   return parseWith(spec, source, (root) => commentsIn(spec, root));
 }
 
-/** Whether `text` parses as this language with no error nodes: the commented-out-code test. */
+/** Whether `text` parses as this language with no error nodes and not as a run of words: the commented-out-code test. */
 export async function parsesCleanly(spec: LanguageSpec, text: string): Promise<boolean> {
   const tree = (await parserFor(spec)).parse(text);
   if (!tree) return false;
   try {
-    return !tree.rootNode.hasError;
+    return !tree.rootNode.hasError && !tree.rootNode.namedChildren.some((s) => !!s && isWordRun(s));
   } finally {
     tree.delete();
   }
+}
+
+/**
+ * Kotlin reads words as infix calls (`weak refs so listeners` is `weak.refs(so).listeners(...)`),
+ * so a statement that is only an infix chain, or assigns to one, is prose.
+ */
+function isWordRun(statement: Node): boolean {
+  const target = statement.type === "assignment" ? statement.childForFieldName("left") : statement;
+  return target?.type === "infix_expression";
 }

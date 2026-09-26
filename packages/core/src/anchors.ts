@@ -65,9 +65,16 @@ function ownLineAnchor(spec: LanguageSpec, root: Node, source: string, lines: re
   return undefined;
 }
 
-const DECLARATION = /function|method|class|interface|struct|enum|namespace|internal_module|constructor|record|property/;
+const DECLARATION = /function|method|class|interface|struct|enum|namespace|internal_module|constructor|record|property|object_declaration|companion_object/;
 /** Statements that wrap one declaration: `namespace N {}` in TypeScript, `const f = () => {}`. */
 const WRAPPER = /^(?:expression_statement|lexical_declaration|variable_declaration)$/;
+/** Kotlin's grammar gives bodies no field: `class_body`, `function_body`, a constructor's `block`. */
+const UNFIELDED_BODY = /(?:^|_)body$|^block$/;
+
+/** A declaration's body: its `body` field, else a child typed as a body. */
+export function bodyOf(declaration: Node): Node | null {
+  return declaration.childForFieldName("body") ?? declaration.namedChildren.find((c): c is Node => !!c && UNFIELDED_BODY.test(c.type)) ?? null;
+}
 
 /**
  * A comment above a declaration describes its signature, so the body is left out: an edit
@@ -79,10 +86,13 @@ function declarationBodies(anchor: Node): Set<number> {
   const skipped = new Set<number>();
   for (let node: Node | null = anchor; node; node = spineChild(node)) {
     if (!DECLARATION.test(node.type)) continue;
-    // A C# property keeps its block bodies in `accessors`. An arrow function's expression
-    // body is all it says (`() => a()`), so only a block body is left out.
-    const body = node.childForFieldName(node.type.includes("property") ? "accessors" : "body");
-    if (body && (node.type !== "arrow_function" || body.type === "statement_block")) skipped.add(body.id);
+    // A C# property keeps its block bodies in `accessors`. An expression body is all a
+    // function says (`() => a()`, Kotlin's `fun f() = a()`), so only a block body is left out.
+    const body = node.type.includes("property") ? node.childForFieldName("accessors") : bodyOf(node);
+    if (!body) continue;
+    const expression =
+      (node.type === "arrow_function" && body.type !== "statement_block") || (body.type === "function_body" && body.namedChild(0)?.type !== "block");
+    if (!expression) skipped.add(body.id);
   }
   return skipped;
 }
