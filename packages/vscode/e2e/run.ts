@@ -1,10 +1,11 @@
 // `npm run test:vscode`: downloads a VS Code build on first use and runs dist/e2e in it,
-// once against the overlay fixture and once against a scratch git repository for the scan
-// review. Set CAIRN_SCREENSHOTS=<dir> to also capture the two overlay states (Windows
-// only) for the README. Set CAIRN_E2E_EXTENSION=<dir> to test an unpacked .vsix (its
-// `extension/` folder) instead of this package.
+// against the overlay fixture, a scratch markerless repository copied from
+// e2e/fixture-markerless, and a scratch repository for the scan review. Set
+// CAIRN_SCREENSHOTS=<dir> to also capture the overlay states (Windows only) for the
+// README. Set CAIRN_E2E_EXTENSION=<dir> to test an unpacked .vsix (its `extension/`
+// folder) instead of this package.
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,6 +14,7 @@ import { runTests } from "@vscode/test-electron";
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const extension = process.env.CAIRN_E2E_EXTENSION ? path.resolve(process.env.CAIRN_E2E_EXTENSION) : packageRoot;
 const fixture = path.join(packageRoot, "e2e/fixture");
+const markerlessFixture = path.join(packageRoot, "e2e/fixture-markerless");
 const cli = path.resolve(packageRoot, "../cli/bundle/main.js");
 
 // Terminals inside VS Code export this; inherited, it makes the test build of VS Code
@@ -32,45 +34,68 @@ const REVIEW_FILES: Record<string, string> = {
   "src/util.ts": ["export function add(a: number, b: number) {", "  // 🚀 Add the numbers", "  return a + b;", "}", ""].join("\n"),
 };
 
+interface ScratchRepo {
+  dir: string;
+  repo: string;
+  env: Record<string, string>;
+}
+
 /**
- * A committed, initialized repository. Its own global git config keeps `init` from
- * writing a hook into the developer's `core.hooksPath`, and the extension host inherits it.
+ * A committed, initialized repository filled by `populate`. Its own global git config keeps
+ * `init` from writing a hook into the developer's `core.hooksPath`, and the extension host
+ * inherits it.
  */
-function reviewRepo(): { dir: string; env: Record<string, string> } {
+function scratchRepo(populate: (repo: string) => void, initArgs: string[] = []): ScratchRepo {
   const dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "cairn-e2e-")));
   const config = path.join(dir, "gitconfig");
   writeFileSync(config, "[user]\n\tname = e2e\n\temail = e2e@example.com\n[core]\n\tautocrlf = false\n[init]\n\tdefaultBranch = main\n");
   const env = { GIT_CONFIG_GLOBAL: config, GIT_CONFIG_NOSYSTEM: "1" };
   const repo = path.join(dir, "repo");
+  mkdirSync(repo);
+  populate(repo);
+  const opts = { cwd: repo, env: { ...process.env, ...env }, stdio: "ignore" as const };
+  execFileSync("git", ["init", "-q"], opts);
+  execFileSync(process.execPath, [cli, "init", ...initArgs], opts);
+  execFileSync("git", ["add", "-A"], opts);
+  execFileSync("git", ["commit", "-qm", "base"], opts);
+  return { dir, repo, env };
+}
+
+const writeReviewFiles = (repo: string) => {
   for (const [file, text] of Object.entries(REVIEW_FILES)) {
     mkdirSync(path.dirname(path.join(repo, file)), { recursive: true });
     writeFileSync(path.join(repo, file), text);
   }
-  const opts = { cwd: repo, env: { ...process.env, ...env }, stdio: "ignore" as const };
-  execFileSync("git", ["init", "-q"], opts);
-  execFileSync(process.execPath, [cli, "init"], opts);
-  execFileSync("git", ["add", "-A"], opts);
-  execFileSync("git", ["commit", "-qm", "base"], opts);
-  return { dir, env: { ...env, CAIRN_E2E_REPO: repo } };
-}
+};
 
-const review = reviewRepo();
+const scratch: ScratchRepo[] = [];
 try {
+  const markerless = scratchRepo((repo) => cpSync(markerlessFixture, repo, { recursive: true }), ["--markerless"]);
+  scratch.push(markerless);
+  const review = scratchRepo(writeReviewFiles);
+  scratch.push(review);
+  const screenshots = process.env.CAIRN_SCREENSHOTS ?? "";
   await runTests({
     extensionDevelopmentPath: extension,
     extensionTestsPath: path.join(packageRoot, "dist/e2e/index.cjs"),
     launchArgs: [fixture, "--disable-extensions"],
-    extensionTestsEnv: { CAIRN_SUITE: "overlay", CAIRN_SCREENSHOTS: process.env.CAIRN_SCREENSHOTS ?? "" },
+    extensionTestsEnv: { CAIRN_SUITE: "overlay", CAIRN_SCREENSHOTS: screenshots },
   });
   await runTests({
     extensionDevelopmentPath: extension,
     extensionTestsPath: path.join(packageRoot, "dist/e2e/index.cjs"),
-    launchArgs: [review.env.CAIRN_E2E_REPO!, "--disable-extensions"],
-    extensionTestsEnv: { CAIRN_SUITE: "review", CAIRN_SCREENSHOTS: process.env.CAIRN_SCREENSHOTS ?? "", ...review.env },
+    launchArgs: [markerless.repo, "--disable-extensions"],
+    extensionTestsEnv: { CAIRN_SUITE: "markerless", CAIRN_SCREENSHOTS: screenshots, ...markerless.env },
+  });
+  await runTests({
+    extensionDevelopmentPath: extension,
+    extensionTestsPath: path.join(packageRoot, "dist/e2e/index.cjs"),
+    launchArgs: [review.repo, "--disable-extensions"],
+    extensionTestsEnv: { CAIRN_SUITE: "review", CAIRN_SCREENSHOTS: screenshots, ...review.env, CAIRN_E2E_REPO: review.repo },
   });
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
 } finally {
-  rmSync(review.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  for (const s of scratch) rmSync(s.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }

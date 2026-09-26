@@ -37,7 +37,7 @@ Committed blob / owner checkout          Agent worktree (smudged)
 | Anchoring | Being replaced (2026-09-25): no markers in committed code; the sidecar records where each comment goes (§ Anchoring). Behind `init --markerless` until v1 A16 removes marker mode. | The owner judged that id markers in committed code would stop serious developers from adopting the tool, overlay or not. The earlier reason to keep markers, that zero-trace anchoring meant fuzzy matching, no longer holds: placement is exact per declaration (§ Anchoring, "Rejected: scored fuzzy placement"). |
 | Pure pointer links (no filter) | Rejected | Every pointer costs tokens on every read, and using a comment costs an extra Read call plus the whole sidecar file. Strictly more tokens than inline whenever comments are used. |
 | Sidecar storage | Tracked markdown under `.agents/comments/`, mirroring source paths | Travels with clones, cloud agents, and PRs; human-readable; users who want zero trace can gitignore the folder and are left with harmless dangling markers. |
-| Human view | Virtual overlay in VS Code | Files on disk stay collapsed. The marker line itself is the render site, so own-line comments display in place (no CodeLens needed); long bodies show the first line plus a hover or comment thread. |
+| Human view | Virtual overlay in VS Code | Files on disk stay collapsed. With markers, the marker line itself is the render site; long bodies show the first line plus a hover. Without markers, each comment renders against the site placement reports: a CodeLens above its code line (a trailing one at the end of its line), and a native comment thread with provenance and actions (§ Overlay rendering). |
 | Detection | Sigil is the source of truth; harness hooks auto-tag unmarked comments an agent just wrote; a repeatable `scan` finds existing AI comments by heuristic tells, with a mark-all mode | Covers users who never write agent instructions. |
 | Implementation | TypeScript everywhere, `web-tree-sitter` for parsing | One codebase for the CLI, the git filter, the hook adapters, and the extension. |
 | Languages in v1 | Python, TypeScript/JavaScript, C#, Java | Doc comments (docstrings, JSDoc, `///`, Javadoc), pragmas, license headers, and suppression directives are never stripped. Kotlin was dropped: no published package ships a `web-tree-sitter`-compatible grammar WASM (see § Languages). |
@@ -271,6 +271,45 @@ Verified in VS Code 1.138 on Windows with screenshots taken by the e2e suite
   the marker under the opener (same start line) and hid a code line instead. Costs of the
   manual route: a marker on line 1 cannot be hidden, the line above shows a chevron, a
   `···` and the fold background, line numbers skip, and Unfold All reveals the markers.
+- **Own-line comments in a markerless file (chosen 2026-09-26).** With no marker line to
+  draw on, an own-line comment renders as a CodeLens above the code line it describes
+  (`placeComments` reports each comment's `sites`), picked by eye over two alternatives
+  from the e2e screenshots (`markerless-*.png`). `cairn.ownLineStyle` keeps them:
+  `thread` draws the comment as an expanded comment thread below the line above, and `eol`
+  as a label at the end of the line above. Trailing comments always use the end-of-line
+  label, amber and tagged `[stale?]` when stale.
+- **Comment threads (markerless).** Every placed comment is a thread of one comment on its
+  code line (`createCommentController`), collapsed until its CodeLens or gutter icon opens
+  it; the `thread` style starts them expanded. The author line is the provenance, and the
+  buttons are Edit (in place), Confirm (stale comments only), Promote, and Delete. They act
+  on the sidecar in process against the open buffer, through `confirmPlaced`,
+  `promotePlaced` (`packages/core/src/owner.ts`), and a plain entry removal; Promote then
+  saves the source, as the CLI's promote leaves it. With the overlay off there are no
+  threads. VS Code opens its Comments panel the first time a file with threads opens in a
+  session (`comments.openView`); the extension leaves that user setting alone.
+- **Live tracking (markerless).** Placement runs on open, on save, and whenever the buffer
+  is clean again after an edit (a revert, an undo to the saved text, a reload after a
+  change on disk) or a sidecar changes. In between, each change event moves the sites
+  (`shiftSites`, `packages/vscode/src/tracking.ts`): an own-line comment moves with its
+  line's first character, a trailing one with its line's end, and one whose code was
+  deleted disappears until the next placement. Placing a dirty buffer from anchors would
+  mark every comment in a function stale on its first keystroke. A change event's
+  `isDirty` still says false on a clean document's first edit (VS Code sends the dirty
+  state in a later event), so "clean again" is judged at the next refresh, not in the
+  event.
+- **Copy and paste (markerless).** A `DocumentPasteEditProvider` (stable since VS Code
+  1.97, hence the engine) records, on copy, the comments whose line's first non-blank
+  character the copy covers (a trailing one needs its whole line), and on a paste of that
+  same text adds them to the target file's sidecar with `carryComments`: new ids, the
+  copy's provenance plus `copied-from=<id>`, anchored to the pasted code as `sync` would
+  anchor them, so a second `refund` records `scope=refund@1`. The sidecar edit rides on the
+  paste as its `additionalEdit` and is saved when it lands. VS Code calls the provider only
+  on a real copy event, which a test window without focus never gets, so the e2e suite
+  drives the provider directly; the native Ctrl+C/Ctrl+V path is checked by hand.
+- **Activity Bar.** The **AI Comments** container holds the scan Review, **Possibly Stale**
+  (`check --stale --json`), and **Orphaned** (`check --orphans --json`, entries that no
+  longer place) views. Both lists come from the CLI so they match CI; they refresh when
+  shown, on save, on a sidecar change, and from their title button.
 - **Sidecar root.** The extension resolves a source file's sidecar against the nearest
   ancestor holding `.agents/comments` or `.git`, whichever appears first walking up, so a
   fixture or nested workspace inside a larger repository keeps its own sidecars.
@@ -674,6 +713,11 @@ heading and the second branch's `<!-- ... -->` metadata line read back as body t
 
 ## Known gaps
 
+- **A copy pasted above its original takes the original's anchors.** Scope paths number
+  duplicates in file order, so pasting a second `refund` above the first makes the copy
+  `refund` and the original `refund@1`: the original's comments then place on the copy
+  (same body hash) until it is edited, and the copy's recorded `refund@1` places on the
+  original. Pasting below, the usual case, is exact.
 - **The stale tag only changes on smudge, `expand`, and `confirm`.** A hook-driven `sync`
   records the old anchor but does not rewrite the working file, so an agent that just
   changed the code under a comment sees no tag until the next checkout or `expand`.

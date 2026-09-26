@@ -34,10 +34,21 @@ export {
   placeComments,
   recordComments,
   stripComments,
+  type CommentSite,
   type PlaceResult,
   type RecordOptions,
   type RecordResult,
 } from "./placement.js";
+export {
+  COPIED_FROM_KEY,
+  carryComments,
+  confirmPlaced,
+  promotePlaced,
+  type CarriedComment,
+  type CarryResult,
+  type ConfirmPlacedResult,
+  type PromotePlacedResult,
+} from "./owner.js";
 export { mergeSidecars, type MergeResult } from "./merge.js";
 export { LANGUAGES, languageForPath, type LanguageSpec } from "./languages.js";
 export { STALE_TAG, findMarkers, type FindOptions, type Marker, type MarkerKind } from "./markers.js";

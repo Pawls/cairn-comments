@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ReviewModel, cliFromCleanConfig, type ReviewComment } from "../src/review.js";
+import { ReviewModel, cliFromCleanConfig, orphansOf, type ReviewComment } from "../src/review.js";
 
 const comment = (file: string, line: number): ReviewComment => ({
   file,
@@ -42,4 +42,20 @@ describe("ReviewModel", () => {
 it("recovers the CLI invocation from the clean filter config", () => {
   expect(cliFromCleanConfig('node "C:/x/main.js" clean %f\n')).toBe('node "C:/x/main.js"');
   expect(cliFromCleanConfig("something else")).toBeUndefined();
+});
+
+describe("orphansOf", () => {
+  it("keeps only the entries that no longer place, with their last declaration", () => {
+    const report = {
+      problems: [
+        { kind: "expanded", file: "a.py", line: 3, text: "#~ left inline" },
+        { kind: "unplaced", file: ".agents/comments/a.py.md", id: "r3cn", source: "a.py", scope: "reconcile", text: "runs after settle" },
+        { kind: "unplaced", file: ".agents/comments/b.py.md", id: "x1y2", source: "b.py", text: "module note" },
+      ],
+    };
+    expect(orphansOf(report)).toEqual([
+      { source: "a.py", id: "r3cn", scope: "reconcile", text: "runs after settle" },
+      { source: "b.py", id: "x1y2", scope: undefined, text: "module note" },
+    ]);
+  });
 });

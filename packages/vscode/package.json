@@ -13,7 +13,7 @@
   "type": "module",
   "main": "./dist/extension.cjs",
   "engines": {
-    "vscode": "^1.90.0"
+    "vscode": "^1.97.0"
   },
   "categories": [
     "Other"
@@ -57,22 +57,52 @@
       {
         "command": "cairn.editComment",
         "title": "Edit AI Comment",
-        "category": "Cairn Comments"
+        "category": "Cairn Comments",
+        "icon": "$(edit)"
       },
       {
         "command": "cairn.confirmComment",
         "title": "Confirm AI Comment Is Still Accurate",
-        "category": "Cairn Comments"
+        "category": "Cairn Comments",
+        "icon": "$(check)"
       },
       {
         "command": "cairn.promoteComment",
         "title": "Promote AI Comment to an Ordinary Comment",
-        "category": "Cairn Comments"
+        "category": "Cairn Comments",
+        "icon": "$(arrow-up)"
       },
       {
         "command": "cairn.demoteComment",
         "title": "Demote Comment to an AI Comment",
         "category": "Cairn Comments"
+      },
+      {
+        "command": "cairn.deleteComment",
+        "title": "Delete AI Comment",
+        "category": "Cairn Comments",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "cairn.saveComment",
+        "title": "Save AI Comment",
+        "category": "Cairn Comments"
+      },
+      {
+        "command": "cairn.cancelCommentEdit",
+        "title": "Cancel",
+        "category": "Cairn Comments"
+      },
+      {
+        "command": "cairn.showComment",
+        "title": "Show AI Comment",
+        "category": "Cairn Comments"
+      },
+      {
+        "command": "cairn.refreshLists",
+        "title": "Refresh AI Comment Lists",
+        "category": "Cairn Comments",
+        "icon": "$(refresh)"
       },
       {
         "command": "cairn.reviewStale",
@@ -93,10 +123,18 @@
       }
     ],
     "views": {
-      "explorer": [
+      "cairn": [
         {
           "id": "cairn.review",
-          "name": "AI Comment Review"
+          "name": "Review"
+        },
+        {
+          "id": "cairn.stale",
+          "name": "Possibly Stale"
+        },
+        {
+          "id": "cairn.orphans",
+          "name": "Orphaned"
         }
       ]
     },
@@ -118,6 +156,11 @@
           "command": "cairn.applyReview",
           "when": "view == cairn.review",
           "group": "navigation@2"
+        },
+        {
+          "command": "cairn.refreshLists",
+          "when": "view == cairn.stale || view == cairn.orphans",
+          "group": "navigation@1"
         }
       ],
       "commandPalette": [
@@ -136,6 +179,56 @@
         {
           "command": "cairn.demoteComment",
           "when": "editorLangId == python || editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact || editorLangId == csharp || editorLangId == java"
+        },
+        {
+          "command": "cairn.deleteComment",
+          "when": "editorLangId == python || editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact || editorLangId == csharp || editorLangId == java"
+        },
+        {
+          "command": "cairn.saveComment",
+          "when": "false"
+        },
+        {
+          "command": "cairn.cancelCommentEdit",
+          "when": "false"
+        },
+        {
+          "command": "cairn.showComment",
+          "when": "false"
+        }
+      ],
+      "comments/comment/title": [
+        {
+          "command": "cairn.editComment",
+          "when": "commentController == cairn.comments",
+          "group": "inline@1"
+        },
+        {
+          "command": "cairn.confirmComment",
+          "when": "commentController == cairn.comments && comment == stale",
+          "group": "inline@2"
+        },
+        {
+          "command": "cairn.promoteComment",
+          "when": "commentController == cairn.comments",
+          "group": "inline@3"
+        },
+        {
+          "command": "cairn.deleteComment",
+          "when": "commentController == cairn.comments",
+          "group": "inline@4"
+        }
+      ],
+      "comments/comment/context": [
+        {
+          "command": "cairn.saveComment",
+          "when": "commentController == cairn.comments",
+          "group": "inline@1"
+        },
+        {
+          "command": "cairn.cancelCommentEdit",
+          "when": "commentController == cairn.comments",
+          "group": "inline@2"
         }
       ]
     },
@@ -146,8 +239,27 @@
           "type": "string",
           "default": "",
           "markdownDescription": "CSS color for overlay text. Empty uses the theme's `editorCodeLens.foreground`; no theme color exposes the comment token color to decorations."
+        },
+        "cairn.ownLineStyle": {
+          "type": "string",
+          "enum": [
+            "codelens",
+            "thread",
+            "eol"
+          ],
+          "default": "codelens",
+          "markdownDescription": "How a comment on its own line renders in a file without markers: a CodeLens above the code line, an expanded comment thread, or a label at the end of the line above."
         }
       }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "cairn",
+          "title": "AI Comments",
+          "icon": "media/cairn.svg"
+        }
+      ]
     }
   },
   "scripts": {
@@ -158,7 +270,7 @@
   "devDependencies": {
     "@cairn-comments/core": "0.0.0",
     "@types/mocha": "^10.0.10",
-    "@types/vscode": "1.90.0",
+    "@types/vscode": "1.97.0",
     "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^4.0.0",
     "esbuild": "^0.28.2",

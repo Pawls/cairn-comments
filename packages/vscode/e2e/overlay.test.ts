@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import * as vscode from "vscode";
+import { screenshot } from "./capture.js";
 import type { Applied, TestApi } from "../src/extension.js";
 
 const EXTENSION_ID = "cairn-comments.cairn-comments-vscode";
@@ -30,17 +30,11 @@ async function setMode(api: TestApi, mode: "off" | "on"): Promise<void> {
 }
 
 const rangeText = (editor: vscode.TextEditor, o: vscode.DecorationOptions) => editor.document.getText(o.range);
-const labels = (applied: Applied, kind: keyof Applied) =>
+const labels = (applied: Applied, kind: Exclude<keyof Applied, "placed">) =>
   applied[kind].map((o) => [o.range.start.line, o.renderOptions?.after?.contentText]);
 
-function screenshot(name: string): void {
-  const dir = process.env.CAIRN_SCREENSHOTS;
-  if (!dir || process.platform !== "win32") return;
-  const script = path.join(__dirname, "../../e2e/screenshot.ps1");
-  // Window pixels of the editor's first lines under the tab bar in the test window.
-  const args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "-Out", path.join(dir, `${name}.png`), "-Crop", "0,40,1000,300"];
-  console.log(`screenshot: ${execFileSync("powershell", args, { encoding: "utf8" }).trim()}`);
-}
+/** Window pixels of the editor's first lines under the tab bar in the test window. */
+const EDITOR_CROP = "0,40,1000,300";
 
 const settle = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -64,7 +58,7 @@ suite("overlay", () => {
     assert.deepEqual(applied.missing.map((o) => rangeText(editor, o)), ["#~e5f6"]);
     assert.deepEqual(applied.revealed, []);
     await settle(500);
-    screenshot("overlay-off");
+    screenshot("overlay-off", EDITOR_CROP);
   });
 
   test("on: the first body line renders in place, with a count for longer bodies", async () => {
@@ -78,7 +72,7 @@ suite("overlay", () => {
     ]);
     assert.deepEqual(labels(applied, "missing"), [[3, "  no comment body"]]);
     await settle(500);
-    screenshot("overlay-on");
+    screenshot("overlay-on", EDITOR_CROP);
   });
 
   test("the marker on the cursor's line is revealed instead of hidden", async () => {

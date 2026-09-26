@@ -6,9 +6,10 @@ import Mocha from "mocha";
 export async function run(): Promise<void> {
   const mocha = new Mocha({ ui: "tdd", color: true, timeout: 60_000 });
   // `pre-require` installs `suite`/`test` on the global scope; the suites must load after it.
-  const suite = process.env.CAIRN_SUITE === "review" ? "review" : "overlay";
+  const suite = process.env.CAIRN_SUITE ?? "overlay";
   mocha.suite.emit("pre-require", globalThis, `${suite}.test`, mocha);
   if (suite === "review") await import("./review.test.js");
+  else if (suite === "markerless") await import("./markerless.test.js");
   else await import("./overlay.test.js");
   await new Promise<void>((resolve, reject) => {
     mocha.run((failures) => (failures ? reject(new Error(`${failures} e2e test(s) failed`)) : resolve()));

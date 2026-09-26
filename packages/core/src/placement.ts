@@ -12,7 +12,7 @@ import { normalizeBody, type Sidecar, type SidecarEntry } from "./sidecar.js";
  * `stripComments` is the clean filter, `placeComments` the smudge, and `recordComments`
  * writes each comment's position into its sidecar entry as these metadata keys.
  */
-const PLACEMENT_KEYS = ["pos", "scope", "body", "stmts", "in", "node", "nth", "decl", "skip", "seq", "indent", "gap", "eof"] as const;
+export const PLACEMENT_KEYS = ["pos", "scope", "body", "stmts", "in", "node", "nth", "decl", "skip", "seq", "indent", "gap", "eof"] as const;
 
 type Pos = "before" | "after" | "trail" | "row";
 
@@ -545,6 +545,7 @@ function renamedScope(layout: Layout, p: Placement): Node | undefined {
 }
 
 interface Insertion {
+  id: string;
   row: number;
   seq: number;
   order: number;
@@ -614,6 +615,7 @@ function resolve(layout: Layout, entries: readonly SidecarEntry[]): Resolved {
     const indent = p.indent ?? defaultIndent;
     const [head, ...rest] = body.split("\n");
     own.push({
+      id: entry.id,
       row,
       seq: p.seq,
       order,
@@ -629,7 +631,7 @@ function resolve(layout: Layout, entries: readonly SidecarEntry[]): Resolved {
     for (const extra of items.slice(keep.length)) {
       const indent = rows[row]!.indent;
       const text = extra.text.trimStart();
-      own.push({ row, seq: Number.MAX_SAFE_INTEGER, order: own.length, lines: [indent + text] });
+      own.push({ id: extra.id, row, seq: Number.MAX_SAFE_INTEGER, order: own.length, lines: [indent + text] });
     }
     trailing.set(row, keep);
   }
@@ -655,6 +657,18 @@ export interface PlaceResult {
   stale: StalePlacement[];
   /** Ids placed in a declaration found as a rename of the recorded one. */
   renamed: string[];
+  /** Where each placed comment sits in the stripped file, in display order. */
+  sites: CommentSite[];
+}
+
+/**
+ * A placed comment against the stripped file: `own` comments go above `row` (which may
+ * equal the row count, past the last line), `trail` ones at the end of `row`.
+ */
+export interface CommentSite {
+  id: string;
+  row: number;
+  kind: "own" | "trail";
 }
 
 function placeIn(layout: Layout, sidecar: Sidecar): PlaceResult {
@@ -665,10 +679,15 @@ function placeIn(layout: Layout, sidecar: Sidecar): PlaceResult {
   for (const [row, items] of trailing) {
     if (items.length && row < lines.length) splices.push({ start: lines[row]!.contentEnd, end: lines[row]!.contentEnd, text: items[0]!.text });
   }
+  const sites: CommentSite[] = [];
+  for (const [row, items] of trailing) {
+    if (items.length && row < lines.length) sites.push({ id: items[0]!.id, row, kind: "trail" });
+  }
   const byRow = new Map<number, Insertion[]>();
   for (const ins of own) byRow.set(ins.row, [...(byRow.get(ins.row) ?? []), ins]);
   for (const [row, group] of byRow) {
     group.sort((a, b) => a.seq - b.seq || a.order - b.order);
+    for (const ins of group) sites.push({ id: ins.id, row, kind: "own" });
     const text = group.flatMap((g) => g.lines);
     if (row < lines.length) {
       const eol = eolFor(layout, row);
@@ -686,13 +705,14 @@ function placeIn(layout: Layout, sidecar: Sidecar): PlaceResult {
     unplaced: managed.filter((e) => e.body && !placedSet.has(e.id)).map((e) => e.id),
     stale,
     renamed,
+    sites: sites.sort((a, b) => a.row - b.row || (a.kind === b.kind ? 0 : a.kind === "own" ? -1 : 1)),
   };
 }
 
 /** Inserts each placement entry's comment into a stripped file; entries that no longer match stay out. */
 export async function placeComments(path: string, source: string, sidecar: Sidecar): Promise<PlaceResult> {
   const spec = languageForPath(path);
-  if (!spec || !sidecar.entries.some(isPlaced)) return { source, placed: [], unplaced: [], stale: [], renamed: [] };
+  if (!spec || !sidecar.entries.some(isPlaced)) return { source, placed: [], unplaced: [], stale: [], renamed: [], sites: [] };
   return withLayout(spec, source, (layout) => placeIn(layout, sidecar));
 }
 

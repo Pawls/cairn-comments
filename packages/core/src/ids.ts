@@ -6,6 +6,15 @@ function hashId(path: string, text: string, occurrence: number, salt: number): s
   return parseInt(hex.slice(0, 8), 16).toString(36).padStart(4, "0").slice(-4);
 }
 
+/** An id for a new comment of `text` in `path` that is not in `taken`, which it then joins. */
+export function freshId(path: string, text: string, taken: Set<string>): string {
+  let salt = 0;
+  let id = hashId(path, text, 0, salt);
+  while (taken.has(id)) id = hashId(path, text, 0, ++salt);
+  taken.add(id);
+  return id;
+}
+
 /**
  * Final id per marker, in order. Pure in (path, markers) so that `clean` and `sync`
  * always agree: a new comment's id hashes path, text, and occurrence index, salted past

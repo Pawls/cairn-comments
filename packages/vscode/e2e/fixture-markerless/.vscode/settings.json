@@ -1,0 +1,11 @@
+{
+  "workbench.startupEditor": "none",
+  "workbench.colorTheme": "Dark Modern",
+  "workbench.activityBar.location": "hidden",
+  "editor.minimap.enabled": false,
+  "editor.fontSize": 16,
+  "editor.lineNumbers": "on",
+  "window.zoomLevel": 0.5,
+  "git.enabled": false,
+  "python.defaultInterpreterPath": "none"
+}

@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import * as vscode from "vscode";
+import { screenshot } from "./capture.js";
 import type { TestApi } from "../src/extension.js";
 
 const EXTENSION_ID = "cairn-comments.cairn-comments-vscode";
@@ -15,14 +16,6 @@ async function api(): Promise<TestApi> {
   const extension = vscode.extensions.getExtension<TestApi>(EXTENSION_ID);
   assert.ok(extension, `${EXTENSION_ID} is not installed in the test host`);
   return extension.activate();
-}
-
-function screenshot(name: string): void {
-  const dir = process.env.CAIRN_SCREENSHOTS;
-  if (!dir || process.platform !== "win32") return;
-  const script = path.join(__dirname, "../../e2e/screenshot.ps1");
-  const args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "-Out", path.join(dir, `${name}.png`)];
-  console.log(`screenshot: ${execFileSync("powershell", args, { encoding: "utf8" }).trim()}`);
 }
 
 const listing =(a: TestApi) => a.review.files().map((f) => [f.file, f.comments.map((c) => [c.line, c.accept])]);

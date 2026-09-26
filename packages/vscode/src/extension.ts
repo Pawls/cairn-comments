@@ -11,12 +11,17 @@ import {
   parseSidecar,
   serializeSidecar,
   sidecarPathFor,
+  type CommentSite,
   type Marker,
   type Sidecar,
   type SidecarEntry,
 } from "@cairn-comments/core";
+import { MarkerlessActions, type CommentRef, type Located } from "./actions.js";
+import { registerLists, type ListsApi } from "./lists.js";
 import { entryIsStale, findSidecarRoot, hoverMarkdown, planOverlay, type OverlayMode, type PlannedDecoration } from "./overlay.js";
-import { findRepo, runCli, type StaleComment } from "./review.js";
+import { CommentPaste } from "./paste.js";
+import { OWN_LINE_STYLES, PlacedComment, PlacedView, SHOW_COMMENT, type OwnLineStyle, type PlacedRender } from "./placed.js";
+import { findRepo, orphansOf, runCli, type OrphanComment, type StaleComment } from "./review.js";
 import { registerReviewTree, type ReviewApi } from "./reviewTree.js";
 
 export const COMMANDS = {
@@ -26,7 +31,13 @@ export const COMMANDS = {
   reviewStale: `${BRAND}.reviewStale`,
   promote: `${BRAND}.promoteComment`,
   demote: `${BRAND}.demoteComment`,
+  delete: `${BRAND}.deleteComment`,
+  saveEdit: `${BRAND}.saveComment`,
+  cancelEdit: `${BRAND}.cancelCommentEdit`,
 } as const;
+
+/** How long a paste's sidecar change is expected before a later change is no longer taken for it. */
+const PASTE_SAVE_WINDOW_MS = 5_000;
 
 const STATE_KEY = "overlay.on";
 const DEBOUNCE_MS = 100;
@@ -42,19 +53,23 @@ export interface TestApi {
   review: ReviewApi;
   /** What the stale comment list offers, from `check --stale --json`; a string explains an empty list. */
   staleComments(): Promise<StaleComment[] | string>;
+  orphanComments(): Promise<OrphanComment[] | string>;
+  lists: ListsApi;
+  /** The copy and paste provider, driven directly: a test window has no focus, so native copy never reaches it. */
+  paste: CommentPaste;
+  placed: {
+    sites(document: vscode.TextDocument): readonly CommentSite[];
+    /** The thread comment for `id`, while the overlay shows it. */
+    comment(document: vscode.TextDocument, id: string): PlacedComment | undefined;
+  };
 }
 
 export interface Applied {
   hidden: vscode.DecorationOptions[];
   revealed: vscode.DecorationOptions[];
   missing: vscode.DecorationOptions[];
-}
-
-interface Located {
-  root: string;
-  /** Root-relative, forward-slash path used for the sidecar and the language lookup. */
-  file: string;
-  sidecar: string;
+  /** A markerless file's comments; absent when the file holds markers or the overlay is off. */
+  placed?: PlacedRender;
 }
 
 /**
@@ -116,7 +131,14 @@ export function activate(context: vscode.ExtensionContext): TestApi {
     textDecoration: "underline wavy",
     rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
   });
-  context.subscriptions.push(hiddenType, revealedType, missingType);
+  const placedView = new PlacedView();
+  context.subscriptions.push(hiddenType, revealedType, missingType, placedView);
+  /** Documents that showed no markers and had comments in their sidecar at their last refresh. */
+  const markerless = new Set<string>();
+  const ownLineStyle = (): OwnLineStyle => {
+    const configured = vscode.workspace.getConfiguration(BRAND).get<string>("ownLineStyle", "codelens");
+    return OWN_LINE_STYLES.find((s) => s === configured) ?? "codelens";
+  };
 
   const mode = (): OverlayMode => (context.workspaceState.get<boolean>(STATE_KEY, false) ? "on" : "off");
 
@@ -138,6 +160,21 @@ export function activate(context: vscode.ExtensionContext): TestApi {
       const document = editor.document;
       const markers = await markersIn(document, located);
       if (editor.document !== document || document.isClosed) return applied;
+      const sidecar = store.get(located.sidecar);
+      if (!markers.length && sidecar?.entries.length) {
+        markerless.add(document.uri.toString());
+        if (!placedView.isCurrent(document) && !(await placedView.place(document, located.file, sidecar))) {
+          // The document changed while placing; the refresh its change scheduled places it again.
+          return applied;
+        }
+        if (editor.document !== document || document.isClosed) return applied;
+        if (mode() === "on") applied.placed = placedView.render(editor, store.entries(located.sidecar), ownLineStyle(), overlayColor());
+        else placedView.clear(editor);
+      } else {
+        markerless.delete(document.uri.toString());
+        placedView.forget(document);
+        placedView.clear(editor);
+      }
       const cursorRows = new Set(editor.selections.flatMap((s) => rows(document, s)));
       const planned = planOverlay(markers, store.entries(located.sidecar), mode(), (m) =>
         cursorRows.has(document.positionAt(m.start).line),
@@ -167,25 +204,83 @@ export function activate(context: vscode.ExtensionContext): TestApi {
   const isSidecar = (document: vscode.TextDocument) =>
     document.uri.scheme === "file" && document.fileName.split(path.sep).join("/").includes(`/${SIDECAR_ROOT}/`);
 
+  const lists = registerLists(context, { stale: staleComments, orphans: orphanComments }, COMMANDS.edit);
   const watcher = vscode.workspace.createFileSystemWatcher(`**/${SIDECAR_ROOT}/**/*.md`);
   const onSidecarChange = (uri: vscode.Uri) => {
     store.invalidate(uri.fsPath);
+    // A sidecar change is an external change to every file it anchors: place them again.
+    placedView.forget();
     refreshAll();
+    lists.scheduleRefresh();
   };
+  const actions = new MarkerlessActions({
+    view: placedView,
+    locate,
+    isMarkerless: (document) => markerless.has(document.uri.toString()),
+    sidecar: (file) => store.get(file),
+    written: (file) => onSidecarChange(vscode.Uri.file(file)),
+  });
+
+  // A paste edit changes the sidecar's buffer; it is saved once the change arrives.
+  const pasteSaves = new Map<string, NodeJS.Timeout>();
+  const paste = new CommentPaste({
+    target: async (document) => {
+      const located = locate(document);
+      if (!located || (await markersIn(document, located)).length) return undefined;
+      const sidecar = store.get(located.sidecar) ?? { preamble: "", entries: [] };
+      return { root: located.root, file: located.file, sidecarPath: located.sidecar, sidecar, placed: sidecar.entries.some((e) => e.meta.has("pos")) };
+    },
+    sites: async (document) => {
+      const located = locate(document);
+      const sidecar = located && store.get(located.sidecar);
+      if (located && sidecar && !placedView.isCurrent(document)) await placedView.place(document, located.file, sidecar);
+      return placedView.sites(document);
+    },
+    entries: (target) => store.entries(target.sidecarPath),
+    willChange: (file) => {
+      clearTimeout(pasteSaves.get(file));
+      pasteSaves.set(
+        file,
+        setTimeout(() => pasteSaves.delete(file), PASTE_SAVE_WINDOW_MS),
+      );
+    },
+  });
+
   context.subscriptions.push(
     watcher,
     watcher.onDidChange(onSidecarChange),
     watcher.onDidCreate(onSidecarChange),
     watcher.onDidDelete(onSidecarChange),
+    { dispose: () => pasteSaves.forEach((t) => clearTimeout(t)) },
     vscode.window.onDidChangeVisibleTextEditors(refreshAll),
     vscode.window.onDidChangeTextEditorSelection((e) => schedule(e.textEditor)),
     vscode.workspace.onDidChangeTextDocument((e) => {
-      if (isSidecar(e.document)) refreshAll();
-      else editorsOf(e.document).forEach(schedule);
+      if (isSidecar(e.document)) {
+        const pending = pasteSaves.get(e.document.fileName);
+        if (pending && e.document.isDirty) {
+          clearTimeout(pending);
+          pasteSaves.delete(e.document.fileName);
+          void e.document.save();
+        }
+        placedView.forget();
+        refreshAll();
+      } else {
+        placedView.track(e);
+        editorsOf(e.document).forEach(schedule);
+      }
+    }),
+    vscode.workspace.onDidSaveTextDocument((d) => {
+      if (isSidecar(d)) return;
+      placedView.forget(d);
+      editorsOf(d).forEach(schedule);
     }),
     vscode.workspace.onDidCloseTextDocument((d) => {
       // The disk copy is authoritative again once the editor buffer is gone.
       if (isSidecar(d)) onSidecarChange(d.uri);
+      else {
+        placedView.forget(d);
+        markerless.delete(d.uri.toString());
+      }
     }),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration(BRAND)) refreshAll();
@@ -195,20 +290,36 @@ export function activate(context: vscode.ExtensionContext): TestApi {
       renderStatus();
       refreshAll();
     }),
-    vscode.commands.registerCommand(COMMANDS.edit, (arg?: CommentRef) => editComment(arg)),
+    // A thread's Edit button edits in place; from the palette or a list, the sidecar entry opens.
+    vscode.commands.registerCommand(COMMANDS.edit, (arg?: CommentRef) => (arg instanceof PlacedComment ? actions.startEdit(arg) : editComment(arg))),
+    vscode.commands.registerCommand(COMMANDS.saveEdit, (comment: PlacedComment) => actions.saveEdit(comment)),
+    vscode.commands.registerCommand(COMMANDS.cancelEdit, (comment: PlacedComment) => actions.cancelEdit(comment)),
     vscode.commands.registerCommand(COMMANDS.confirm, async (arg?: CommentRef) => {
-      await confirmComment(arg);
+      const placed = await actions.resolve(arg);
+      if (placed) await actions.confirm(placed);
+      else await confirmComment(arg);
       refreshAll();
     }),
     vscode.commands.registerCommand(COMMANDS.reviewStale, () => reviewStale()),
-    vscode.commands.registerCommand(COMMANDS.promote, (arg?: CommentRef) => promoteComment(arg)),
+    vscode.commands.registerCommand(COMMANDS.promote, async (arg?: CommentRef) => {
+      const placed = await actions.resolve(arg);
+      return placed ? actions.promote(placed) : promoteComment(arg);
+    }),
+    vscode.commands.registerCommand(COMMANDS.delete, async (arg?: CommentRef) => {
+      const placed = await actions.resolve(arg);
+      if (placed) await actions.delete(placed);
+      else void vscode.window.showInformationMessage("No AI comment on this line.");
+    }),
     vscode.commands.registerCommand(COMMANDS.demote, (arg?: LineRef) => demoteComment(arg)),
+    vscode.commands.registerCommand(SHOW_COMMENT, (uri: vscode.Uri, id: string) => placedView.reveal(uri, id)),
+    ...VSCODE_LANGUAGE_IDS.map((language) => vscode.languages.registerDocumentPasteEditProvider({ scheme: "file", language }, paste, CommentPaste.metadata)),
     ...VSCODE_LANGUAGE_IDS.map((language) =>
       vscode.languages.registerHoverProvider(
         { scheme: "file", language },
         { provideHover: (document, position) => provideHover(store, document, position) },
       ),
     ),
+    ...VSCODE_LANGUAGE_IDS.map((language) => vscode.languages.registerCodeLensProvider({ scheme: "file", language }, placedView)),
     ...VSCODE_LANGUAGE_IDS.map((language) =>
       vscode.languages.registerCodeActionsProvider(
         { scheme: "file", language },
@@ -218,7 +329,16 @@ export function activate(context: vscode.ExtensionContext): TestApi {
     ),
   );
   refreshAll();
-  return { mode, refresh, review: registerReviewTree(context), staleComments };
+  return {
+    mode,
+    refresh,
+    review: registerReviewTree(context),
+    staleComments,
+    orphanComments,
+    lists,
+    paste,
+    placed: { sites: (document) => placedView.sites(document), comment: (document, id) => placedView.comment(document, id) },
+  };
 }
 
 export function deactivate(): void {}
@@ -272,12 +392,6 @@ async function provideHover(store: SidecarStore, document: vscode.TextDocument, 
   return new vscode.Hover(markdown, range);
 }
 
-/** A marker named by a hover link (absolute source path) or by the cursor when absent. */
-interface CommentRef {
-  file: string;
-  id: string;
-}
-
 async function resolveRef(arg?: CommentRef): Promise<{ document: vscode.TextDocument; located: Located; id: string } | undefined> {
   if (arg) {
     const document = await vscode.workspace.openTextDocument(arg.file);
@@ -319,6 +433,16 @@ async function staleComments(): Promise<StaleComment[] | string> {
   // Exit 1 means stale comments were found; the list is still on stdout.
   const found = JSON.parse(await runCli(repo.cli, "check --stale --json", repo.root, undefined, [0, 1])) as StaleComment[];
   return found.map((c) => ({ ...c, file: path.join(repo.root, c.file) }));
+}
+
+/** Comments that no longer place in their code, through the CLI (`check --orphans`). */
+async function orphanComments(): Promise<OrphanComment[] | string> {
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  const repo = folder ? await findRepo(folder.uri.fsPath) : undefined;
+  if (!repo?.cli) return repo ? `Run \`${BRAND} init\` in this repository to check for orphaned comments.` : "Open a git repository to check for orphaned comments.";
+  // Exit 1 means problems were found; the report is still on stdout.
+  const report = JSON.parse(await runCli(repo.cli, "check --orphans --json", repo.root, undefined, [0, 1])) as { problems: { kind: string }[] };
+  return orphansOf(report).map((c) => ({ ...c, source: path.join(repo.root, c.source) }));
 }
 
 async function reviewStale(): Promise<void> {

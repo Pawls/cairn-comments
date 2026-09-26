@@ -81,6 +81,22 @@ export interface StaleComment {
   text: string;
 }
 
+/** An entry `check --orphans --json` reports as `unplaced`, with `source` made absolute by the caller. */
+export interface OrphanComment {
+  source: string;
+  id: string;
+  /** The declaration the comment was last placed in; absent at module level. */
+  scope?: string;
+  text: string;
+}
+
+/** The orphans in a `check --orphans --json` report; its other problems are left out. */
+export function orphansOf(report: { problems: { kind: string }[] }): OrphanComment[] {
+  return report.problems
+    .filter((p): p is OrphanComment & { kind: "unplaced" } => p.kind === "unplaced")
+    .map(({ source, id, scope, text }) => ({ source, id, scope, text }));
+}
+
 /**
  * Runs `<cli> <args>` through the shell, as git and the pre-commit hook do, feeding `input`
  * on stdin. An exit code in `okCodes` resolves with stdout, for commands like `check`

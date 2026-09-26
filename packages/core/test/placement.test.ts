@@ -118,6 +118,19 @@ describe("placeComments after recordComments", () => {
     await expectExact("a.py", "# license\n\n#~ only a note\n");
   });
 
+  it("reports each comment's site in the stripped file", async () => {
+    const working = "def f():\n    #~ first\n    #~ second line\n    #~a1b2 next block\n    x = 1  #~ trail\n    y = 2\n#~ end\n";
+    const { recorded, stripped, placed } = await roundTrip("a.py", working);
+    expect(stripped).toBe("def f():\n    x = 1\n    y = 2\n");
+    const ids = recorded.sidecar.entries.map((e) => e.id);
+    expect(placed.sites).toEqual([
+      { id: ids[0], row: 1, kind: "own" },
+      { id: "a1b2", row: 1, kind: "own" },
+      { id: ids[2], row: 1, kind: "trail" },
+      { id: ids[3], row: 3, kind: "own" },
+    ]);
+  });
+
   it("writes placement keys an owner can read", async () => {
     const { recorded } = await roundTrip("a.py", SETTLE);
     const meta = recorded.sidecar.entries.map((e) => Object.fromEntries(e.meta));

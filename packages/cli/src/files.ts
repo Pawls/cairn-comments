@@ -10,6 +10,7 @@ import {
   bodiesOf,
   clean,
   confirm,
+  confirmPlaced,
   findMarkers,
   languageForPath,
   parseSidecar,
@@ -309,14 +310,9 @@ export async function confirmIds(root: string, file: string, ids: string[], expa
   const source = decodeExact(readFileSync(path.join(root, file)));
   if (source === undefined) return ids;
   if (markerless(root)) {
-    const sidecar = readSidecarSync(root, file);
-    const code = await stripComments(file, source);
-    const placed = await placeComments(file, code, sidecar);
-    const missing = ids.filter((id) => !placed.placed.includes(id));
-    if (missing.length) return missing;
-    // The code as it stands is the baseline: only the named ids take their new placement.
-    const recorded = await recordComments(file, placed.source, sidecar, { baseline: code, confirm: new Set(ids) });
-    if (recorded.sidecarChanged) writeSidecar(root, file, recorded.sidecar);
+    const confirmed = await confirmPlaced(file, await stripComments(file, source), readSidecarSync(root, file), ids);
+    if (confirmed.missing.length) return confirmed.missing;
+    if (confirmed.changed) writeSidecar(root, file, confirmed.sidecar);
     if (expand) await expandFiles(root, [file]);
     return [];
   }

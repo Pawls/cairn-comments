@@ -46,6 +46,24 @@ What is committed, and your checkout       An agent worktree
 
 Nothing is deleted at any point: every comment body is in a tracked, human-readable file.
 
+### Without markers
+
+`cairn init --markerless` leaves no trace of AI comments in committed code. The sidecar
+records the declaration each comment belongs to and where it sits in it, and your
+checkout is the plain code.
+
+With the overlay off, the editor shows plain code.
+
+![Markerless, overlay off](docs/images/markerless-off.png)
+
+With the overlay on, each comment shows above the line it describes, and trailing ones
+at the end of their line. Click one to open it as a comment thread: the full text, who
+wrote it, and buttons to edit, confirm, promote, or delete it. Comments follow your edits
+and travel with a function you copy and paste. The **AI Comments** Activity Bar view lists
+comments that may be stale and ones whose code is gone.
+
+![Markerless, overlay on](docs/images/markerless-on.png)
+
 ## Quickstart
 
 Needs git and Node 22 or later.
