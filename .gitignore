@@ -7,3 +7,4 @@ out/
 bundle/
 *.vsix
 packages/*/LICENSE
+/.vscode/
