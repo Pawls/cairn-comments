@@ -235,6 +235,19 @@ describe("changed declarations", () => {
     expect(placed.source).not.toContain("#~");
   });
 
+  it("follows a statement moved within its function (Alt+Down), marked stale", async () => {
+    const { placed, unplaced, stale } = await change(SETTLE_F, (s) => s.replace("    ledger.write(order)\n    notify(order)\n", "    notify(order)\n    ledger.write(order)\n"));
+    expect(unplaced).toEqual([]);
+    expect(stale).toEqual(["the write is idempotent", "keyed on order.id"]);
+    expect(placed.source).toMatch(/ {4}notify\(order\)\n {4}#~[0-9a-z]{4} \[stale\?\] the write is idempotent\n {4}ledger\.write\(order\) {2}#~[0-9a-z]{4} \[stale\?\] keyed on order\.id\n/);
+  });
+
+  it("does not follow a moved statement that appears twice in its function", async () => {
+    const twice = "def settle(order):\n    #~ the write is idempotent\n    ledger.write(order)\n    notify(order)\n    ledger.write(order)\n";
+    const { unplaced } = await change(twice, (s) => s.replace("    ledger.write(order)\n    notify(order)\n", "    notify(order)\n    ledger.write(order)\n"));
+    expect(unplaced).toEqual(["the write is idempotent"]);
+  });
+
   it("orphans a comment whose statement was deleted with nothing in its place", async () => {
     const { placed, unplaced } = await change(SETTLE_F, (s) => s.replace("    ledger.write(order)\n", ""));
     expect(unplaced).toEqual(["the write is idempotent", "keyed on order.id"]);
