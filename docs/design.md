@@ -312,8 +312,12 @@ Verified in VS Code 1.138 on Windows with screenshots taken by the e2e suite
   character the copy covers (a trailing one needs its whole line), and on a paste of that
   same text adds them to the target file's sidecar with `carryComments`: new ids, the
   copy's provenance plus `copied-from=<id>`, anchored to the pasted code as `sync` would
-  anchor them, so a second `refund` records `scope=refund@1`. The sidecar edit rides on the
-  paste as its `additionalEdit` and is saved when it lands. VS Code calls the provider only
+  anchor them, so a second `refund` records `scope=refund@1`. A comment whose original no
+  longer places in the copied file when the paste lands was cut, so it moves instead: it
+  keeps its id, records no `copied-from`, and its original entry leaves the source sidecar.
+  A copy with no selection (the whole line) pastes on its own line above the cursor, as
+  VS Code's plain paste does; its clipboard text is the copied range plus a line break. The
+  sidecar edits ride on the paste as its `additionalEdit` and are saved when they land. VS Code calls the provider only
   on a real copy event, which a test window without focus never gets, so the e2e suite
   drives the provider directly; the native Ctrl+C/Ctrl+V path is checked by hand.
 - **Activity Bar.** The **AI Comments** container holds the scan Review, **Possibly Stale**

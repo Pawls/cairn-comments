@@ -77,8 +77,8 @@ export interface CarryResult {
 
 /**
  * Adds a new entry for each carried comment, anchored to `code` (the file after the paste,
- * without AI comments) as `sync` would anchor it had an agent written it there. Ids are new,
- * so a copy never shares one with its original.
+ * without AI comments) as `sync` would anchor it had an agent written it there. A copy gets
+ * a new id, so it never shares one with its original; a moved comment keeps its id.
  */
 export async function carryComments(path: string, code: string, sidecar: Sidecar, carried: readonly CarriedComment[]): Promise<CarryResult> {
   const spec = languageForPath(path);
@@ -86,7 +86,11 @@ export async function carryComments(path: string, code: string, sidecar: Sidecar
   const lines = splitLines(code);
   const eol = dominantEol(code);
   const taken = new Set(sidecar.entries.map((e) => e.id));
-  const ids = carried.map((c) => freshId(path, c.body, taken));
+  const ids = carried.map((c) => {
+    if (!c.moved || taken.has(c.from)) return freshId(path, c.body, taken);
+    taken.add(c.from);
+    return c.from;
+  });
   const splices: Splice[] = [];
   carried.forEach((c, i) => {
     const line = lines[c.row];
@@ -108,8 +112,10 @@ export async function carryComments(path: string, code: string, sidecar: Sidecar
   const addedIds = carried.map((c, i) => {
     const entry = recorded.sidecar.entries.find((e) => e.id === ids[i]);
     if (!entry) return "";
-    const provenance = [...c.meta].filter(([k]) => !placementKeys.includes(k) && k !== COPIED_FROM_KEY);
-    added.push({ id: entry.id, meta: new Map([...provenance, [COPIED_FROM_KEY, c.from], ...entry.meta]), body: entry.body });
+    // A moved comment keeps its own `copied-from`, if it has one; a copy records its original.
+    const provenance = [...c.meta].filter(([k]) => !placementKeys.includes(k) && (c.moved || k !== COPIED_FROM_KEY));
+    const copiedFrom: [string, string][] = c.moved ? [] : [[COPIED_FROM_KEY, c.from]];
+    added.push({ id: entry.id, meta: new Map([...provenance, ...copiedFrom, ...entry.meta]), body: entry.body });
     return entry.id;
   });
   return { sidecar: { preamble: sidecar.preamble, entries: [...sidecar.entries, ...added] }, ids: addedIds };
