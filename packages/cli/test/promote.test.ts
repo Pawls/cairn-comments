@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Sandbox } from "./harness.js";
 
@@ -82,5 +82,51 @@ describe.each([true, false])("promote and demote through git (autocrlf=%s)", (au
 
   it("promote reports an unknown id", () => {
     expect(box.cliResult(main, "promote", "zz99")).toMatchObject({ status: 1, stderr: "cairn: no comment zz99\n" });
+  });
+});
+
+// The extension applies these rewrites itself, as one edit the owner can undo in every file at once.
+describe.each([true, false])("--print reports the rewrite instead of writing it (autocrlf=%s)", (autocrlf) => {
+  let box: Sandbox;
+  let main: string;
+
+  beforeAll(() => {
+    box = new Sandbox({ autocrlf });
+    main = box.path("main");
+    box.write(box.path("main", SOURCE), ORIGINAL);
+    box.git(box.dir, "init", "-q", "main");
+    box.cli(main, "init", "--markerless");
+    box.git(main, "add", "-A");
+    box.git(main, "commit", "-qm", "base");
+  });
+  afterAll(() => box.dispose());
+
+  it("demote --print names each file's new contents and writes nothing", () => {
+    const printed = JSON.parse(box.cli(main, "demote", "--print", `${SOURCE}:2`)) as { report: string; files: Record<string, string | null> };
+    expect(box.status(main)).toBe("");
+    expect(printed.report).toBe("demoted 1 comment(s) in 1 file(s)\n");
+    expect(Object.keys(printed.files).sort()).toEqual([SIDECAR, SOURCE]);
+
+    expect(box.cli(main, "demote", `${SOURCE}:2`)).toBe(printed.report);
+    expect(box.read(box.path("main", SOURCE))).toBe(printed.files[SOURCE]);
+    expect(box.read(box.path("main", SIDECAR))).toBe(printed.files[SIDECAR]);
+    box.git(main, "checkout", "--", SOURCE);
+    rmSync(box.path("main", ".agents"), { recursive: true, force: true });
+  });
+
+  it("scan --apply --print covers the sources, their sidecars, and the ignore file", () => {
+    const review = JSON.parse(box.cli(main, "scan", "--json")) as { comments: { line: number; accept: boolean }[] };
+    const own = review.comments.find((c) => c.line === 2)!;
+    const trailing = review.comments.find((c) => c.line === 4)!;
+    own.accept = true;
+    trailing.accept = false;
+    const input = JSON.stringify({ version: 1, comments: [own, trailing] });
+    const printed = JSON.parse(box.cliWithInput(main, input, "scan", "--apply", "-", "--print")) as { report: string; files: Record<string, string | null> };
+    expect(box.status(main)).toBe("");
+    expect(printed.report).toBe("converted 1 comment(s) in 1 file(s)\nignored 1 comment(s) in .agents/scan-ignore\n");
+    expect(Object.keys(printed.files).sort()).toEqual([".agents/scan-ignore", SIDECAR, SOURCE]);
+
+    expect(box.cliWithInput(main, input, "scan", "--apply", "-")).toBe(printed.report);
+    for (const [file, text] of Object.entries(printed.files)) expect(box.read(box.path("main", file))).toBe(text);
   });
 });

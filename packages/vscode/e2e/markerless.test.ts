@@ -151,6 +151,8 @@ suite("markerless", () => {
     const lens = (await vscode.commands.executeCommand<vscode.CodeLens[]>("vscode.executeCodeLensProvider", editor.document.uri))[1]!;
     await vscode.commands.executeCommand(lens.command!.command, ...lens.command!.arguments!);
     assert.equal(settleNote.thread()!.collapsibleState, vscode.CommentThreadCollapsibleState.Expanded);
+    await vscode.commands.executeCommand(lens.command!.command, ...lens.command!.arguments!);
+    assert.equal(settleNote.thread()!.collapsibleState, vscode.CommentThreadCollapsibleState.Collapsed, "a second click closes the thread");
   });
 
   test("thread: each own-line comment is an expanded thread below the line above its code", async () => {
@@ -305,10 +307,10 @@ suite("markerless", () => {
     const cut = new vscode.Range(9, 0, 16, 0);
     const text = document.getText(cut);
     const transfer = new vscode.DataTransfer();
-    // VS Code asks the provider first and deletes the text right after, without waiting for it.
-    const prepared = api.paste.prepareDocumentPaste(document, [cut], transfer);
+    // The extension host sees the cut's deletion before the copy request, whose range still
+    // describes the text before the cut (VS Code sends the request after an await).
     await editor.edit((b) => b.delete(cut));
-    await prepared;
+    await api.paste.prepareDocumentPaste(document, [cut], transfer);
     transfer.set("text/plain", new vscode.DataTransferItem(text));
 
     await editor.edit((b) => b.insert(document.lineAt(document.lineCount - 1).range.end, "\n\n\n"));
@@ -333,6 +335,58 @@ suite("markerless", () => {
       const lenses = (await api.refresh(editor)).placed!.lenses.filter((l) => l.title === LENSES[3]![1]);
       return lenses.length === 1 && lenses[0]!.line === pasteAt + 2;
     });
+  });
+
+  test("a highlighted line, whatever whitespace the highlight leaves out, pastes like a whole-line copy", async () => {
+    const { api, editor } = await shown("codelens");
+    const document = editor.document;
+    const copied = new vscode.Range(4, 4, 4, document.lineAt(4).text.length);
+    const transfer = new vscode.DataTransfer();
+    await api.paste.prepareDocumentPaste(document, [copied], transfer);
+    transfer.set("text/plain", new vscode.DataTransferItem(document.getText(copied)));
+    const edits = await api.paste.provideDocumentPasteEdits(document, [new vscode.Range(18, 4, 18, 4)], transfer);
+    assert.equal(edits?.length, 1);
+    assert.equal(edits![0]!.insertText, "");
+    assert.ok(await vscode.workspace.applyEdit(edits![0]!.additionalEdit!));
+    assert.equal(document.lineAt(18).text, "    ledger.write(order.id)", "the whole line, indentation included, above the cursor");
+    await waitFor("both pasted comments in the sidecar", () => /copied-from=1kjy/.test(sidecarText()) && /copied-from=f7eo/.test(sidecarText()));
+  });
+
+  test("a line cut without a selection moves its comments to where it is pasted", async () => {
+    const { api, editor } = await shown("codelens");
+    const document = editor.document;
+    const line = document.lineAt(4);
+    const transfer = new vscode.DataTransfer();
+    // Ctrl+X with no selection deletes the line and its break; the copy request comes after.
+    await editor.edit((b) => b.delete(new vscode.Range(4, 0, 5, 0)));
+    await api.paste.prepareDocumentPaste(document, [new vscode.Range(4, 0, 4, line.text.length)], transfer);
+    transfer.set("text/plain", new vscode.DataTransferItem(`${line.text}\n`));
+    const edits = await api.paste.provideDocumentPasteEdits(document, [new vscode.Range(5, 4, 5, 4)], transfer);
+    assert.equal(edits?.length, 1);
+    const before = sidecarText();
+    assert.ok(await vscode.workspace.applyEdit(edits![0]!.additionalEdit!));
+    assert.equal(document.lineAt(5).text, "    ledger.write(order.id)");
+    await waitFor("the moved comments' new anchors in the sidecar", () => sidecarText() !== before);
+    assert.doesNotMatch(sidecarText(), /copied-from/);
+    await document.save();
+    await waitFor("the moved comments on the pasted line", async () => {
+      const placed = (await api.refresh(editor)).placed!;
+      return placed.lenses.some((l) => l.line === 5 && l.title.endsWith(LENSES[1]![1] as string)) && placed.labels.some((l) => l.line === 5 && l.text.endsWith("keyed on order.id"));
+    });
+  });
+
+  test("a line moved with Alt+Down keeps its comments, before and after a save", async () => {
+    const { api, editor } = await shown("codelens");
+    editor.selection = new vscode.Selection(4, 0, 4, 0);
+    await vscode.commands.executeCommand("editor.action.moveLinesDownAction");
+    assert.equal(editor.document.lineAt(5).text, "    ledger.write(order.id)");
+    const onMovedLine = async () => {
+      const placed = (await api.refresh(editor)).placed!;
+      return placed.lenses.some((l) => l.line === 5 && l.title.endsWith(LENSES[1]![1] as string)) && placed.labels.some((l) => l.line === 5 && l.text.endsWith("keyed on order.id"));
+    };
+    assert.ok(await onMovedLine(), "the comments follow the line while the file is unsaved");
+    await editor.document.save();
+    await waitFor("the comments on the moved line after placing from anchors", onMovedLine);
   });
 
   test("the Activity Bar lists stale and orphaned comments across the repository", async () => {
