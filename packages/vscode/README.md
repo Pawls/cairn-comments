@@ -15,9 +15,10 @@ over those markers.
   color. The hover offers **Confirm: still accurate**, and **Review Stale AI Comments**
   lists every flagged comment in the repository.
 - **Review.** The **Review** view in the **AI Comments** sidebar scans the repository for
-  comments that read as AI-written. Check a few, then **Mark Selected as AI Comments** to
-  stash them or **Keep Selected as Ordinary Comments** to leave them and stop flagging
-  them. Unchecked ones stay listed for a later pass.
+  comments that read as AI-written. Each row's buttons mark it as an AI comment (stash
+  it), keep it as an ordinary comment (stop flagging it), or skip it until the next scan.
+  **Apply Review Decisions** applies them in one pass, and the other two title buttons
+  also decide every comment you left undecided. Undecided ones stay listed.
 - **Promote and demote.** Code actions turn a stashed comment into an ordinary one and
   back.
 

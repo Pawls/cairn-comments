@@ -14,24 +14,36 @@ export interface ReviewComment {
   accept: boolean;
 }
 
-/** A candidate in the tree; `selected` is its checkbox. */
-export type ReviewItem = ReviewComment & { selected: boolean };
+/** What the owner decided for a candidate: convert it to an AI comment, or keep it as an ordinary one. */
+export type Decision = "ai" | "keep";
+
+/** A candidate in the tree, with the decision it will be applied with (none yet when undefined). */
+export type ReviewItem = ReviewComment & { decision?: Decision };
 
 export interface ReviewFile {
   file: string;
   comments: ReviewItem[];
 }
 
+const skipKey = (c: ReviewComment) => `${c.file}\t${c.fingerprint}`;
+
 /**
- * Candidates grouped by file in scan order. A decision applies to the selected ones only;
- * the rest stay in the list for a later pass.
+ * Candidates grouped by file in scan order. The owner decides each one, skips the ones to
+ * judge later, and applies the decisions in one pass; undecided and skipped ones stay out
+ * of it.
  */
 export class ReviewModel {
   private groups: ReviewFile[] = [];
+  private readonly skipped = new Set<string>();
 
-  load(comments: readonly ReviewComment[]): void {
+  /** Starts a review. `keepSkipped` is for the rescan after a pass, which should not bring skipped comments back. */
+  load(comments: readonly ReviewComment[], options: { keepSkipped?: boolean } = {}): void {
+    if (!options.keepSkipped) this.skipped.clear();
     const byFile = new Map<string, ReviewItem[]>();
-    for (const c of comments) byFile.set(c.file, [...(byFile.get(c.file) ?? []), { ...c, selected: false }]);
+    for (const c of comments) {
+      if (this.skipped.has(skipKey(c))) continue;
+      byFile.set(c.file, [...(byFile.get(c.file) ?? []), { ...c, decision: undefined }]);
+    }
     this.groups = [...byFile].map(([file, cs]) => ({ file, comments: cs }));
   }
 
@@ -39,27 +51,53 @@ export class ReviewModel {
     return this.groups;
   }
 
-  /** Per comment when `line` is given, else for every comment in the file. */
-  setSelected(file: string, line: number | undefined, selected: boolean): void {
-    for (const c of this.groups.find((g) => g.file === file)?.comments ?? []) if (line === undefined || c.line === line) c.selected = selected;
+  /**
+   * Sets `decision` on one comment, or on every comment in the file when `line` is undefined.
+   * Deciding what the comments already have clears it, so each button toggles.
+   */
+  decide(file: string, line: number | undefined, decision: Decision): void {
+    const targets = this.pick(file, line);
+    const clear = targets.every((c) => c.decision === decision);
+    for (const c of targets) c.decision = clear ? undefined : decision;
   }
 
-  selectedCount(): number {
-    return this.groups.reduce((n, g) => n + g.comments.filter((c) => c.selected).length, 0);
+  /** Takes one comment, or a whole file, out of this review until the next scan starts over. */
+  skip(file: string, line: number | undefined): void {
+    for (const c of this.pick(file, line)) this.skipped.add(skipKey(c));
+    this.groups = this.groups
+      .map((g) => ({ file: g.file, comments: g.comments.filter((c) => !this.skipped.has(skipKey(c))) }))
+      .filter((g) => g.comments.length);
+  }
+
+  decidedCount(): number {
+    return this.groups.reduce((n, g) => n + g.comments.filter((c) => c.decision).length, 0);
+  }
+
+  commentCount(): number {
+    return this.groups.reduce((n, g) => n + g.comments.length, 0);
+  }
+
+  skippedCount(): number {
+    return this.skipped.size;
   }
 
   /**
-   * The list `scan --apply -` reads: the selected comments, all with one decision. `accept`
-   * converts them to AI comments; otherwise the CLI records them in the ignore file.
-   * Unlisted candidates are left alone.
+   * The list `scan --apply -` reads: each decided comment with its decision, and with
+   * `rest`, every undecided one with that. `accept` converts a comment to an AI comment;
+   * otherwise the CLI records it in the ignore file. Unlisted candidates are left alone.
    */
-  toReview(accept: boolean): { version: 1; comments: ReviewComment[] } {
+  toReview(rest?: Decision): { version: 1; comments: ReviewComment[] } {
     const comments = this.groups.flatMap((g) =>
-      g.comments
-        .filter((c) => c.selected)
-        .map(({ file, line, endLine, fingerprint, score, detectors, text }) => ({ file, line, endLine, fingerprint, score, detectors, text, accept })),
+      g.comments.flatMap(({ decision, ...c }) => {
+        const chosen = decision ?? rest;
+        return chosen ? [{ ...c, accept: chosen === "ai" }] : [];
+      }),
     );
     return { version: 1, comments };
+  }
+
+  private pick(file: string, line: number | undefined): ReviewItem[] {
+    return (this.groups.find((g) => g.file === file)?.comments ?? []).filter((c) => line === undefined || c.line === line);
   }
 }
 

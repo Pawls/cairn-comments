@@ -368,10 +368,16 @@ Implemented in `packages/core/src/scan.ts` (grouping, protection, conversion) an
 - **Mark-all.** `scan --mark-all` converts every unprotected, non-ignored comment whether
   or not a detector fires: the "these are all slop" mode from § Decisions. Applying every
   detector candidate unreviewed is `scan --json | scan --apply -`.
-- **Review in passes.** `--apply` touches only the entries it is given, so the review tree
-  sends just the checked comments, all with one decision: **Mark Selected as AI Comments**
-  (`accept: true`) or **Keep Selected as Ordinary Comments** (`accept: false`, the ignore
-  file). Nothing starts checked; unchecked candidates stay listed after the rescan.
+- **Review in passes.** `--apply` touches only the entries it is given, each with its own
+  `accept`, so one pass can carry a mix. Each row's inline buttons record a decision, mark
+  as AI (`accept: true`) or keep as ordinary (`accept: false`, the ignore file), and
+  clicking the same one again clears it; a file row decides all its comments. **Apply
+  Review Decisions** sends the decided ones; the two bulk buttons also give every
+  undecided one their decision. **Skip** drops a comment from the review until the next
+  manual scan: the rescan after a pass keeps it out, and it is never sent. Nothing starts
+  decided; undecided candidates stay listed after the rescan. Row buttons render at the
+  right end of the row on hover or selection, which is where VS Code puts them; only a
+  checkbox can sit at the start, and it has two states, not three.
 - **The extension shells out to the CLI** recorded in `filter.<driver>.clean` for scan and
   apply, so the flow and the ignore rules live in one place. A repository without `init`
   gets a message in the view instead of a tree.

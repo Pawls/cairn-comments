@@ -130,18 +130,43 @@
         "icon": "$(refresh)"
       },
       {
-        "command": "cairn.markSelectedAsAi",
-        "title": "Mark Selected as AI Comments",
+        "command": "cairn.applyReview",
+        "title": "Apply Review Decisions",
         "category": "Cairn Comments",
-        "icon": "$(eye-closed)",
-        "enablement": "cairn.reviewHasSelection"
+        "icon": "$(check)",
+        "enablement": "cairn.reviewHasDecisions"
       },
       {
-        "command": "cairn.keepSelectedAsOrdinary",
-        "title": "Keep Selected as Ordinary Comments",
+        "command": "cairn.markRestAsAi",
+        "title": "Apply, Marking Undecided Ones as AI Comments",
+        "category": "Cairn Comments",
+        "icon": "$(eye-closed)",
+        "enablement": "cairn.reviewHasComments"
+      },
+      {
+        "command": "cairn.keepRestAsOrdinary",
+        "title": "Apply, Keeping Undecided Ones as Ordinary Comments",
         "category": "Cairn Comments",
         "icon": "$(comment)",
-        "enablement": "cairn.reviewHasSelection"
+        "enablement": "cairn.reviewHasComments"
+      },
+      {
+        "command": "cairn.review.markAi",
+        "title": "Mark as AI Comment",
+        "category": "Cairn Comments",
+        "icon": "$(eye-closed)"
+      },
+      {
+        "command": "cairn.review.keep",
+        "title": "Keep as Ordinary Comment",
+        "category": "Cairn Comments",
+        "icon": "$(comment)"
+      },
+      {
+        "command": "cairn.review.skip",
+        "title": "Skip Until the Next Scan",
+        "category": "Cairn Comments",
+        "icon": "$(close)"
       }
     ],
     "views": {
@@ -175,14 +200,19 @@
           "group": "navigation@1"
         },
         {
-          "command": "cairn.markSelectedAsAi",
+          "command": "cairn.applyReview",
           "when": "view == cairn.review",
           "group": "navigation@2"
         },
         {
-          "command": "cairn.keepSelectedAsOrdinary",
+          "command": "cairn.markRestAsAi",
           "when": "view == cairn.review",
           "group": "navigation@3"
+        },
+        {
+          "command": "cairn.keepRestAsOrdinary",
+          "when": "view == cairn.review",
+          "group": "navigation@4"
         },
         {
           "command": "cairn.refreshLists",
@@ -222,6 +252,18 @@
         {
           "command": "cairn.showComment",
           "when": "false"
+        },
+        {
+          "command": "cairn.review.markAi",
+          "when": "false"
+        },
+        {
+          "command": "cairn.review.keep",
+          "when": "false"
+        },
+        {
+          "command": "cairn.review.skip",
+          "when": "false"
         }
       ],
       "comments/comment/title": [
@@ -256,6 +298,23 @@
           "command": "cairn.cancelCommentEdit",
           "when": "commentController == cairn.comments",
           "group": "inline@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "cairn.review.markAi",
+          "when": "view == cairn.review",
+          "group": "inline@1"
+        },
+        {
+          "command": "cairn.review.keep",
+          "when": "view == cairn.review",
+          "group": "inline@2"
+        },
+        {
+          "command": "cairn.review.skip",
+          "when": "view == cairn.review",
+          "group": "inline@3"
         }
       ]
     },
