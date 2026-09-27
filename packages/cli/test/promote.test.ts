@@ -4,6 +4,7 @@ import { Sandbox } from "./harness.js";
 
 const SOURCE = "src/pay.py";
 const SIDECAR = ".agents/comments/src/pay.py.md";
+const REVIEWED = "src/total.py";
 const ORIGINAL = [
   "def pay(order):",
   "    # the gateway retries on 502, so this must stay idempotent",
@@ -94,6 +95,7 @@ describe.each([true, false])("--print reports the rewrite instead of writing it 
     box = new Sandbox({ autocrlf });
     main = box.path("main");
     box.write(box.path("main", SOURCE), ORIGINAL);
+    box.write(box.path("main", REVIEWED), "def total(items):\n    # Step 1: add up the prices\n    s = sum(items)  # 🚀 fast sum\n    return s\n");
     box.git(box.dir, "init", "-q", "main");
     box.cli(main, "init", "--markerless");
     box.git(main, "add", "-A");
@@ -108,25 +110,25 @@ describe.each([true, false])("--print reports the rewrite instead of writing it 
     expect(Object.keys(printed.files).sort()).toEqual([SIDECAR, SOURCE]);
 
     expect(box.cli(main, "demote", `${SOURCE}:2`)).toBe(printed.report);
-    expect(box.read(box.path("main", SOURCE))).toBe(printed.files[SOURCE]);
-    expect(box.read(box.path("main", SIDECAR))).toBe(printed.files[SIDECAR]);
+    expect(readFileSync(box.path("main", SOURCE), "utf8")).toBe(printed.files[SOURCE]);
+    expect(readFileSync(box.path("main", SIDECAR), "utf8")).toBe(printed.files[SIDECAR]);
     box.git(main, "checkout", "--", SOURCE);
     rmSync(box.path("main", ".agents"), { recursive: true, force: true });
   });
 
   it("scan --apply --print covers the sources, their sidecars, and the ignore file", () => {
-    const review = JSON.parse(box.cli(main, "scan", "--json")) as { comments: { line: number; accept: boolean }[] };
+    const review = JSON.parse(box.cli(main, "scan", "--json", REVIEWED)) as { comments: { line: number; accept: boolean }[] };
     const own = review.comments.find((c) => c.line === 2)!;
-    const trailing = review.comments.find((c) => c.line === 4)!;
+    const trailing = review.comments.find((c) => c.line === 3)!;
     own.accept = true;
     trailing.accept = false;
     const input = JSON.stringify({ version: 1, comments: [own, trailing] });
     const printed = JSON.parse(box.cliWithInput(main, input, "scan", "--apply", "-", "--print")) as { report: string; files: Record<string, string | null> };
     expect(box.status(main)).toBe("");
     expect(printed.report).toBe("converted 1 comment(s) in 1 file(s)\nignored 1 comment(s) in .agents/scan-ignore\n");
-    expect(Object.keys(printed.files).sort()).toEqual([".agents/scan-ignore", SIDECAR, SOURCE]);
+    expect(Object.keys(printed.files).sort()).toEqual([".agents/comments/src/total.py.md", ".agents/scan-ignore", REVIEWED]);
 
     expect(box.cliWithInput(main, input, "scan", "--apply", "-")).toBe(printed.report);
-    for (const [file, text] of Object.entries(printed.files)) expect(box.read(box.path("main", file))).toBe(text);
+    for (const [file, text] of Object.entries(printed.files)) expect(readFileSync(box.path("main", file), "utf8")).toBe(text);
   });
 });
