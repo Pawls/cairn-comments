@@ -38,6 +38,11 @@ describe("shiftSites", () => {
     expect(rows(shiftSites([own(3), trail(3), own(6)], [change([2, 0], [4, 0], "")]))).toEqual([["o6", 4]]);
   });
 
+  it("drops the sites of a line deleted whole, from its start through its break", () => {
+    // Ctrl+X with no selection, or a highlighted line cut with its break.
+    expect(rows(shiftSites([own(3), trail(3), own(4)], [change([3, 0], [4, 0], "")]))).toEqual([["o4", 3]]);
+  });
+
   it("keeps a trailing comment when the next line joins its line", () => {
     expect(rows(shiftSites([trail(3)], [change([3, 12], [4, 4], " ")]))).toEqual([["t3", 3]]);
   });
