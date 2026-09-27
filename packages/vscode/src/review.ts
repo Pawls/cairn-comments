@@ -14,18 +14,24 @@ export interface ReviewComment {
   accept: boolean;
 }
 
+/** A candidate in the tree; `selected` is its checkbox. */
+export type ReviewItem = ReviewComment & { selected: boolean };
+
 export interface ReviewFile {
   file: string;
-  comments: ReviewComment[];
+  comments: ReviewItem[];
 }
 
-/** Candidates grouped by file in scan order; accept/reject state lives on each comment. */
+/**
+ * Candidates grouped by file in scan order. A decision applies to the selected ones only;
+ * the rest stay in the list for a later pass.
+ */
 export class ReviewModel {
   private groups: ReviewFile[] = [];
 
   load(comments: readonly ReviewComment[]): void {
-    const byFile = new Map<string, ReviewComment[]>();
-    for (const c of comments) byFile.set(c.file, [...(byFile.get(c.file) ?? []), { ...c, accept: c.accept !== false }]);
+    const byFile = new Map<string, ReviewItem[]>();
+    for (const c of comments) byFile.set(c.file, [...(byFile.get(c.file) ?? []), { ...c, selected: false }]);
     this.groups = [...byFile].map(([file, cs]) => ({ file, comments: cs }));
   }
 
@@ -34,13 +40,26 @@ export class ReviewModel {
   }
 
   /** Per comment when `line` is given, else for every comment in the file. */
-  setAccepted(file: string, line: number | undefined, accept: boolean): void {
-    for (const c of this.groups.find((g) => g.file === file)?.comments ?? []) if (line === undefined || c.line === line) c.accept = accept;
+  setSelected(file: string, line: number | undefined, selected: boolean): void {
+    for (const c of this.groups.find((g) => g.file === file)?.comments ?? []) if (line === undefined || c.line === line) c.selected = selected;
   }
 
-  /** The list `scan --apply -` reads. */
-  toReview(): { version: 1; comments: ReviewComment[] } {
-    return { version: 1, comments: this.groups.flatMap((g) => g.comments) };
+  selectedCount(): number {
+    return this.groups.reduce((n, g) => n + g.comments.filter((c) => c.selected).length, 0);
+  }
+
+  /**
+   * The list `scan --apply -` reads: the selected comments, all with one decision. `accept`
+   * converts them to AI comments; otherwise the CLI records them in the ignore file.
+   * Unlisted candidates are left alone.
+   */
+  toReview(accept: boolean): { version: 1; comments: ReviewComment[] } {
+    const comments = this.groups.flatMap((g) =>
+      g.comments
+        .filter((c) => c.selected)
+        .map(({ file, line, endLine, fingerprint, score, detectors, text }) => ({ file, line, endLine, fingerprint, score, detectors, text, accept })),
+    );
+    return { version: 1, comments };
   }
 }
 

@@ -247,7 +247,11 @@ export async function demote(root: string, targets: { file: string; line: number
 }
 
 export function formatApply(report: ApplyReport): string {
-  const out = [`converted ${report.converted.length} comment(s) in ${report.files.length} file(s)`];
+  const out: string[] = [];
+  // A pass that only ignored says so without a "converted 0" line.
+  if (report.converted.length || !report.ignored.length) {
+    out.push(`converted ${report.converted.length} comment(s) in ${report.files.length} file(s)`);
+  }
   if (report.ignored.length) out.push(`ignored ${report.ignored.length} comment(s) in ${SCAN_IGNORE}`);
   for (const s of report.stale) out.push(`skipped ${s.file}:${s.line}: no longer matches the reviewed text`);
   return out.join("\n") + "\n";

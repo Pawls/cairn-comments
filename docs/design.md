@@ -364,6 +364,10 @@ Implemented in `packages/core/src/scan.ts` (grouping, protection, conversion) an
 - **Mark-all.** `scan --mark-all` converts every unprotected, non-ignored comment whether
   or not a detector fires: the "these are all slop" mode from § Decisions. Applying every
   detector candidate unreviewed is `scan --json | scan --apply -`.
+- **Review in passes.** `--apply` touches only the entries it is given, so the review tree
+  sends just the checked comments, all with one decision: **Mark Selected as AI Comments**
+  (`accept: true`) or **Keep Selected as Ordinary Comments** (`accept: false`, the ignore
+  file). Nothing starts checked; unchecked candidates stay listed after the rescan.
 - **The extension shells out to the CLI** recorded in `filter.<driver>.clean` for scan and
   apply, so the flow and the ignore rules live in one place. A repository without `init`
   gets a message in the view instead of a tree.

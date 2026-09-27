@@ -13,29 +13,34 @@ const comment = (file: string, line: number): ReviewComment => ({
 });
 
 describe("ReviewModel", () => {
-  it("groups by file in scan order and accepts everything by default", () => {
+  it("groups by file in scan order with nothing selected", () => {
     const model = new ReviewModel();
     model.load([comment("a.py", 1), comment("b.ts", 4), comment("a.py", 9)]);
     expect(model.files().map((f) => [f.file, f.comments.map((c) => c.line)])).toEqual([
       ["a.py", [1, 9]],
       ["b.ts", [4]],
     ]);
-    expect(model.toReview().comments.every((c) => c.accept)).toBe(true);
+    expect(model.selectedCount()).toBe(0);
+    expect(model.toReview(true).comments).toEqual([]);
   });
 
-  it("rejects one comment or a whole file, and hands the CLI every entry with its state", () => {
+  it("selects one comment or a whole file, and hands the CLI only the selection with one decision", () => {
     const model = new ReviewModel();
-    model.load([comment("a.py", 1), comment("a.py", 9), comment("b.ts", 4)]);
-    model.setAccepted("a.py", 9, false);
-    model.setAccepted("b.ts", undefined, false);
-    expect(model.toReview()).toEqual({
+    model.load([comment("a.py", 1), comment("a.py", 9), comment("b.ts", 4), comment("c.cs", 2)]);
+    model.setSelected("a.py", 9, true);
+    model.setSelected("b.ts", undefined, true);
+    expect(model.selectedCount()).toBe(2);
+    expect(model.toReview(false)).toEqual({
       version: 1,
       comments: [
-        { ...comment("a.py", 1), accept: true },
         { ...comment("a.py", 9), accept: false },
         { ...comment("b.ts", 4), accept: false },
       ],
     });
+    expect(model.toReview(true).comments.map((c) => [c.file, c.accept])).toEqual([
+      ["a.py", true],
+      ["b.ts", true],
+    ]);
   });
 });
 

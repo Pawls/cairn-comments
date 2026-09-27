@@ -130,10 +130,18 @@
         "icon": "$(refresh)"
       },
       {
-        "command": "cairn.applyReview",
-        "title": "Apply AI Comment Review",
+        "command": "cairn.markSelectedAsAi",
+        "title": "Mark Selected as AI Comments",
         "category": "Cairn Comments",
-        "icon": "$(check-all)"
+        "icon": "$(eye-closed)",
+        "enablement": "cairn.reviewHasSelection"
+      },
+      {
+        "command": "cairn.keepSelectedAsOrdinary",
+        "title": "Keep Selected as Ordinary Comments",
+        "category": "Cairn Comments",
+        "icon": "$(comment)",
+        "enablement": "cairn.reviewHasSelection"
       }
     ],
     "views": {
@@ -167,9 +175,14 @@
           "group": "navigation@1"
         },
         {
-          "command": "cairn.applyReview",
+          "command": "cairn.markSelectedAsAi",
           "when": "view == cairn.review",
           "group": "navigation@2"
+        },
+        {
+          "command": "cairn.keepSelectedAsOrdinary",
+          "when": "view == cairn.review",
+          "group": "navigation@3"
         },
         {
           "command": "cairn.refreshLists",

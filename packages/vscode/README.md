@@ -14,8 +14,10 @@ over those markers.
 - **Stale comments.** A comment whose code changed underneath it is marked in the warning
   color. The hover offers **Confirm: still accurate**, and **Review Stale AI Comments**
   lists every flagged comment in the repository.
-- **Review.** The **AI Comment Review** view in the Explorer scans the repository for
-  comments that read as AI-written. Uncheck the ones to keep, then apply to stash the rest.
+- **Review.** The **Review** view in the **AI Comments** sidebar scans the repository for
+  comments that read as AI-written. Check a few, then **Mark Selected as AI Comments** to
+  stash them or **Keep Selected as Ordinary Comments** to leave them and stop flagging
+  them. Unchecked ones stay listed for a later pass.
 - **Promote and demote.** Code actions turn a stashed comment into an ordinary one and
   back.
 

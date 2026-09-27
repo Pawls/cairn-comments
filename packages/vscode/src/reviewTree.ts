@@ -2,23 +2,26 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import * as vscode from "vscode";
 import { BRAND, SCAN_IGNORE, SIDECAR_ROOT } from "@cairn-comments/core";
-import { ReviewModel, findRepo, runCli, type Repo, type ReviewComment, type ReviewFile } from "./review.js";
+import { ReviewModel, findRepo, runCli, type Repo, type ReviewComment, type ReviewFile, type ReviewItem } from "./review.js";
 
 export const REVIEW_VIEW = `${BRAND}.review`;
 export const REVIEW_COMMANDS = {
   scan: `${BRAND}.scan`,
-  apply: `${BRAND}.applyReview`,
+  markSelected: `${BRAND}.markSelectedAsAi`,
+  keepSelected: `${BRAND}.keepSelectedAsOrdinary`,
 } as const;
+/** Enables the two decision buttons; package.json names it in their `enablement`. */
+const HAS_SELECTION = `${BRAND}.reviewHasSelection`;
 
-type Node = { kind: "file"; group: ReviewFile } | { kind: "comment"; group: ReviewFile; comment: ReviewComment };
+type Node = { kind: "file"; group: ReviewFile } | { kind: "comment"; group: ReviewFile; comment: ReviewItem };
 
 /** What the e2e test drives in place of clicking checkboxes. */
 export interface ReviewApi {
   scan(): Promise<void>;
   files(): readonly ReviewFile[];
-  setAccepted(file: string, line: number | undefined, accept: boolean): void;
-  /** Runs `scan --apply` and rescans; resolves to the CLI's report. */
-  apply(): Promise<string>;
+  setSelected(file: string, line: number | undefined, selected: boolean): void;
+  /** Runs `scan --apply` on the selected comments and rescans; resolves to the CLI's report. */
+  apply(asAi: boolean): Promise<string>;
   message(): string | undefined;
   visible(): boolean;
 }
@@ -26,9 +29,10 @@ export interface ReviewApi {
 const checkbox = (on: boolean) => (on ? vscode.TreeItemCheckboxState.Checked : vscode.TreeItemCheckboxState.Unchecked);
 
 /**
- * The scan review tree: files, then their candidate comments, checked to accept. Apply
- * converts the checked ones and records the unchecked ones in the ignore file, so a rescan
- * stays quiet about both. The CLI does the work (see ./review.ts).
+ * The scan review tree: files, then their candidate comments, checked to select. The title
+ * buttons convert the selected ones to AI comments or record them in the ignore file, so a
+ * rescan stays quiet about both; unselected ones stay listed. The CLI does the work (see
+ * ./review.ts).
  */
 export function registerReviewTree(context: vscode.ExtensionContext): ReviewApi {
   const model = new ReviewModel();
@@ -47,8 +51,11 @@ export function registerReviewTree(context: vscode.ExtensionContext): ReviewApi 
       if (node.kind === "file") {
         const item = new vscode.TreeItem(node.group.file, vscode.TreeItemCollapsibleState.Expanded);
         item.resourceUri = vscode.Uri.file(path.join(repo!.root, node.group.file));
-        item.description = `${node.group.comments.length}`;
-        item.checkboxState = checkbox(node.group.comments.some((c) => c.accept));
+        const selected = node.group.comments.filter((c) => c.selected).length;
+        const total = node.group.comments.length;
+        item.description = selected ? `${selected} of ${total} selected` : `${total}`;
+        // Checked only when all are, so clicking a partly selected file selects the rest.
+        item.checkboxState = checkbox(selected === total);
         item.contextValue = "file";
         return item;
       }
@@ -56,7 +63,7 @@ export function registerReviewTree(context: vscode.ExtensionContext): ReviewApi 
       const item = new vscode.TreeItem(comment.text.split("\n")[0]!, vscode.TreeItemCollapsibleState.None);
       item.description = `${comment.line} · ${comment.detectors.join(", ")}`;
       item.tooltip = new vscode.MarkdownString(`${comment.text}\n\n*${comment.detectors.join(", ")} · score ${comment.score}*`);
-      item.checkboxState = checkbox(comment.accept);
+      item.checkboxState = checkbox(comment.selected);
       item.command = {
         command: "vscode.open",
         title: "Open",
@@ -72,9 +79,15 @@ export function registerReviewTree(context: vscode.ExtensionContext): ReviewApi 
   const view = vscode.window.createTreeView(REVIEW_VIEW, { treeDataProvider: provider, manageCheckboxStateManually: true });
   const setMessage = (message: string | undefined) => (view.message = message);
 
-  const setAccepted = (file: string, line: number | undefined, accept: boolean) => {
-    model.setAccepted(file, line, accept);
+  /** Redraws the tree and syncs the context key behind the decision buttons. */
+  const refresh = () => {
     changed.fire();
+    void vscode.commands.executeCommand("setContext", HAS_SELECTION, model.selectedCount() > 0);
+  };
+
+  const setSelected = (file: string, line: number | undefined, selected: boolean) => {
+    model.setSelected(file, line, selected);
+    refresh();
   };
 
   /** The workspace folder of the active editor's file, else the first one. */
@@ -95,19 +108,23 @@ export function registerReviewTree(context: vscode.ExtensionContext): ReviewApi 
       // The extension activates on this folder (package.json), and `init` does not create it.
       mkdirSync(path.join(root, SIDECAR_ROOT), { recursive: true });
       setMessage(`Scanning ${path.basename(root)}…`);
-      changed.fire();
+      refresh();
       const output = await vscode.window.withProgress({ location: { viewId: REVIEW_VIEW } }, () => runCli(cli, "scan --json", root));
       const review = JSON.parse(output) as { comments: ReviewComment[] };
       model.load(review.comments);
       const count = review.comments.length;
-      setMessage(count ? `${count} likely AI comment(s). Uncheck the ones to keep as they are, then apply.` : "No likely AI comments found.");
+      setMessage(
+        count
+          ? `${count} likely AI comment(s). Check the ones to decide now, then mark them as AI comments or keep them as ordinary comments. The rest stay listed.`
+          : "No likely AI comments found.",
+      );
     }
-    changed.fire();
+    refresh();
   }
 
-  async function apply(): Promise<string> {
-    if (!repo?.cli || !model.files().length) return "";
-    const report = await runCli(repo.cli, "scan --apply -", repo.root, JSON.stringify(model.toReview()));
+  async function apply(asAi: boolean): Promise<string> {
+    if (!repo?.cli || !model.selectedCount()) return "";
+    const report = await runCli(repo.cli, "scan --apply -", repo.root, JSON.stringify(model.toReview(asAi)));
     await scan();
     return report;
   }
@@ -126,10 +143,10 @@ export function registerReviewTree(context: vscode.ExtensionContext): ReviewApi 
     view,
     view.onDidChangeCheckboxState((e) => {
       for (const [node, state] of e.items) {
-        const accept = state === vscode.TreeItemCheckboxState.Checked;
-        model.setAccepted(node.group.file, node.kind === "comment" ? node.comment.line : undefined, accept);
+        const selected = state === vscode.TreeItemCheckboxState.Checked;
+        model.setSelected(node.group.file, node.kind === "comment" ? node.comment.line : undefined, selected);
       }
-      changed.fire();
+      refresh();
     }),
     // From the palette the view may be collapsed or closed, so bring it forward first.
     vscode.commands.registerCommand(
@@ -139,8 +156,9 @@ export function registerReviewTree(context: vscode.ExtensionContext): ReviewApi 
         await scan();
       }),
     ),
-    vscode.commands.registerCommand(REVIEW_COMMANDS.apply, guarded(apply)),
+    vscode.commands.registerCommand(REVIEW_COMMANDS.markSelected, guarded(() => apply(true))),
+    vscode.commands.registerCommand(REVIEW_COMMANDS.keepSelected, guarded(() => apply(false))),
   );
-  setMessage(`Scan to list likely AI comments. Rejected ones are remembered in ${SCAN_IGNORE}.`);
-  return { scan, files: () => model.files(), setAccepted, apply, message: () => view.message, visible: () => view.visible };
+  setMessage(`Scan to list likely AI comments. The ones you keep as ordinary comments are remembered in ${SCAN_IGNORE}.`);
+  return { scan, files: () => model.files(), setSelected, apply, message: () => view.message, visible: () => view.visible };
 }

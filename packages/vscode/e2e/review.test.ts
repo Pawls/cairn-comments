@@ -7,7 +7,7 @@ import { screenshot } from "./capture.js";
 import type { TestApi } from "../src/extension.js";
 
 const EXTENSION_ID = "cairn-comments.cairn-comments-vscode";
-const COMMANDS = { scan: "cairn.scan", apply: "cairn.applyReview" };
+const COMMANDS = { scan: "cairn.scan" };
 const repo = () => process.env.CAIRN_E2E_REPO!;
 const read = (file: string) => readFileSync(path.join(repo(), file), "utf8");
 const git = (...args: string[]) => execFileSync("git", args, { cwd: repo(), encoding: "utf8" });
@@ -18,10 +18,10 @@ async function api(): Promise<TestApi> {
   return extension.activate();
 }
 
-const listing =(a: TestApi) => a.review.files().map((f) => [f.file, f.comments.map((c) => [c.line, c.accept])]);
+const listing = (a: TestApi) => a.review.files().map((f) => [f.file, f.comments.map((c) => [c.line, c.selected])]);
 
 suite("scan review", () => {
-  test("scan groups likely AI comments by file, all accepted", async () => {
+  test("scan groups likely AI comments by file, none selected", async () => {
     const a = await api();
     assert.equal(existsSync(path.join(repo(), ".agents/comments")), false, "init leaves the sidecar folder to the first scan");
     await vscode.commands.executeCommand("workbench.action.closeSidebar");
@@ -29,26 +29,34 @@ suite("scan review", () => {
     assert.equal(a.review.visible(), true, "the palette command brings the review view forward");
     assert.equal(existsSync(path.join(repo(), ".agents/comments")), true, "scan creates the folder the extension activates on");
     assert.deepEqual(listing(a), [
-      ["src/app.py", [[2, true], [6, true]]],
-      ["src/util.ts", [[2, true]]],
+      ["src/app.py", [[2, false], [6, false]]],
+      ["src/util.ts", [[2, false]]],
     ]);
     assert.match(a.review.message() ?? "", /^3 likely AI comment/);
     if (process.env.CAIRN_SCREENSHOTS) {
-      // One rejection, so the picture shows both checkbox states; rows render ~1 s after focus.
-      a.review.setAccepted("src/app.py", 6, false);
+      // One selection, so the picture shows both checkbox states; rows render ~1 s after focus.
+      a.review.setSelected("src/app.py", 2, true);
       await vscode.commands.executeCommand("cairn.review.focus");
       await new Promise((r) => setTimeout(r, 3000));
       screenshot("review-tree");
     }
   });
 
-  test("apply converts accepted comments, remembers rejected ones, and a rescan stays quiet", async () => {
+  test("each decision applies to the selection only, and a rescan stays quiet about decided ones", async () => {
     const a = await api();
     await a.review.scan();
-    a.review.setAccepted("src/app.py", 6, false);
-    a.review.setAccepted("src/util.ts", undefined, false);
-    const report = await a.review.apply();
-    assert.equal(report, "converted 1 comment(s) in 1 file(s)\nignored 2 comment(s) in .agents/scan-ignore\n");
+    assert.equal(await vscode.commands.executeCommand("cairn.markSelectedAsAi"), undefined, "nothing selected is a no-op");
+    a.review.setSelected("src/app.py", 2, true);
+    assert.equal(await a.review.apply(true), "converted 1 comment(s) in 1 file(s)\n");
+    assert.deepEqual(listing(a), [
+      ["src/app.py", [[6, false]]],
+      ["src/util.ts", [[2, false]]],
+    ]);
+    assert.equal(existsSync(path.join(repo(), ".agents/scan-ignore")), false, "the undecided ones are not ignored");
+
+    a.review.setSelected("src/app.py", 6, true);
+    a.review.setSelected("src/util.ts", undefined, true);
+    assert.equal(await a.review.apply(false), "ignored 2 comment(s) in .agents/scan-ignore\n");
 
     assert.match(read("src/app.py"), /^def load\(path\):\n {4}#~[0-9a-z]{4}\n {4}with open/);
     assert.match(read("src/app.py"), /return data {2}# Updated to return the raw text\n/);
