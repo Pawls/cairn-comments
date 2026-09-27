@@ -51,13 +51,19 @@ export class PlacedComment implements vscode.Comment {
 }
 
 interface DocState {
-  /** The document version `sites` describe. */
+  /** The document version `sites` and `text` describe. */
   version: number;
+  text: string;
   sites: CommentSite[];
   stale: Set<string>;
   /** Whether edits moved the sites since they were placed. */
   tracked: boolean;
+  /** The text and sites before the latest edit, which a cut needs (see `beforeCut`). */
+  previous?: { text: string; sites: CommentSite[]; changes: readonly vscode.TextDocumentContentChangeEvent[]; at: number };
 }
+
+/** How long after a deletion a copy request may still be the cut that made it. */
+const CUT_WINDOW_MS = 1_000;
 
 interface ThreadRecord {
   thread: vscode.CommentThread;
@@ -103,9 +109,10 @@ export class PlacedView implements vscode.CodeLensProvider, vscode.Disposable {
    */
   async place(document: vscode.TextDocument, file: string, sidecar: Sidecar): Promise<boolean> {
     const version = document.version;
-    const placed = await placeComments(file, document.getText(), sidecar);
+    const text = document.getText();
+    const placed = await placeComments(file, text, sidecar);
     if (document.version !== version || document.isClosed) return false;
-    this.states.set(document.uri.toString(), { version, sites: placed.sites, stale: new Set(placed.stale.map((s) => s.id)), tracked: false });
+    this.states.set(document.uri.toString(), { version, text, sites: placed.sites, stale: new Set(placed.stale.map((s) => s.id)), tracked: false });
     return true;
   }
 
@@ -118,9 +125,32 @@ export class PlacedView implements vscode.CodeLensProvider, vscode.Disposable {
   track(event: vscode.TextDocumentChangeEvent): void {
     const state = this.states.get(event.document.uri.toString());
     if (!state || !event.contentChanges.length) return;
+    state.previous = { text: state.text, sites: state.sites, changes: event.contentChanges, at: Date.now() };
     state.sites = shiftSites(state.sites, event.contentChanges.map((c) => ({ start: c.range.start, end: c.range.end, text: c.text })));
+    state.text = event.document.getText();
     state.version = event.document.version;
     state.tracked = true;
+  }
+
+  /**
+   * The text and sites from before a cut of `range`, when the latest edit was that cut. VS
+   * Code deletes the cut text before the extension host sees the copy request, whose range
+   * still describes the text before the cut. A cut with no selection copies the line
+   * without its break (`range`) and deletes it with its break.
+   */
+  beforeCut(document: vscode.TextDocument, range: vscode.Range): { text: string; sites: readonly CommentSite[] } | undefined {
+    const state = this.states.get(document.uri.toString());
+    const previous = state?.previous;
+    if (!state || !previous || state.version !== document.version || Date.now() - previous.at > CUT_WINDOW_MS) return undefined;
+    if (previous.changes.length !== 1 || previous.changes[0]!.text !== "") return undefined;
+    const deleted = previous.changes[0]!.range;
+    const line = range.start.line;
+    const wholeLine = range.isSingleLine && range.start.character === 0;
+    const cut =
+      deleted.isEqual(range) ||
+      (wholeLine && deleted.isEqual(new vscode.Range(line, 0, line + 1, 0))) ||
+      (wholeLine && line > 0 && deleted.end.isEqual(range.end) && deleted.start.line === line - 1);
+    return cut ? { text: previous.text, sites: previous.sites } : undefined;
   }
 
   /** Drops what is known about one document, or about every document. */
@@ -144,10 +174,12 @@ export class PlacedView implements vscode.CodeLensProvider, vscode.Disposable {
     return this.threads.get(document.uri.toString())?.get(id)?.comment;
   }
 
-  /** Opens the comment's thread in the editor. */
-  reveal(uri: vscode.Uri, id: string): void {
+  /** Opens the comment's thread in the editor, or closes it when it is open: its CodeLens toggles it. */
+  toggle(uri: vscode.Uri, id: string): void {
     const record = this.threads.get(uri.toString())?.get(id);
-    if (record) record.thread.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
+    if (!record) return;
+    const { Expanded, Collapsed } = vscode.CommentThreadCollapsibleState;
+    record.thread.collapsibleState = record.thread.collapsibleState === Expanded ? Collapsed : Expanded;
   }
 
   /** Clears everything this view drew in `editor`; what it knows about the sites stays. */

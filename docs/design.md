@@ -290,7 +290,7 @@ Verified in VS Code 1.138 on Windows with screenshots taken by the e2e suite
   label, amber and tagged `[stale?]` when stale.
 - **Comment threads (markerless).** Every placed comment is a thread of one comment on its
   code line (`createCommentController`), collapsed until its CodeLens or gutter icon opens
-  it; the `thread` style starts them expanded. The author line is the provenance, and the
+  it; clicking the CodeLens again closes it. The `thread` style starts them expanded. The author line is the provenance, and the
   buttons are Edit (in place), Confirm (stale comments only), Promote, and Delete. They act
   on the sidecar in process against the open buffer, through `confirmPlaced`,
   `promotePlaced` (`packages/core/src/owner.ts`), and a plain entry removal; Promote then
@@ -302,7 +302,10 @@ Verified in VS Code 1.138 on Windows with screenshots taken by the e2e suite
   change on disk) or a sidecar changes. In between, each change event moves the sites
   (`shiftSites`, `packages/vscode/src/tracking.ts`): an own-line comment moves with its
   line's first character, a trailing one with its line's end, and one whose code was
-  deleted disappears until the next placement. Placing a dirty buffer from anchors would
+  deleted disappears until the next placement (so does one whose line was deleted whole,
+  from its first column through its break, as Ctrl+X with no selection does). Each
+  document also keeps its text and sites from before the latest edit, for a cut (see
+  "Copy and paste"). Placing a dirty buffer from anchors would
   mark every comment in a function stale on its first keystroke. A change event's
   `isDirty` still says false on a clean document's first edit (VS Code sends the dirty
   state in a later event), so "clean again" is judged at the next refresh, not in the
@@ -315,11 +318,17 @@ Verified in VS Code 1.138 on Windows with screenshots taken by the e2e suite
   anchor them, so a second `refund` records `scope=refund@1`. A comment whose original no
   longer places in the copied file when the paste lands was cut, so it moves instead: it
   keeps its id, records no `copied-from`, and its original entry leaves the source sidecar.
-  A copy with no selection (the whole line) pastes on its own line above the cursor, as
-  VS Code's plain paste does; its clipboard text is the copied range plus a line break. The
-  sidecar edits ride on the paste as its `additionalEdit` and are saved when they land. VS Code calls the provider only
-  on a real copy event, which a test window without focus never gets, so the e2e suite
-  drives the provider directly; the native Ctrl+C/Ctrl+V path is checked by hand.
+  A copy of whole lines, ignoring whitespace the highlight left out at either end, pastes
+  at an empty cursor as those lines in full above the cursor's line, as VS Code's plain
+  paste does for a copy with no selection (whose clipboard text is the copied range plus
+  a line break). On a cut, VS Code deletes the text before the extension host sees the
+  copy request, whose range still describes the text before the cut: when the latest
+  edit deleted exactly that range (or that line with its break) within a second, the copy
+  reads the text and sites from before it (`PlacedView.beforeCut`). The sidecar edits
+  ride on the paste as its `additionalEdit` and are saved when they land. VS Code calls
+  the provider only on a real copy event, which a test window without focus never gets,
+  so the e2e suite drives the provider directly, in the order the extension host sees a
+  cut; the native Ctrl+C/Ctrl+X/Ctrl+V path is checked by hand.
 - **Activity Bar.** The **AI Comments** container holds the scan Review, **Possibly Stale**
   (`check --stale --json`), and **Orphaned** (`check --orphans --json`, entries that no
   longer place) views. Both lists come from the CLI so they match CI; they refresh when
@@ -379,8 +388,9 @@ Implemented in `packages/core/src/scan.ts` (grouping, protection, conversion) an
   right end of the row on hover or selection, which is where VS Code puts them; only a
   checkbox can sit at the start, and it has two states, not three.
 - **The extension shells out to the CLI** recorded in `filter.<driver>.clean` for scan and
-  apply, so the flow and the ignore rules live in one place. A repository without `init`
-  gets a message in the view instead of a tree.
+  apply, so the flow and the ignore rules live in one place. Apply runs with `--print`
+  and the extension writes the result as one undoable edit (§ Promote and demote). A
+  repository without `init` gets a message in the view instead of a tree.
 - **Activation.** The extension activates on a supported language or on a workspace holding
   `.agents/comments`. `init` does not create that folder, so a scan does, and the next
   launch loads the extension before any source file is open.
@@ -564,7 +574,10 @@ sync); the CLI switches on `filter.cairn.markerless`. Tests:
   - the function changed: the recorded `stmts` are diffed against the current ones (a
     longest common subsequence). A comment whose statement is in an unchanged run goes
     back on its node, shown behind `[stale?]`: the declaration it lives in changed, so it
-    may no longer be true;
+    may no longer be true. So does one whose statement was moved whole within the
+    function (Alt+Up/Down): its hash occurs once before and once after, and the diff
+    matched neither occurrence. The replay found no such move in this repository's
+    windows, so the measured shares below are unchanged by it;
   - the anchor node is gone and `decl` names a declaration that still resolves (its
     signature changed: a parameter, a decorator, a return type): the comment goes above
     that declaration, stale;
@@ -663,9 +676,18 @@ both as code actions. Tests: `packages/core/test/promote.test.ts`,
   written `<prefix> text` (any extra spaces after the prefix are kept in the body).
   A block comment comes back as line comments, and `#text` without the space comes back
   as `# text`.
-- **The extension runs the CLI** for both, after saving the document, rather than editing
-  in process as confirm does: promote and demote change which lines are markers, and
-  only the CLI knows whether this checkout collapses them.
+- **The extension runs the CLI** for demote and a review's apply, after saving the
+  documents, rather than editing in process as confirm does: they change which lines are
+  markers, and only the CLI knows whether this checkout collapses them. It runs them with
+  `--print`, which writes nothing and prints `{report, files}` (each file's new contents,
+  null to delete); the extension applies that as one `WorkspaceEdit` and saves
+  (`packages/vscode/src/edits.ts`). A rewrite written to disk reached an open editor as a
+  reload, which Ctrl+Z undid in that file alone: the comment text came back while the
+  sidecar kept its entry. Now Ctrl+Z reverts the source and its sidecar together, after
+  VS Code asks to undo across files. Markerless promote runs in process (`promotePlaced`)
+  through the same single edit. These rewrites always change a source's clean output
+  (a comment leaves or joins the code), so skipping the CLI's re-stat cannot leave git
+  with a modified-but-empty diff (§ Git behavior, item 5).
 
 ## Check
 

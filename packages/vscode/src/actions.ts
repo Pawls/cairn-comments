@@ -3,6 +3,7 @@
 // open document, which may be unsaved, as confirm does for markers.
 import * as vscode from "vscode";
 import { confirmPlaced, normalizeBody, promotePlaced, serializeSidecar, type Sidecar } from "@cairn-comments/core";
+import { applyFiles } from "./edits.js";
 import { PlacedComment, type PlacedView } from "./placed.js";
 
 export interface Located {
@@ -54,22 +55,23 @@ export class MarkerlessActions {
     if (result.changed) await this.write(ref.located.sidecar, result.sidecar);
   }
 
-  /** Writes the body into the file as an ordinary comment, then saves both, as the CLI's promote leaves them. */
+  /**
+   * Writes the body into the file as an ordinary comment and drops its entry, in one edit
+   * so Ctrl+Z restores both, then saves both, as the CLI's promote leaves them.
+   */
   async promote(ref: PlacedRef): Promise<void> {
     const sidecar = this.deps.sidecar(ref.located.sidecar);
     if (!sidecar) return;
-    const code = ref.document.getText();
-    const result = await promotePlaced(ref.located.file, code, sidecar, [ref.id]);
+    const result = await promotePlaced(ref.located.file, ref.document.getText(), sidecar, [ref.id]);
     if (result.missing.length) {
       void vscode.window.showInformationMessage("This AI comment no longer places in the code, so there is nowhere to promote it to.");
       return;
     }
-    const edit = new vscode.WorkspaceEdit();
-    const changed = changedSpan(code, result.source);
-    edit.replace(ref.document.uri, new vscode.Range(ref.document.positionAt(changed.start), ref.document.positionAt(changed.end)), changed.text);
-    if (!(await vscode.workspace.applyEdit(edit))) return;
-    await ref.document.save();
-    await this.write(ref.located.sidecar, result.sidecar);
+    const files = new Map([
+      [ref.document.fileName, result.source],
+      [ref.located.sidecar, sidecarText(result.sidecar)],
+    ]);
+    if (await applyFiles(files)) this.deps.written(ref.located.sidecar);
   }
 
   async delete(ref: PlacedRef): Promise<void> {
@@ -110,34 +112,12 @@ export class MarkerlessActions {
   }
 
   private async write(path: string, sidecar: Sidecar): Promise<void> {
-    await writeSidecar(path, sidecar);
+    await applyFiles(new Map([[path, sidecarText(sidecar)]]));
     this.deps.written(path);
   }
 }
 
-/**
- * Writes a sidecar: through its editor when one is open, so the buffer and disk agree, else
- * straight to disk as LF bytes. A sidecar left with no entries is deleted, as the CLI does.
- */
-export async function writeSidecar(path: string, sidecar: Sidecar): Promise<void> {
-  const uri = vscode.Uri.file(path);
-  const text = serializeSidecar(sidecar);
-  const open = vscode.workspace.textDocuments.find((d) => d.uri.scheme === "file" && d.fileName === path);
-  if (open) {
-    const edit = new vscode.WorkspaceEdit();
-    edit.replace(uri, new vscode.Range(open.positionAt(0), open.positionAt(open.getText().length)), text);
-    if (await vscode.workspace.applyEdit(edit)) await open.save();
-    return;
-  }
-  if (!sidecar.entries.length && !sidecar.preamble) await vscode.workspace.fs.delete(uri);
-  else await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(text));
-}
-
-/** The one span that turns `before` into `after`, so an edit leaves the rest of the buffer (and its undo history) alone. */
-export function changedSpan(before: string, after: string): { start: number; end: number; text: string } {
-  let start = 0;
-  while (start < before.length && start < after.length && before[start] === after[start]) start++;
-  let tail = 0;
-  while (tail < before.length - start && tail < after.length - start && before[before.length - 1 - tail] === after[after.length - 1 - tail]) tail++;
-  return { start, end: before.length - tail, text: after.slice(start, after.length - tail) };
+/** A sidecar's file contents; null once it has no entries, since the CLI deletes an emptied sidecar. */
+export function sidecarText(sidecar: Sidecar): string | null {
+  return sidecar.entries.length || sidecar.preamble ? serializeSidecar(sidecar) : null;
 }

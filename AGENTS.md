@@ -28,7 +28,8 @@ platform (WSL Ubuntu so far). The integration suites already run each scenario u
   (`packages/core/src/lines.ts`); never normalize a whole source file.
 - **A tool rewrite of a working file ends with the guarded re-stat** (`restat` in
   `packages/cli/src/git.ts`, design.md § Git behavior, item 5). Going through `rewriteFiles` in
-  `packages/cli/src/files.ts` gets this for free.
+  `packages/cli/src/files.ts` gets this for free. Under `--print` the CLI writes nothing
+  and the extension applies the rewrite as one undoable edit (design.md § Promote and demote).
 - **The brand lives in one constant** (`packages/core/src/brand.ts`). The CLI `bin` key
   and the extension manifest repeat it; `packages/cli/test/brand.test.ts` guards them.
 - **Integration tests use the `Sandbox` harness** (`packages/cli/test/harness.ts`), which

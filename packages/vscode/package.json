@@ -109,7 +109,7 @@
       },
       {
         "command": "cairn.showComment",
-        "title": "Show AI Comment",
+        "title": "Open or Close AI Comment Thread",
         "category": "Cairn Comments"
       },
       {

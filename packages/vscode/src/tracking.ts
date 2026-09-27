@@ -24,6 +24,8 @@ const atOrBefore = (a: Pos, b: Pos) => a.line < b.line || (a.line === b.line && 
 function shiftRow(site: CommentSite, change: Change): number | undefined {
   const delta = change.text.split("\n").length - 1 - (change.end.line - change.start.line);
   const row = site.row;
+  // A change from the start of the line into a later one replaces the whole line.
+  if (change.start.line === row && change.start.character === 0 && change.end.line > row) return undefined;
   if (site.kind === "own") {
     const lineStart = { line: row, character: 0 };
     if (atOrBefore(change.end, lineStart)) return row + delta;

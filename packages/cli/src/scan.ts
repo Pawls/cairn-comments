@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import {
   BRAND,
@@ -17,6 +17,7 @@ import {
   type ScannedComment,
 } from "@cairn-comments/core";
 import { collapseFiles, decodeExact, syncFiles } from "./files.js";
+import { readWorkFile, writeWorkFile } from "./workfiles.js";
 import { managedFiles, smudges, toRepoPath, trackedFiles } from "./git.js";
 
 /** One entry of `scan --json`; `scan --apply` reads the same shape back. */
@@ -51,7 +52,7 @@ function emptyReport(): ApplyReport {
 
 function readIgnore(root: string): Map<string, Set<string>> {
   const file = path.join(root, SCAN_IGNORE);
-  return parseIgnore(existsSync(file) ? readFileSync(file, "utf8") : "");
+  return parseIgnore(readWorkFile(file)?.toString("utf8") ?? "");
 }
 
 /** Named files, or every tracked file in a scanned language outside the tool's own folder. */
@@ -62,7 +63,8 @@ export function scanTargets(root: string, files: string[]): string[] {
 }
 
 function readSource(root: string, file: string): string | undefined {
-  return decodeExact(readFileSync(path.join(root, file)));
+  const bytes = readWorkFile(path.join(root, file));
+  return bytes && decodeExact(bytes);
 }
 
 function toEntry(file: string, c: ScannedComment): ReviewEntry {
@@ -122,8 +124,8 @@ async function convertAndSync(root: string, chosen: Map<string, ScannedComment[]
   for (const [file, comments] of chosen) {
     if (!comments.length) continue;
     const absolute = path.join(root, file);
-    const source = decodeExact(readFileSync(absolute))!;
-    writeFileSync(absolute, convertComments(file, source, comments));
+    const source = readSource(root, file)!;
+    writeWorkFile(absolute, convertComments(file, source, comments));
     written.push(file);
   }
   if (smudges(root)) await syncFiles(root, written, { add: false });
@@ -134,11 +136,9 @@ async function convertAndSync(root: string, chosen: Map<string, ScannedComment[]
 function recordIgnored(root: string, entries: IgnoreEntry[]): void {
   if (!entries.length) return;
   const file = path.join(root, SCAN_IGNORE);
-  const existing = existsSync(file) ? readFileSync(file, "utf8") : "";
+  const existing = readWorkFile(file)?.toString("utf8") ?? "";
   const next = appendIgnore(existing, entries);
-  if (next === existing) return;
-  mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, next);
+  if (next !== existing) writeWorkFile(file, next);
 }
 
 export function parseReview(text: string): Review {

@@ -26,6 +26,7 @@ import {
   type Sidecar,
   type SyncOptions,
 } from "@cairn-comments/core";
+import { capturing, readWorkFile, removeWorkFile, writeWorkFile } from "./workfiles.js";
 import { filesContaining, indexBlobs, managedFiles, markerless, restat, smudges, stage, stagedFiles, toRepoPath, trackedFiles, worktreeGitDir } from "./git.js";
 
 /** Text of a buffer, or undefined when it is not UTF-8 that re-encodes to the same bytes. */
@@ -49,7 +50,7 @@ export async function readSidecar(root: string, file: string): Promise<Sidecar> 
 
 function readSidecarSync(root: string, file: string): Sidecar {
   const sidecarFile = path.join(root, sidecarPathFor(file));
-  return parseSidecar(existsSync(sidecarFile) ? readFileSync(sidecarFile, "utf8") : "");
+  return parseSidecar(readWorkFile(sidecarFile)?.toString("utf8") ?? "");
 }
 
 function smudgeFrom(file: string, source: string, sidecar: Sidecar): Promise<string> {
@@ -172,29 +173,26 @@ async function rewriteFiles(
   const done: string[] = [];
   for (const file of files) {
     const absolute = path.join(root, file);
-    const original = decodeExact(readFileSync(absolute));
+    const bytes = readWorkFile(absolute);
+    const original = bytes && decodeExact(bytes);
     if (original === undefined) continue;
     const synced = await sync(file, original, readSidecarSync(root, file), options);
     if (synced.sidecarChanged) writeSidecar(root, file, synced.sidecar);
     const rewritten = rewrite ? await rewrite(file, synced.source, synced.sidecar) : synced.source;
     const source = typeof rewritten === "string" ? rewritten : rewritten.source;
     if (typeof rewritten !== "string") writeSidecar(root, file, rewritten.sidecar);
-    if (source !== original) writeFileSync(absolute, source);
+    if (source !== original) writeWorkFile(absolute, source);
     done.push(file);
   }
-  restat(root, done);
+  if (!capturing()) restat(root, done);
   return done;
 }
 
 /** An emptied sidecar is removed rather than left as a zero-byte file. */
 export function writeSidecar(root: string, file: string, sidecar: Sidecar): void {
   const sidecarFile = path.join(root, sidecarPathFor(file));
-  if (!sidecar.entries.length && !sidecar.preamble) {
-    rmSync(sidecarFile, { force: true });
-    return;
-  }
-  mkdirSync(path.dirname(sidecarFile), { recursive: true });
-  writeFileSync(sidecarFile, serializeSidecar(sidecar));
+  if (!sidecar.entries.length && !sidecar.preamble) removeWorkFile(sidecarFile);
+  else writeWorkFile(sidecarFile, serializeSidecar(sidecar));
 }
 
 /**
@@ -214,7 +212,8 @@ async function rewriteMarkerless(
   const done: string[] = [];
   for (const file of files) {
     const absolute = path.join(root, file);
-    const original = decodeExact(readFileSync(absolute));
+    const bytes = readWorkFile(absolute);
+    const original = bytes && decodeExact(bytes);
     if (original === undefined) continue;
     // After a checkout, comments on disk may belong to the previous commit's sidecar.
     const seen = gitDir && !options.afterCheckout ? readSeen(gitDir, file) : undefined;
@@ -236,11 +235,11 @@ async function rewriteMarkerless(
       source = await stripComments(file, source);
       onDisk = [];
     }
-    if (source !== original) writeFileSync(absolute, source);
+    if (source !== original) writeWorkFile(absolute, source);
     if (gitDir) writeSeen(gitDir, file, onDisk);
     done.push(file);
   }
-  restat(root, done);
+  if (!capturing()) restat(root, done);
   return done;
 }
 

@@ -19,6 +19,7 @@ import {
 import { MarkerlessActions, type CommentRef, type Located } from "./actions.js";
 import { registerLists, type ListsApi } from "./lists.js";
 import { entryIsStale, findSidecarRoot, hoverMarkdown, planOverlay, type OverlayMode, type PlannedDecoration } from "./overlay.js";
+import { applyPrinted } from "./edits.js";
 import { CommentPaste } from "./paste.js";
 import { OWN_LINE_STYLES, PlacedComment, PlacedView, SHOW_COMMENT, type OwnLineStyle, type PlacedRender } from "./placed.js";
 import { findRepo, orphansOf, runCli, type OrphanComment, type StaleComment } from "./review.js";
@@ -239,6 +240,7 @@ export function activate(context: vscode.ExtensionContext): TestApi {
       if (located && sidecar && !placedView.isCurrent(document)) await placedView.place(document, located.file, sidecar);
       return placedView.sites(document);
     },
+    beforeCut: (document, range) => placedView.beforeCut(document, range),
     entries: (target) => store.entries(target.sidecarPath),
     willChange: (file) => {
       clearTimeout(pasteSaves.get(file));
@@ -314,7 +316,7 @@ export function activate(context: vscode.ExtensionContext): TestApi {
       else void vscode.window.showInformationMessage("No AI comment on this line.");
     }),
     vscode.commands.registerCommand(COMMANDS.demote, (arg?: LineRef) => demoteComment(arg)),
-    vscode.commands.registerCommand(SHOW_COMMENT, (uri: vscode.Uri, id: string) => placedView.reveal(uri, id)),
+    vscode.commands.registerCommand(SHOW_COMMENT, (uri: vscode.Uri, id: string) => placedView.toggle(uri, id)),
     ...VSCODE_LANGUAGE_IDS.map((language) => vscode.languages.registerDocumentPasteEditProvider({ scheme: "file", language }, paste, CommentPaste.metadata)),
     ...VSCODE_LANGUAGE_IDS.map((language) =>
       vscode.languages.registerHoverProvider(
@@ -528,10 +530,11 @@ async function provideCodeActions(document: vscode.TextDocument, line: number): 
 
 /**
  * Saves `document` and runs `<cli> <verb> <target>` from its repository, so promote and
- * demote follow the same sync and collapse rules as the CLI. Resolves to the CLI's output,
- * or undefined after telling the user why it did not run.
+ * demote follow the same sync and collapse rules as the CLI. With `print`, the CLI only
+ * reports the rewrite and the extension applies it (see ./edits.ts). Resolves to the CLI's
+ * report, or undefined after telling the user why it did not run.
  */
-async function runOnFile(document: vscode.TextDocument, verb: string, suffix: string): Promise<string | undefined> {
+async function runOnFile(document: vscode.TextDocument, verb: string, suffix: string, options: { print?: boolean } = {}): Promise<string | undefined> {
   if (document.isDirty && !(await document.save())) return undefined;
   const repo = await findRepo(path.dirname(document.fileName));
   if (!repo?.cli) {
@@ -539,8 +542,11 @@ async function runOnFile(document: vscode.TextDocument, verb: string, suffix: st
     return undefined;
   }
   const file = path.relative(repo.root, document.fileName).split(path.sep).join("/");
+  const target = JSON.stringify(`${file}:${suffix}`);
   try {
-    return await runCli(repo.cli, `${verb} ${JSON.stringify(`${file}:${suffix}`)}`, repo.root);
+    if (!options.print) return await runCli(repo.cli, `${verb} ${target}`, repo.root);
+    // The extension writes the rewrite itself, as one edit Ctrl+Z reverts in every file.
+    return await applyPrinted(repo.root, await runCli(repo.cli, `${verb} --print ${target}`, repo.root));
   } catch (error) {
     void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
     return undefined;
@@ -566,5 +572,5 @@ async function demoteComment(arg?: LineRef): Promise<string | undefined> {
   const document = arg ? await vscode.workspace.openTextDocument(arg.file) : editor?.document;
   const line = arg ? arg.line : editor && editor.selection.active.line + 1;
   if (!document || line === undefined) return undefined;
-  return runOnFile(document, "demote", String(line));
+  return runOnFile(document, "demote", String(line), { print: true });
 }

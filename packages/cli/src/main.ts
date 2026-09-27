@@ -24,6 +24,7 @@ import { agentsSnippet, planInit, planUninstall, runPlan } from "./init.js";
 import { serveFilterProcess } from "./process.js";
 import { applyReview, demote, formatApply, formatReview, markAll, parseReview, scan } from "./scan.js";
 import { tag, tagTargets } from "./tag.js";
+import { captureWrites, capturedWrites } from "./workfiles.js";
 import { addWorktree } from "./worktree.js";
 
 const USAGE = `usage: ${BRAND} <command>
@@ -67,7 +68,10 @@ const USAGE = `usage: ${BRAND} <command>
   confirm <id|file:id>...       accept the current code for a stale comment, clearing its flag
   promote <id|file:id>... | --all [files...]
                                 turn AI comments into ordinary committed comments
-  demote <file:line>...         move the ordinary comment on that line into the sidecar
+  demote [--print] <file:line>...
+                                move the ordinary comment on that line into the sidecar;
+                                --print (here and on scan --apply) prints {report, files}
+                                with each file's new contents instead of writing them
   hook <harness>                run a harness's post-edit hook payload (stdin) through \`tag\`
   agents-md                     print the sigil convention snippet for an agent instruction file
   clean <path>, smudge <path>   one-shot git filter endpoints (stdin to stdout)
@@ -124,13 +128,14 @@ async function runScan(args: string[]): Promise<void> {
       json: { type: "boolean", default: false },
       all: { type: "boolean", default: false },
       apply: { type: "string" },
+      print: { type: "boolean", default: false },
       "mark-all": { type: "boolean", default: false },
     },
   });
   const root = repoRoot();
   if (values.apply !== undefined) {
     const text = values.apply === "-" ? (await readStdin()).toString("utf8") : readFileSync(values.apply, "utf8");
-    process.stdout.write(formatApply(await applyReview(root, parseReview(text))));
+    await printingIf(values.print, root, async () => formatApply(await applyReview(root, parseReview(text))));
     return;
   }
   if (values["mark-all"]) {
@@ -249,15 +254,32 @@ async function runPromote(args: string[]): Promise<void> {
 }
 
 async function runDemote(args: string[]): Promise<void> {
-  if (!args.length) throw new Error("demote needs one or more <file>:<line>");
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { print: { type: "boolean", default: false } } });
+  if (!positionals.length) throw new Error("demote needs one or more <file>:<line>");
   const root = repoRoot();
-  const targets = args.map((arg) => {
+  const targets = positionals.map((arg) => {
     const split = /^(.+):([1-9][0-9]*)$/.exec(arg);
     if (!split) throw new Error(`expected <file>:<line>, got ${arg}`);
     return { file: toRepoPath(root, split[1]!), line: Number(split[2]) };
   });
-  const report = await demote(root, targets);
-  console.log(`demoted ${report.converted.length} comment(s) in ${report.files.length} file(s)`);
+  await printingIf(values.print, root, async () => {
+    const report = await demote(root, targets);
+    return `demoted ${report.converted.length} comment(s) in ${report.files.length} file(s)\n`;
+  });
+}
+
+/**
+ * Runs a rewrite and prints its report. With `print`, nothing is written: stdout is
+ * `{report, files}`, each file's new contents by repository path (null to delete it).
+ */
+async function printingIf(print: boolean, root: string, rewrite: () => Promise<string>): Promise<void> {
+  if (!print) {
+    process.stdout.write(await rewrite());
+    return;
+  }
+  captureWrites();
+  const report = await rewrite();
+  printJson({ report, files: capturedWrites(root) });
 }
 
 async function runHookCommand(args: string[]): Promise<void> {

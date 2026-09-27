@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import * as vscode from "vscode";
 import { BRAND, SCAN_IGNORE, SIDECAR_ROOT } from "@cairn-comments/core";
+import { applyPrinted, saveOpen } from "./edits.js";
 import { ReviewModel, findRepo, runCli, type Decision, type Repo, type ReviewComment, type ReviewFile, type ReviewItem } from "./review.js";
 
 export const REVIEW_VIEW = `${BRAND}.review`;
@@ -149,7 +150,10 @@ export function registerReviewTree(context: vscode.ExtensionContext): ReviewApi 
   async function apply(rest?: Decision): Promise<string> {
     const review = model.toReview(rest);
     if (!repo?.cli || !review.comments.length) return "";
-    const report = await runCli(repo.cli, "scan --apply -", repo.root, JSON.stringify(review));
+    const root = repo.root;
+    await saveOpen(review.comments.map((c) => path.join(root, c.file)));
+    // The extension writes the rewrite itself, as one edit Ctrl+Z reverts in every file.
+    const report = await applyPrinted(root, await runCli(repo.cli, "scan --apply - --print", root, JSON.stringify(review)));
     await scan({ keepSkipped: true });
     return report;
   }

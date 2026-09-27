@@ -1,9 +1,12 @@
 // Copy and paste carry markerless comments (design.md § Overlay rendering, "Copy and paste"):
 // a copy records the comments it covers, and a paste of that same text adds them to the
 // target file's sidecar, anchored where they landed. A comment whose original no longer
-// places by then was cut, so it moves instead of being copied.
+// places by then was cut, so it moves instead of being copied. A copy of whole lines,
+// whitespace aside, pastes at an empty cursor on its own lines, as a copy with no selection does.
 import * as vscode from "vscode";
-import { BRAND, carryComments, serializeSidecar, type CommentSite, type Sidecar, type SidecarEntry } from "@cairn-comments/core";
+import { BRAND, carryComments, type CommentSite, type Sidecar, type SidecarEntry } from "@cairn-comments/core";
+import { sidecarText } from "./actions.js";
+import { addFileEdit } from "./edits.js";
 import { copiedSites } from "./tracking.js";
 
 const MIME = `application/vnd.${BRAND}.comments+json`;
@@ -26,6 +29,8 @@ export interface PasteDeps {
   target(document: vscode.TextDocument): Promise<PasteTarget | undefined>;
   /** Current comment sites of a markerless document. */
   sites(document: vscode.TextDocument): Promise<readonly CommentSite[]>;
+  /** The text and sites before the latest edit, when that edit was a cut of `range` (`PlacedView.beforeCut`). */
+  beforeCut(document: vscode.TextDocument, range: vscode.Range): { text: string; sites: readonly CommentSite[] } | undefined;
   entries(target: PasteTarget): ReadonlyMap<string, SidecarEntry>;
   /** Called with a sidecar a paste edit is about to change, so it can be saved once it has. */
   willChange(sidecarPath: string): void;
@@ -36,10 +41,62 @@ interface Payload {
   /** The copied document's absolute path, where a cut comment's original entry lives. */
   source: string;
   text: string;
+  /**
+   * The copied lines in full, indentation and final line break included, when the copy
+   * covered whole lines apart from whitespace at either end. Pasted at an empty cursor,
+   * they go on their own lines above it, as a copy with no selection does.
+   */
+  lines?: string;
   comments: { relRow: number; kind: CommentSite["kind"]; body: string; meta: [string, string][]; from: string }[];
 }
 
 const sameText = (a: string, b: string) => a.replace(/\r\n/g, "\n") === b.replace(/\r\n/g, "\n");
+
+/** A document's text split into lines, for reading a copy against text the editor no longer shows. */
+class Lines {
+  private readonly lines: string[];
+  private readonly starts: number[] = [];
+
+  constructor(private readonly text: string) {
+    this.lines = text.split("\n").map((l) => l.replace(/\r$/, ""));
+    let offset = 0;
+    for (const raw of text.split("\n")) {
+      this.starts.push(offset);
+      offset += raw.length + 1;
+    }
+  }
+
+  get count(): number {
+    return this.lines.length;
+  }
+
+  line(row: number): string | undefined {
+    return this.lines[row];
+  }
+
+  slice(start: vscode.Position, end: vscode.Position): string {
+    const at = (p: vscode.Position) => Math.min(this.starts[p.line]! + p.character, this.text.length);
+    return this.text.slice(at(start), at(end));
+  }
+
+  /** Rows `first`..`last` in full, each ending in "\n". */
+  whole(first: number, last: number): string {
+    return this.lines.slice(first, last + 1).map((l) => `${l}\n`).join("");
+  }
+}
+
+/** The rows a copy of `start`..`end` covers in full, ignoring whitespace at either end, if it does. */
+function wholeRows(lines: Lines, start: vscode.Position, end: vscode.Position): { first: number; last: number } | undefined {
+  const last = end.character === 0 && end.line > start.line ? end.line - 1 : end.line;
+  const first = lines.line(start.line);
+  const final = lines.line(last);
+  if (first === undefined || final === undefined) return undefined;
+  const indent = first.length - first.trimStart().length;
+  const trimmedEnd = final.trimEnd().length;
+  const reachesEnd = last < end.line || end.character >= trimmedEnd;
+  if (start.character > indent || !reachesEnd || !lines.slice(start, end).trim()) return undefined;
+  return { first: start.line, last };
+}
 
 export class CommentPaste implements vscode.DocumentPasteEditProvider {
   static readonly metadata: vscode.DocumentPasteProviderMetadata = {
@@ -52,22 +109,32 @@ export class CommentPaste implements vscode.DocumentPasteEditProvider {
 
   async prepareDocumentPaste(document: vscode.TextDocument, ranges: readonly vscode.Range[], dataTransfer: vscode.DataTransfer): Promise<void> {
     if (ranges.length !== 1) return;
+    const range = ranges[0]!;
+    // Before any await: later edits would replace what a cut left behind.
+    const cut = this.deps.beforeCut(document, range);
+    const lines = new Lines(cut?.text ?? document.getText());
     const target = await this.deps.target(document);
     if (!target) return;
-    const range = ranges[0]!;
     const shape = (row: number) => {
-      if (row >= document.lineCount) return undefined;
-      const line = document.lineAt(row);
-      return { indent: line.firstNonWhitespaceCharacterIndex, length: line.text.length };
+      const line = lines.line(row);
+      return line === undefined ? undefined : { indent: line.length - line.trimStart().length, length: line.length };
     };
     const entries = this.deps.entries(target);
-    const comments = copiedSites(await this.deps.sites(document), range.start, range.end, shape).flatMap((site) => {
+    const sites = cut?.sites ?? (await this.deps.sites(document));
+    const comments = copiedSites(sites, range.start, range.end, shape).flatMap((site) => {
       const entry = entries.get(site.id);
       if (!entry) return [];
       return [{ relRow: site.row - range.start.line, kind: site.kind, body: entry.body, meta: [...entry.meta], from: entry.id }];
     });
     if (!comments.length) return;
-    const payload: Payload = { root: target.root, source: document.fileName, text: document.getText(range), comments };
+    const rows = wholeRows(lines, range.start, range.end);
+    const payload: Payload = {
+      root: target.root,
+      source: document.fileName,
+      text: lines.slice(range.start, range.end),
+      lines: rows && lines.whole(rows.first, rows.last),
+      comments,
+    };
     dataTransfer.set(MIME, new vscode.DataTransferItem(JSON.stringify(payload)));
   }
 
@@ -81,19 +148,18 @@ export class CommentPaste implements vscode.DocumentPasteEditProvider {
     if (!item || text === undefined || ranges.length !== 1) return undefined;
     const payload = JSON.parse(await item.asString()) as Payload;
     // A copy with no selection reports the line as its range but puts the line and its
-    // break on the clipboard; VS Code pastes that on its own line above the cursor.
-    const wholeLine = sameText(text, `${payload.text}\n`);
-    // The clipboard may have been replaced from outside the editor since the copy.
-    if (!wholeLine && !sameText(text, payload.text)) return undefined;
+    // break on the clipboard. The clipboard may also have been replaced from outside the
+    // editor since the copy.
+    if (!sameText(text, payload.text) && !sameText(text, `${payload.text}\n`)) return undefined;
     const target = await this.deps.target(document);
     // A file with no placed comments yet is markerless only if the copy came from the same repository.
     if (!target || (!target.placed && target.root !== payload.root)) return undefined;
 
     const range = ranges[0]!;
-    const onNewLine = wholeLine && range.isEmpty;
+    const onNewLine = payload.lines !== undefined && range.isEmpty;
     const at = onNewLine ? new vscode.Range(range.start.line, 0, range.start.line, 0) : range;
     const eol = document.eol === vscode.EndOfLine.CRLF ? "\r\n" : "\n";
-    const pasted = text.replace(/\r?\n/g, eol);
+    const pasted = (onNewLine ? payload.lines! : text).replace(/\r?\n/g, eol);
     const whole = document.getText();
     const code = whole.slice(0, document.offsetAt(at.start)) + pasted + whole.slice(document.offsetAt(at.end));
 
@@ -116,10 +182,10 @@ export class CommentPaste implements vscode.DocumentPasteEditProvider {
     edit.additionalEdit = new vscode.WorkspaceEdit();
     // VS Code applies only the additional edit when the insert text is empty.
     if (onNewLine) edit.additionalEdit.insert(document.uri, at.start, pasted);
-    await addSidecarEdit(edit.additionalEdit, target.sidecarPath, result.sidecar);
+    await addFileEdit(edit.additionalEdit, target.sidecarPath, sidecarText(result.sidecar));
     this.deps.willChange(target.sidecarPath);
     if (source && !sameSidecar && moved.size) {
-      await addSidecarEdit(edit.additionalEdit, source.target.sidecarPath, withoutMoved(source.target.sidecar));
+      await addFileEdit(edit.additionalEdit, source.target.sidecarPath, sidecarText(withoutMoved(source.target.sidecar)));
       this.deps.willChange(source.target.sidecarPath);
     }
     return [edit];
@@ -135,27 +201,4 @@ export class CommentPaste implements vscode.DocumentPasteEditProvider {
     if (!document || !target) return undefined;
     return { target, placed: new Set((await this.deps.sites(document)).map((s) => s.id)) };
   }
-}
-
-/**
- * Adds to `edit` what makes the sidecar file hold `sidecar`: created when missing, deleted
- * when left with nothing, as the CLI does.
- */
-async function addSidecarEdit(edit: vscode.WorkspaceEdit, sidecarPath: string, sidecar: Sidecar): Promise<void> {
-  const uri = vscode.Uri.file(sidecarPath);
-  const text = serializeSidecar(sidecar);
-  const exists = await vscode.workspace.fs.stat(uri).then(
-    () => true,
-    () => false,
-  );
-  if (!exists) {
-    edit.createFile(uri, { contents: new TextEncoder().encode(text) });
-    return;
-  }
-  if (!sidecar.entries.length && !sidecar.preamble) {
-    edit.deleteFile(uri);
-    return;
-  }
-  const document = await vscode.workspace.openTextDocument(uri);
-  edit.replace(uri, new vscode.Range(document.positionAt(0), document.positionAt(document.getText().length)), text);
 }
