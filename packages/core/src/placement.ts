@@ -485,16 +485,30 @@ function locate(layout: Layout, p: Placement): Located | undefined {
 
 /**
  * The recorded node, found through a diff of the function's statement hashes: only while
- * the statement holding it is in an unchanged run. A comment on a replaced statement is
- * not moved onto its replacement; the measurement found such moves wrong a third of the
- * time (design.md § Anchoring, "Measured").
+ * the statement holding it is in an unchanged run, or was moved whole within the function.
+ * A comment on a replaced statement is not moved onto its replacement; the measurement
+ * found such moves wrong a third of the time (design.md § Anchoring, "Measured").
  */
 function inUnchangedRun(layout: Layout, scope: Node | null, p: Placement): Node | undefined {
   if (!layout.isFunction(scope) || !p.stmts || !p.in) return undefined;
   const statements = layout.statements(scope);
-  const now = matchRuns(p.stmts, statements.map((s) => layout.statementHash(s))).get(p.in.k);
+  const hashes = statements.map((s) => layout.statementHash(s));
+  const matched = matchRuns(p.stmts, hashes);
+  const now = matched.get(p.in.k) ?? movedStatement(p.stmts, hashes, matched, p.in.k);
   if (now === undefined) return undefined;
   return layout.candidatesWithin(scope, statements[now]!).filter((c) => layout.hashOf(c) === p.node)[p.in.m];
+}
+
+/**
+ * Where old statement `k` went when it was moved rather than changed (a line moved with
+ * Alt+Up or Alt+Down): its hash occurs once in the function before and once after, and
+ * the diff matched neither occurrence, so no other statement can be it.
+ */
+function movedStatement(old: readonly string[], now: readonly string[], matched: ReadonlyMap<number, number>, k: number): number | undefined {
+  const hash = old[k]!;
+  const j = now.indexOf(hash);
+  if (old.indexOf(hash) !== old.lastIndexOf(hash) || j === -1 || j !== now.lastIndexOf(hash)) return undefined;
+  return [...matched.values()].includes(j) ? undefined : j;
 }
 
 /** Old index to new index for every statement in the longest common subsequence of the two. */
