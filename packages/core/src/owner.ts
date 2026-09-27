@@ -61,6 +61,12 @@ export interface CarriedComment {
   meta: ReadonlyMap<string, string>;
   /** The copied entry's id, recorded as `copied-from`. */
   from: string;
+  /**
+   * The original no longer places (the copy was a cut), so this is the same comment moved:
+   * it keeps `from` as its id when the sidecar has no entry with that id, and records no
+   * `copied-from`. The caller removes the original entry.
+   */
+  moved?: boolean;
 }
 
 export interface CarryResult {

@@ -275,6 +275,66 @@ suite("markerless", () => {
     });
   });
 
+  test("a line copied without a selection carries its comments to a new line above the cursor", async () => {
+    const { api, editor } = await shown("codelens");
+    const document = editor.document;
+    // Ctrl+C with no selection: VS Code reports the line without its break as the copied
+    // range, and puts the line with its break on the clipboard.
+    const line = document.lineAt(4);
+    const transfer = new vscode.DataTransfer();
+    await api.paste.prepareDocumentPaste(document, [new vscode.Range(4, 0, 4, line.text.length)], transfer);
+    transfer.set("text/plain", new vscode.DataTransferItem(`${line.text}\n`));
+    const edits = await api.paste.provideDocumentPasteEdits(document, [new vscode.Range(18, 4, 18, 4)], transfer);
+    assert.equal(edits?.length, 1);
+    assert.equal(edits![0]!.insertText, "", "a whole-line paste goes on its own line, not at the cursor");
+    assert.ok(await vscode.workspace.applyEdit(edits![0]!.additionalEdit!));
+    assert.equal(document.lineAt(18).text, "    ledger.write(order.id)");
+    assert.equal(document.lineAt(19).text, "    return ledger.balance(order.account, strict=True)");
+
+    await waitFor("both pasted comments in the sidecar", () => /copied-from=1kjy/.test(sidecarText()) && /copied-from=f7eo/.test(sidecarText()));
+    await document.save();
+    await waitFor("the pasted comments on the new line", async () => {
+      const placed = (await api.refresh(editor)).placed!;
+      return placed.lenses.some((l) => l.line === 18 && l.title === LENSES[1]![1]) && placed.labels.some((l) => l.line === 18 && l.text === "keyed on order.id");
+    });
+  });
+
+  test("a cut function's comments move with it: same ids, no copies", async () => {
+    const { api, editor } = await shown("codelens");
+    const document = editor.document;
+    const cut = new vscode.Range(9, 0, 16, 0);
+    const text = document.getText(cut);
+    const transfer = new vscode.DataTransfer();
+    // VS Code asks the provider first and deletes the text right after, without waiting for it.
+    const prepared = api.paste.prepareDocumentPaste(document, [cut], transfer);
+    await editor.edit((b) => b.delete(cut));
+    await prepared;
+    transfer.set("text/plain", new vscode.DataTransferItem(text));
+
+    await editor.edit((b) => b.insert(document.lineAt(document.lineCount - 1).range.end, "\n\n\n"));
+    const pasteAt = document.lineCount - 1;
+    const at = new vscode.Range(pasteAt, 0, pasteAt, 0);
+    const edits = await api.paste.provideDocumentPasteEdits(document, [at], transfer);
+    assert.equal(edits?.length, 1);
+    const before = sidecarText();
+    const edit = new vscode.WorkspaceEdit();
+    edit.insert(document.uri, at.start, edits![0]!.insertText as string);
+    assert.ok(await vscode.workspace.applyEdit(edit));
+    assert.ok(await vscode.workspace.applyEdit(edits![0]!.additionalEdit!));
+
+    await waitFor("the moved comment's new anchor in the sidecar", () => sidecarText() !== before);
+    const sidecar = sidecarText();
+    assert.doesNotMatch(sidecar, /copied-from/);
+    assert.equal(sidecar.match(/a closed order was already refunded by support by hand/g)?.length, 1);
+    assert.match(sidecar, /## ewiw\n/);
+
+    await document.save();
+    await waitFor("one lens for the moved comment, on the pasted function", async () => {
+      const lenses = (await api.refresh(editor)).placed!.lenses.filter((l) => l.title === LENSES[3]![1]);
+      return lenses.length === 1 && lenses[0]!.line === pasteAt + 2;
+    });
+  });
+
   test("the Activity Bar lists stale and orphaned comments across the repository", async () => {
     const { api } = await open();
     await vscode.commands.executeCommand("cairn.stale.focus");

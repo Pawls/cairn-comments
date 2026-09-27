@@ -95,6 +95,35 @@ describe("carryComments", () => {
     expect(placed.sites.filter((s) => s.id === ids[2])).toEqual([{ id: ids[2], row: 6, kind: "own" }]);
   });
 
+  it("a moved comment keeps its id and provenance, without copied-from", async () => {
+    const { code, sidecar } = await owner();
+    const original = sidecar.entries[2]!;
+    original.meta.set("by", "claude-code");
+    // `refund` cut from below `settle` and pasted above it; the caller drops the original entry.
+    // `q0q0` is not the id the body would generate, so keeping it is not a coincidence.
+    const refund = "def refund(order):\n    return None\n\n\n";
+    const moved = refund + code.replace(/def refund[^]*$/, "");
+    const rest: Sidecar = { preamble: sidecar.preamble, entries: sidecar.entries.filter((e) => e !== original) };
+    const result = await carryComments("a.py", moved, rest, [{ row: 1, kind: "own", body: "refunded by hand", meta: original.meta, from: "q0q0", moved: true }]);
+    expect(result.ids).toEqual(["q0q0"]);
+    const entry = result.sidecar.entries.find((e) => e.id === "q0q0")!;
+    expect(entry.meta.get("by")).toBe("claude-code");
+    expect(entry.meta.has("copied-from")).toBe(false);
+    expect(result.sidecar.entries).toHaveLength(sidecar.entries.length);
+
+    const placed = await placeComments("a.py", moved, result.sidecar);
+    expect(placed.unplaced).toEqual([]);
+    expect(placed.sites.filter((s) => s.id === "q0q0")).toEqual([{ id: "q0q0", row: 1, kind: "own" }]);
+  });
+
+  it("a moved comment takes a new id when the target file already uses its id", async () => {
+    const code = "def f():\n    x = 1\n";
+    const taken: Sidecar = { preamble: "", entries: [{ id: "aaaa", meta: new Map(), body: "unrelated" }] };
+    const result = await carryComments("b.py", code, taken, [{ row: 1, kind: "own", body: "note", meta: new Map(), from: "aaaa", moved: true }]);
+    expect(result.ids[0]).not.toBe("aaaa");
+    expect(result.sidecar.entries.map((e) => e.body)).toEqual(["unrelated", "note"]);
+  });
+
   it("carries multi-line and trailing comments, and two comments on one line stay apart", async () => {
     const code = "def f():\n    x = 1\n    y = 2\n";
     const meta = new Map<string, string>();
