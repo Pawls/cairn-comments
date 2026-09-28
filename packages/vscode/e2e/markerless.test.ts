@@ -389,6 +389,90 @@ suite("markerless", () => {
     await waitFor("the comments on the moved line after placing from anchors", onMovedLine);
   });
 
+  test("a line cut from its first non-blank character moves its comments to where it is pasted", async () => {
+    const { api, editor } = await shown("codelens");
+    const document = editor.document;
+    const line = document.lineAt(4);
+    // A highlight from the first non-blank character to the end of the line, then Ctrl+X.
+    const cut = new vscode.Range(4, 4, 4, line.text.length);
+    const transfer = new vscode.DataTransfer();
+    await editor.edit((b) => b.delete(cut));
+    await api.paste.prepareDocumentPaste(document, [cut], transfer);
+    transfer.set("text/plain", new vscode.DataTransferItem(line.text.trimStart()));
+    const edits = await api.paste.provideDocumentPasteEdits(document, [new vscode.Range(18, 4, 18, 4)], transfer);
+    assert.equal(edits?.length, 1);
+    const before = sidecarText();
+    assert.ok(await vscode.workspace.applyEdit(edits![0]!.additionalEdit!));
+    assert.equal(document.lineAt(18).text, "    ledger.write(order.id)");
+    await waitFor("the moved comments' new anchors in the sidecar", () => sidecarText() !== before);
+    assert.doesNotMatch(sidecarText(), /copied-from/);
+    assert.equal(sidecarText().match(/keyed on order\.id/g)?.length, 1, "the trailing comment moved rather than being copied");
+    await document.save();
+    await waitFor("the moved comments on the pasted line", async () => {
+      const placed = (await api.refresh(editor)).placed!;
+      return placed.lenses.some((l) => l.line === 18 && l.title.endsWith(LENSES[1]![1] as string)) && placed.labels.some((l) => l.line === 18 && l.text.endsWith("keyed on order.id"));
+    });
+  });
+
+  test("a block cut from its first non-blank character moves the comments on its first line too", async () => {
+    const { api, editor } = await shown("codelens");
+    const document = editor.document;
+    // settle's body, highlighted from `ledger` on its first line to the end of its last.
+    const cut = new vscode.Range(4, 4, 6, document.lineAt(6).text.length);
+    const text = document.getText(cut);
+    const transfer = new vscode.DataTransfer();
+    await editor.edit((b) => b.delete(cut));
+    await api.paste.prepareDocumentPaste(document, [cut], transfer);
+    transfer.set("text/plain", new vscode.DataTransferItem(text));
+    // Two lines shorter, audit's return is now line 16; the block goes above it.
+    const edits = await api.paste.provideDocumentPasteEdits(document, [new vscode.Range(16, 4, 16, 4)], transfer);
+    assert.equal(edits?.length, 1);
+    const before = sidecarText();
+    assert.ok(await vscode.workspace.applyEdit(edits![0]!.additionalEdit!));
+    assert.deepEqual(
+      [16, 17, 18, 19].map((l) => document.lineAt(l).text),
+      ["    ledger.write(order.id)", "    notify(order)", "    return order", "    return ledger.balance(order.account, strict=True)"],
+    );
+    await waitFor("the moved comments' new anchors in the sidecar", () => sidecarText() !== before);
+    const sidecar = sidecarText();
+    assert.doesNotMatch(sidecar, /copied-from/);
+    for (const id of ["1kjy", "f7eo", "ip6u"]) assert.equal(sidecar.match(new RegExp(`## ${id}\\n`, "g"))?.length, 1, `one entry for ${id}`);
+    await document.save();
+    await waitFor("the moved comments on the pasted block", async () => {
+      const placed = (await api.refresh(editor)).placed!;
+      return (
+        placed.lenses.some((l) => l.line === 16 && l.title.endsWith(LENSES[1]![1] as string)) &&
+        placed.labels.some((l) => l.line === 16 && l.text.endsWith("keyed on order.id")) &&
+        placed.lenses.some((l) => l.line === 18 && l.title.endsWith(LENSES[2]![1] as string))
+      );
+    });
+  });
+
+  test("a line moved with Alt+Down or Alt+Up past a commented line keeps both lines' comments", async () => {
+    const { api, editor } = await shown("codelens");
+    const document = editor.document;
+    const shows = async (expected: { lens: [number, string][]; label: number }) => {
+      const placed = (await api.refresh(editor)).placed!;
+      return expected.lens.every(([line, title]) => placed.lenses.some((l) => l.line === line && l.title.endsWith(title))) && placed.labels.some((l) => l.line === expected.label && l.text.endsWith("keyed on order.id"));
+    };
+    const settleNote = LENSES[1]![1] as string;
+    const returnNote = LENSES[2]![1] as string;
+    // `notify(order)` has no comments; the lines it passes do.
+    editor.selection = new vscode.Selection(5, 0, 5, 0);
+    await vscode.commands.executeCommand("editor.action.moveLinesDownAction");
+    assert.equal(document.lineAt(5).text, "    return order");
+    assert.ok(await shows({ lens: [[4, settleNote], [5, returnNote]], label: 4 }), "the return's comment moves up with it");
+
+    await vscode.commands.executeCommand("editor.action.moveLinesUpAction");
+    await vscode.commands.executeCommand("editor.action.moveLinesUpAction");
+    assert.equal(document.lineAt(4).text, "    notify(order)");
+    assert.equal(document.lineAt(5).text, "    ledger.write(order.id)");
+    assert.ok(await shows({ lens: [[5, settleNote], [6, returnNote]], label: 5 }), "the write's comments move down with it");
+
+    await document.save();
+    await waitFor("the same comments after placing from anchors", () => shows({ lens: [[5, settleNote], [6, returnNote]], label: 5 }));
+  });
+
   test("the Activity Bar lists stale and orphaned comments across the repository", async () => {
     const { api } = await open();
     await vscode.commands.executeCommand("cairn.stale.focus");
