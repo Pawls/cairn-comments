@@ -4,18 +4,16 @@
 // CAIRN_SCREENSHOTS=<dir> to also capture the overlay states (Windows only) for the
 // README. Set CAIRN_E2E_EXTENSION=<dir> to test an unpacked .vsix (its `extension/`
 // folder) instead of this package.
-import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import os from "node:os";
+import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runTests } from "@vscode/test-electron";
+import { scratchRepo, type ScratchRepo } from "./scratch.js";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const extension = process.env.CAIRN_E2E_EXTENSION ? path.resolve(process.env.CAIRN_E2E_EXTENSION) : packageRoot;
 const fixture = path.join(packageRoot, "e2e/fixture");
 const markerlessFixture = path.join(packageRoot, "e2e/fixture-markerless");
-const cli = path.resolve(packageRoot, "../cli/bundle/main.js");
 
 // Terminals inside VS Code export this; inherited, it makes the test build of VS Code
 // run as plain Node and try to execute the fixture path as a script.
@@ -33,33 +31,6 @@ const REVIEW_FILES: Record<string, string> = {
   ].join("\n"),
   "src/util.ts": ["export function add(a: number, b: number) {", "  // 🚀 Add the numbers", "  return a + b;", "}", ""].join("\n"),
 };
-
-interface ScratchRepo {
-  dir: string;
-  repo: string;
-  env: Record<string, string>;
-}
-
-/**
- * A committed, initialized repository filled by `populate`. Its own global git config keeps
- * `init` from writing a hook into the developer's `core.hooksPath`, and the extension host
- * inherits it.
- */
-function scratchRepo(populate: (repo: string) => void, initArgs: string[] = []): ScratchRepo {
-  const dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "cairn-e2e-")));
-  const config = path.join(dir, "gitconfig");
-  writeFileSync(config, "[user]\n\tname = e2e\n\temail = e2e@example.com\n[core]\n\tautocrlf = false\n[init]\n\tdefaultBranch = main\n");
-  const env = { GIT_CONFIG_GLOBAL: config, GIT_CONFIG_NOSYSTEM: "1" };
-  const repo = path.join(dir, "repo");
-  mkdirSync(repo);
-  populate(repo);
-  const opts = { cwd: repo, env: { ...process.env, ...env }, stdio: "ignore" as const };
-  execFileSync("git", ["init", "-q"], opts);
-  execFileSync(process.execPath, [cli, "init", ...initArgs], opts);
-  execFileSync("git", ["add", "-A"], opts);
-  execFileSync("git", ["commit", "-qm", "base"], opts);
-  return { dir, repo, env };
-}
 
 const writeReviewFiles = (repo: string) => {
   for (const [file, text] of Object.entries(REVIEW_FILES)) {

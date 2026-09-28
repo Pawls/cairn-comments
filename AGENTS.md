@@ -11,6 +11,7 @@ markers through a git filter, bodies live in `.agents/comments/`. Start with
 | --- | --- |
 | `npm test` | `tsc -b`, bundle the CLI and the extension, then every vitest suite. The CLI integration tests run the published bundle `packages/cli/bundle/main.js`, so a stale build tests old code; `package.test.ts` packs and installs it. `npm run test:unit` skips the build and covers only `core` and `vscode`. |
 | `npm run test:vscode` | Extension e2e in a downloaded VS Code (first run downloads it into `.vscode-test/`). With `CAIRN_E2E_EXTENSION=<unzipped .vsix>/extension` it tests the packaged extension instead. |
+| `npm run test:native` | Real keystrokes in a real VS Code window, driven by Playwright (`packages/vscode/native/run.ts`): native Ctrl+X/Ctrl+V and Ctrl+Z's undo-across-files prompt, which the unfocused e2e window never sees. A stand-in for Pylance's paste provider (`native/competitor`) runs beside the extension. Windows only so far; `npm run native -w packages/vscode -- <name part>` runs one test. |
 | `npm run package -w packages/vscode` | Build `packages/vscode/cairn-comments.vsix` (after `npm run build`). Packaging only; nothing is published. |
 | `npm run lint` | eslint over the whole workspace. |
 | `npm run bench` | 2,000-file checkout benchmark (design.md § Filter process). Slow; run only when touching the filter path. |

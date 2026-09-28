@@ -351,6 +351,7 @@
   "scripts": {
     "bundle": "node esbuild.mjs",
     "e2e": "node out/e2e/run.js",
+    "native": "node out/native/run.js",
     "package": "node -e \"require('fs').copyFileSync('../../LICENSE', 'LICENSE')\" && vsce package --no-dependencies -o cairn-comments.vsix"
   },
   "devDependencies": {
@@ -360,6 +361,7 @@
     "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^4.0.0",
     "esbuild": "^0.28.2",
-    "mocha": "^12.0.2"
+    "mocha": "^12.0.2",
+    "playwright": "^1.63.0"
   }
 }

@@ -18,6 +18,7 @@
     "test:unit": "vitest run packages/core packages/vscode",
     "test:integration": "npm run build && vitest run packages/cli",
     "test:vscode": "npm run build && npm run e2e -w packages/vscode",
+    "test:native": "npm run build && npm run native -w packages/vscode",
     "bench": "npm run build && node scripts/bench.ts",
     "replay": "npm run build && node scripts/replay-anchoring.ts"
   },
