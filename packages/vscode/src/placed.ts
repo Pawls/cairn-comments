@@ -126,7 +126,11 @@ export class PlacedView implements vscode.CodeLensProvider, vscode.Disposable {
     const state = this.states.get(event.document.uri.toString());
     if (!state || !event.contentChanges.length) return;
     state.previous = { text: state.text, sites: state.sites, changes: event.contentChanges, at: Date.now() };
-    state.sites = shiftSites(state.sites, event.contentChanges.map((c) => ({ start: c.range.start, end: c.range.end, text: c.text })));
+    state.sites = shiftSites(
+      state.sites,
+      event.contentChanges.map((c) => ({ start: c.range.start, end: c.range.end, text: c.text })),
+      state.text,
+    );
     state.text = event.document.getText();
     state.version = event.document.version;
     state.tracked = true;

@@ -301,11 +301,16 @@ Verified in VS Code 1.138 on Windows with screenshots taken by the e2e suite
   is clean again after an edit (a revert, an undo to the saved text, a reload after a
   change on disk) or a sidecar changes. In between, each change event moves the sites
   (`shiftSites`, `packages/vscode/src/tracking.ts`): an own-line comment moves with its
-  line's first character, a trailing one with its line's end, and one whose code was
-  deleted disappears until the next placement (so does one whose line was deleted whole,
-  from its first column through its break, as Ctrl+X with no selection does). Each
-  document also keeps its text and sites from before the latest edit, for a cut (see
-  "Copy and paste"). Placing a dirty buffer from anchors would
+  line's first character, a trailing one with the end of its line's code, and one whose
+  code was deleted disappears until the next placement. A line counts as deleted when it
+  goes whole, from its first column through its break (Ctrl+X with no selection), or when
+  a change covers its code and leaves only whitespace (a cut of a highlight that left out
+  the indentation), so that a paste of the cut sees its comments as moved, not copied. A
+  deleted line whose text the same event inserted whole on exactly one row takes its
+  comments there: VS Code's Alt+Up/Down moves a line by deleting the line it passes and
+  inserting that line on the other side of the selection, so without this the passed
+  line's comments would vanish. Each document also keeps its text and sites from before
+  the latest edit, for a cut (see "Copy and paste"). Placing a dirty buffer from anchors would
   mark every comment in a function stale on its first keystroke. A change event's
   `isDirty` still says false on a clean document's first edit (VS Code sends the dirty
   state in a later event), so "clean again" is judged at the next refresh, not in the

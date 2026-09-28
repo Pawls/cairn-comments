@@ -7,7 +7,7 @@ import * as vscode from "vscode";
 import { BRAND, carryComments, type CommentSite, type Sidecar, type SidecarEntry } from "@cairn-comments/core";
 import { sidecarText } from "./actions.js";
 import { addFileEdit } from "./edits.js";
-import { copiedSites } from "./tracking.js";
+import { copiedSites, shapeOf } from "./tracking.js";
 
 const MIME = `application/vnd.${BRAND}.comments+json`;
 export const PASTE_KIND = vscode.DocumentDropOrPasteEditKind.Text.append(BRAND);
@@ -117,7 +117,7 @@ export class CommentPaste implements vscode.DocumentPasteEditProvider {
     if (!target) return;
     const shape = (row: number) => {
       const line = lines.line(row);
-      return line === undefined ? undefined : { indent: line.length - line.trimStart().length, length: line.length };
+      return line === undefined ? undefined : shapeOf(line);
     };
     const entries = this.deps.entries(target);
     const sites = cut?.sites ?? (await this.deps.sites(document));
