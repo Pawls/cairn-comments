@@ -21,6 +21,7 @@ it("the extension manifest carries the brand in its name, display name, command 
     contributes: {
       commands: { command: string; category: string }[];
       configuration: { title: string; properties: Record<string, unknown> };
+      configurationDefaults: Record<string, unknown>;
     };
   };
   expect(ext.name).toBe(`${BRAND_PACKAGE}-vscode`);
@@ -32,4 +33,6 @@ it("the extension manifest carries the brand in its name, display name, command 
     expect(category).toBe(BRAND_TITLE);
   }
   for (const key of Object.keys(ext.contributes.configuration.properties)) expect(key).toMatch(new RegExp(`^${BRAND}\\.`));
+  // The paste edit's kind (PASTE_KIND in packages/vscode/src/paste.ts), preferred over other providers' edits.
+  expect(ext.contributes.configurationDefaults["editor.pasteAs.preferences"]).toEqual([`text.${BRAND}`]);
 });

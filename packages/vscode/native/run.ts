@@ -132,6 +132,24 @@ const TESTS: Record<string, (w: Window) => Promise<void>> = {
     assert.match(sidecar, /## f7eo\n<!-- [^\n]*pos=trail scope=audit /);
   },
 
+  "a block highlighted from its first non-blank character, cut and pasted, moves its comments past another paste provider": async (w) => {
+    const before = w.sidecar();
+    // settle's body, from `ledger` to the end of `return order`.
+    await w.goto(5);
+    await w.keys("Home", "Shift+ArrowDown", "Shift+ArrowDown", "Shift+End", "Control+X");
+    // Two lines shorter, audit's return is now line 17; the block goes above it.
+    await w.goto(17);
+    await w.keys("Home", "Control+V");
+    await waitFor("the sidecar to change", () => w.sidecar() !== before);
+    await w.keys("Control+S");
+    await waitFor("the file to be saved", () =>
+      w.read("sample.py").includes("    ledger.check(order.id)\n    ledger.write(order.id)\n    notify(order)\n    return order\n    return ledger.balance("),
+    );
+    const sidecar = w.sidecar();
+    assert.doesNotMatch(sidecar, /copied-from/);
+    for (const id of ["1kjy", "f7eo", "ip6u"]) assert.match(sidecar, new RegExp(`## ${id}\\n<!-- [^\\n]*scope=audit `));
+  },
+
   "Ctrl+Z in the source file undoes a comment edited in its thread": async (w) => {
     const original = "retries are safe: ledger write is idempotent";
     await w.page.locator(".codelens-decoration a", { hasText: original }).click();
@@ -145,9 +163,13 @@ const TESTS: Record<string, (w: Window) => Promise<void>> = {
 
     await w.page.locator(".monaco-editor .view-lines").first().click({ position: { x: 40, y: 8 } });
     await w.keys("Control+Z");
-    await w.page.locator(".monaco-dialog-box .monaco-button", { hasText: /Undo in \d+ Files/ }).click({ timeout: 5_000 });
+    // VS Code asks whether to undo across files only when the other file's editor could be affected.
+    const acrossFiles = w.page.locator(".monaco-dialog-box .monaco-button", { hasText: /Undo in \d+ Files/ });
+    await acrossFiles.click({ timeout: 2_000 }).catch(() => undefined);
+    await w.page.locator(".codelens-decoration a", { hasText: original }).waitFor({ timeout: 5_000 });
     await w.command("File: Save All");
     await waitFor("the original body back in the sidecar", () => w.sidecar().includes(original) && !w.sidecar().includes("an edited body"));
+    assert.equal(w.read("sample.py"), readFileSync(path.join(packageRoot, "e2e/fixture-markerless/sample.py"), "utf8"), "the source is untouched");
   },
 };
 

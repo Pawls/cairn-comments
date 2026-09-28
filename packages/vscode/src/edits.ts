@@ -38,10 +38,13 @@ export async function addFileEdit(edit: vscode.WorkspaceEdit, file: string, text
 /**
  * Applies `files` (absolute path to new contents, null to delete) as one edit, then saves
  * each document it changed, as a CLI rewrite would leave them. False when VS Code refused the edit.
+ * Ctrl+Z in `undoFrom` also undoes the edit: an empty edit to it puts it in the same undo
+ * step without changing or dirtying it.
  */
-export async function applyFiles(files: ReadonlyMap<string, string | null>): Promise<boolean> {
+export async function applyFiles(files: ReadonlyMap<string, string | null>, undoFrom?: vscode.TextDocument): Promise<boolean> {
   const edit = new vscode.WorkspaceEdit();
   for (const [file, text] of files) await addFileEdit(edit, file, text);
+  if (undoFrom && !files.has(undoFrom.fileName)) edit.insert(undoFrom.uri, new vscode.Position(0, 0), "");
   if (!(await vscode.workspace.applyEdit(edit))) return false;
   const changed = new Set([...files.keys()].map((f) => vscode.Uri.file(f).toString()));
   for (const document of vscode.workspace.textDocuments) {

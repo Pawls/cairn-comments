@@ -318,6 +318,11 @@
         }
       ]
     },
+    "configurationDefaults": {
+      "editor.pasteAs.preferences": [
+        "text.cairn"
+      ]
+    },
     "configuration": {
       "title": "Cairn Comments",
       "properties": {

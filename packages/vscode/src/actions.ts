@@ -52,7 +52,7 @@ export class MarkerlessActions {
     const sidecar = this.deps.sidecar(ref.located.sidecar);
     if (!sidecar) return;
     const result = await confirmPlaced(ref.located.file, ref.document.getText(), sidecar, [ref.id]);
-    if (result.changed) await this.write(ref.located.sidecar, result.sidecar);
+    if (result.changed) await this.write(ref.located.sidecar, result.sidecar, ref.document);
   }
 
   /**
@@ -77,7 +77,7 @@ export class MarkerlessActions {
   async delete(ref: PlacedRef): Promise<void> {
     const sidecar = this.deps.sidecar(ref.located.sidecar);
     if (!sidecar?.entries.some((e) => e.id === ref.id)) return;
-    await this.write(ref.located.sidecar, { preamble: sidecar.preamble, entries: sidecar.entries.filter((e) => e.id !== ref.id) });
+    await this.write(ref.located.sidecar, { preamble: sidecar.preamble, entries: sidecar.entries.filter((e) => e.id !== ref.id) }, ref.document);
   }
 
   startEdit(comment: PlacedComment): void {
@@ -92,7 +92,8 @@ export class MarkerlessActions {
   /** Stores the edited body; an emptied body cancels, since deleting has its own action. */
   async saveEdit(comment: PlacedComment): Promise<void> {
     const text = normalizeBody(typeof comment.body === "string" ? comment.body : comment.body.value);
-    const located = this.deps.locate(await vscode.workspace.openTextDocument(comment.file));
+    const document = await vscode.workspace.openTextDocument(comment.file);
+    const located = this.deps.locate(document);
     const sidecar = located && this.deps.sidecar(located.sidecar);
     const entry = sidecar?.entries.find((e) => e.id === comment.id);
     if (!located || !sidecar || !entry || !text) {
@@ -102,7 +103,7 @@ export class MarkerlessActions {
     this.deps.view.setEditing(comment, false, text);
     if (text === entry.body) return;
     const entries = sidecar.entries.map((e) => (e.id === comment.id ? { ...e, body: text } : e));
-    await this.write(located.sidecar, { preamble: sidecar.preamble, entries });
+    await this.write(located.sidecar, { preamble: sidecar.preamble, entries }, document);
   }
 
   private entryOf(comment: PlacedComment) {
@@ -111,8 +112,9 @@ export class MarkerlessActions {
     return located && this.deps.sidecar(located.sidecar)?.entries.find((e) => e.id === comment.id);
   }
 
-  private async write(path: string, sidecar: Sidecar): Promise<void> {
-    await applyFiles(new Map([[path, sidecarText(sidecar)]]));
+  /** Writes a sidecar in one edit that Ctrl+Z in `source`, the file it describes, undoes. */
+  private async write(path: string, sidecar: Sidecar, source: vscode.TextDocument): Promise<void> {
+    await applyFiles(new Map([[path, sidecarText(sidecar)]]), source);
     this.deps.written(path);
   }
 }

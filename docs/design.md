@@ -294,8 +294,10 @@ Verified in VS Code 1.138 on Windows with screenshots taken by the e2e suite
   buttons are Edit (in place), Confirm (stale comments only), Promote, and Delete. They act
   on the sidecar in process against the open buffer, through `confirmPlaced`,
   `promotePlaced` (`packages/core/src/owner.ts`), and a plain entry removal; Promote then
-  saves the source, as the CLI's promote leaves it. With the overlay off there are no
-  threads. VS Code opens its Comments panel the first time a file with threads opens in a
+  saves the source, as the CLI's promote leaves it. Each is one edit that includes the
+  source file, so Ctrl+Z there undoes it; Edit, Confirm, and Delete change only the sidecar
+  and add an empty edit to the source, which puts it in the same undo step without
+  dirtying it. With the overlay off there are no threads. VS Code opens its Comments panel the first time a file with threads opens in a
   session (`comments.openView`); the extension leaves that user setting alone.
 - **Live tracking (markerless).** Placement runs on open, on save, and whenever the buffer
   is clean again after an edit (a revert, an undo to the saved text, a reload after a
@@ -330,10 +332,17 @@ Verified in VS Code 1.138 on Windows with screenshots taken by the e2e suite
   copy request, whose range still describes the text before the cut: when the latest
   edit deleted exactly that range (or that line with its break) within a second, the copy
   reads the text and sites from before it (`PlacedView.beforeCut`). The sidecar edits
-  ride on the paste as its `additionalEdit` and are saved when they land. VS Code calls
-  the provider only on a real copy event, which a test window without focus never gets,
-  so the e2e suite drives the provider directly, in the order the extension host sees a
-  cut; the native Ctrl+C/Ctrl+X/Ctrl+V path is checked by hand.
+  ride on the paste as its `additionalEdit` and are saved when they land. VS Code
+  applies one provider's edit, the newest registration's unless
+  `editor.pasteAs.preferences` names a kind: Pylance offers a plain paste whenever a copy
+  starts after indentation, and registering after the extension, won every such paste
+  until the manifest's `configurationDefaults` preferred `text.cairn`. The preference
+  applies only when this provider returns an edit, so a paste that carries no comments
+  still gets Pylance's. A user's own `editor.pasteAs.preferences` replaces the default.
+  VS Code calls the provider only on a real copy event, which a test window without focus
+  never gets, so the e2e suite drives the provider directly, in the order the extension
+  host sees a cut; `npm run test:native` presses the real keys in a Playwright-driven
+  window with a stand-in for Pylance's provider.
 - **Activity Bar.** The **AI Comments** container holds the scan Review, **Possibly Stale**
   (`check --stale --json`), and **Orphaned** (`check --orphans --json`, entries that no
   longer place) views. Both lists come from the CLI so they match CI; they refresh when
