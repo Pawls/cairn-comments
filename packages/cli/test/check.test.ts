@@ -60,11 +60,16 @@ describe.each([true, false])("check (autocrlf=%s)", (autocrlf) => {
     expect(check(main)).toMatchObject({ status: 0, stdout: "" });
   });
 
-  it("deleting a file drops its comments in the same commit", () => {
+  it("deleting a file drops its comments in the same commit, even beside a new file where they would place", () => {
     box.git(main, "rm", "-q", "c.py");
+    // Not a rename in git's eyes: the shared function is a small part of the new file.
+    const helpers = Array.from({ length: 30 }, (_, i) => `def helper_${i}(x):\n    return x + ${i}\n`).join("\n\n");
+    box.write(box.path("main", "d.py"), `${helpers}\n\ndef settle(order):\n    ledger.write(order.id)\n    audit(order)\n`);
+    box.git(main, "add", "d.py");
     const result = commit(main, "drop the file");
     expect(result.status).toBe(0);
     expect(result.stderr).toContain(`removed ${id} from ${sidecar("c.py")}: c.py is gone\n`);
+    expect(result.stderr).not.toContain("relocated");
     expect(box.git(main, "ls-files", ".agents")).toBe("");
     expect(box.status(main)).toBe("");
   });
