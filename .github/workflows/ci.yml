@@ -32,7 +32,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: xvfb-run -a npm run test:vscode
+      # The e2e runner starts its own xvfb-run on Linux.
+      - run: npm run test:vscode
 
   package:
     runs-on: ubuntu-latest
