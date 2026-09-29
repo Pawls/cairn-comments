@@ -8,13 +8,18 @@ import {
   SIDECAR_ROOT,
   analyzeSource,
   appendIgnore,
-  convertComments,
+  convertDemoted,
   demoteTarget,
   languageForPath,
   parseIgnore,
+  parseSidecar,
+  recordLiterals,
   scanSource,
+  serializeSidecar,
+  sidecarPathFor,
   type IgnoreEntry,
   type ScannedComment,
+  type Sidecar,
 } from "@cairn-comments/core";
 import { collapseFiles, decodeExact, syncFiles } from "./files.js";
 import { readWorkFile, writeWorkFile } from "./workfiles.js";
@@ -121,16 +126,27 @@ function requireManaged(root: string, files: string[]): void {
  */
 async function convertAndSync(root: string, chosen: Map<string, ScannedComment[]>): Promise<string[]> {
   const written: string[] = [];
+  const literals = new Map<string, Map<string, string>>();
   for (const [file, comments] of chosen) {
     if (!comments.length) continue;
     const absolute = path.join(root, file);
     const source = readSource(root, file)!;
-    writeWorkFile(absolute, convertComments(file, source, comments));
+    const converted = convertDemoted(file, source, comments, new Set(readSidecar(root, file).entries.map((e) => e.id)));
+    writeWorkFile(absolute, converted.source);
+    if (converted.literals.size) literals.set(file, converted.literals);
     written.push(file);
   }
   if (smudges(root)) await syncFiles(root, written, { add: false });
   else await collapseFiles(root, written);
+  // A demoted string's quotes go on the entry sync just made for it.
+  for (const [file, ids] of literals) {
+    writeWorkFile(path.join(root, sidecarPathFor(file)), serializeSidecar(recordLiterals(readSidecar(root, file), ids)));
+  }
   return written;
+}
+
+function readSidecar(root: string, file: string): Sidecar {
+  return parseSidecar(readWorkFile(path.join(root, sidecarPathFor(file)))?.toString("utf8") ?? "");
 }
 
 function recordIgnored(root: string, entries: IgnoreEntry[]): void {

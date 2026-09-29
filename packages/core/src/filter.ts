@@ -1,5 +1,6 @@
 import { resolveIds } from "./ids.js";
 import { languageForPath } from "./languages.js";
+import { LITERAL_KEY, writeLiteral } from "./literals.js";
 import { applySplices, dominantEol, type Splice } from "./lines.js";
 import { STALE_TAG, findMarkers, type Marker } from "./markers.js";
 import { bodiesOf, normalizeBody, type Sidecar, type SidecarEntry } from "./sidecar.js";
@@ -268,7 +269,9 @@ export async function promote(
     const prefix = spec.lineSigil.slice(0, -1);
     const toComment = (line: string) => (line ? `${prefix} ${line}` : prefix);
     const eol = eolAt(source, m.end, fallbackEol);
-    const text = inlineText(m, body).split("\n").map(toComment).join(eol + m.indent);
+    const literal = sidecar.entries.find((e) => e.id === id)?.meta.get(LITERAL_KEY);
+    const asString = literal !== undefined && m.placement === "own-line" ? writeLiteral(literal, body, m.indent, eol) : undefined;
+    const text = asString ?? inlineText(m, body).split("\n").map(toComment).join(eol + m.indent);
     splices.push({ start: m.start, end: m.end, text });
     promoted.add(id);
   }

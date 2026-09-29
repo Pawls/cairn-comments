@@ -524,7 +524,8 @@ async function provideCodeActions(document: vscode.TextDocument, line: number): 
   }
   const target = await demoteTarget(located.file, document.getText(), line + 1);
   if (typeof target === "string") return [];
-  const action = new vscode.CodeAction("Demote comment to an AI comment (move it to the sidecar)", vscode.CodeActionKind.RefactorRewrite);
+  const what = target.style === "string" ? "string" : "comment";
+  const action = new vscode.CodeAction(`Demote ${what} to an AI comment (move it to the sidecar)`, vscode.CodeActionKind.RefactorRewrite);
   action.command = { command: COMMANDS.demote, title: action.title, arguments: [{ file: document.fileName, line: target.line }] };
   return [action];
 }

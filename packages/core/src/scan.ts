@@ -2,7 +2,11 @@ import { createHash } from "node:crypto";
 import { DETECTORS, type Detector, type DetectorInput } from "./detectors.js";
 import { languageForPath, type LanguageSpec } from "./languages.js";
 import { applySplices, dominantEol, lineIndexAt, splitLines, type Line, type Splice } from "./lines.js";
+import { freshId } from "./ids.js";
+import { LITERAL_KEY, stringStatementAt } from "./literals.js";
+import { ID_PATTERN, escapeRegExp } from "./markers.js";
 import { findComments, parsesCleanly, type CommentNode } from "./parser.js";
+import { normalizeBody, type Sidecar } from "./sidecar.js";
 
 /** Why a comment is never a scan candidate. */
 export type ProtectedClass = "doc" | "pragma" | "license" | "ticketed-todo" | "commented-out-code" | "unconvertible";
@@ -20,7 +24,10 @@ export interface ScannedComment {
   line: number;
   endLine: number;
   placement: "own-line" | "trailing";
-  style: "line" | "block";
+  /** `string` is a Python string statement, found only by an explicit demote. */
+  style: "line" | "block" | "string";
+  /** For a string, its `literal` metadata (literals.ts). */
+  literal?: string;
   /** Comment text without delimiters, LF-joined. */
   text: string;
   /** Hash of the whitespace-normalized text: how a reviewed list and the ignore file find a comment again. */
@@ -389,13 +396,35 @@ const SCAN_ONLY_PROTECTION = new Set<ProtectedClass>(["ticketed-todo", "commente
 /**
  * The comment an explicit demote of 1-based `line` would convert, or why there is none:
  * no comment there, a sigil comment already, or a class whose meaning depends on staying
- * in the code (doc, pragma, license) or that has no line-sigil form.
+ * in the code (doc, pragma, license, a docstring) or that has no line-sigil form. A Python
+ * string statement that is not a docstring counts as a comment here.
  */
 export async function demoteTarget(path: string, source: string, line: number): Promise<ScannedComment | string> {
   const spec = languageForPath(path);
   if (!spec) return "not a supported language";
   const found = (await analyzeSource(path, source, { detectors: [] })).find((c) => c.line <= line && line <= c.endLine);
   if (!found) {
+    const string = await stringStatementAt(spec, source, line - 1);
+    if (typeof string === "string") return string;
+    if (string) {
+      const text = string.lines.join("\n");
+      return {
+        start: string.start,
+        end: string.end,
+        line: string.row + 1,
+        endLine: string.endRow + 1,
+        placement: "own-line",
+        style: "string",
+        literal: string.literal,
+        text: normalizeBody(text),
+        fingerprint: fingerprintOf(text),
+        protected: undefined,
+        findings: [],
+        score: 0,
+        spans: [{ start: string.start, end: string.end }],
+        indent: string.indent,
+      };
+    }
     const row = splitLines(source)[line - 1];
     const text = row ? source.slice(row.start, row.contentEnd) : "";
     return text.includes(spec.lineSigil) ? "already an AI comment" : "no comment on this line";
@@ -410,14 +439,63 @@ export async function demoteTarget(path: string, source: string, line: number): 
  * a block comment becomes one sigil line per text line at the block's indent.
  */
 export function convertComments(path: string, source: string, comments: readonly ScannedComment[]): string {
+  return convert(path, source, comments, () => {
+    throw new Error(`a string statement converts only through convertDemoted (${path})`);
+  });
+}
+
+export interface DemoteConversion {
+  source: string;
+  /** Each converted string's new id and its `literal` metadata, for `recordLiterals` once synced. */
+  literals: Map<string, string>;
+}
+
+/**
+ * `convertComments` for an explicit demote, which can include Python string statements. A
+ * string becomes a sigil block stamped with a fresh id (not in `taken`, the sidecar's ids,
+ * nor in the source), so its quotes and layout can be recorded on the entry `sync` makes.
+ */
+export function convertDemoted(path: string, source: string, comments: readonly ScannedComment[], taken: ReadonlySet<string>): DemoteConversion {
+  const spec = languageForPath(path);
+  const inSource = spec ? [...source.matchAll(new RegExp(`${escapeRegExp(spec.lineSigil)}(${ID_PATTERN})`, "g"))].map((m) => m[1]!) : [];
+  const used = new Set([...taken, ...inSource]);
+  const literals = new Map<string, string>();
+  const converted = convert(path, source, comments, (c) => {
+    const id = freshId(path, c.text, used);
+    literals.set(id, c.literal!);
+    return id;
+  });
+  return { source: converted, literals };
+}
+
+/** `sidecar` with each converted string's `literal` metadata on its entry. */
+export function recordLiterals(sidecar: Sidecar, literals: ReadonlyMap<string, string>): Sidecar {
+  const entries = sidecar.entries.map((e) => {
+    const literal = literals.get(e.id);
+    return literal === undefined ? e : { ...e, meta: new Map([...e.meta, [LITERAL_KEY, literal]]) };
+  });
+  return { preamble: sidecar.preamble, entries };
+}
+
+function convert(path: string, source: string, comments: readonly ScannedComment[], stringId: (c: ScannedComment) => string): string {
   const spec = languageForPath(path);
   if (!spec) return source;
   const toSigil = (text: string) => (text ? `${spec.lineSigil} ${text}` : spec.lineSigil);
   const lines = splitLines(source);
   const fallbackEol = dominantEol(source);
   const splices: Splice[] = [];
+  const eolOf = (c: ScannedComment) => {
+    const row = lines[lineIndexAt(lines, c.start)]!;
+    return row.end > row.contentEnd ? source.slice(row.contentEnd, row.end) : fallbackEol;
+  };
   for (const c of comments) {
     if (c.protected) throw new Error(`refusing to convert a protected comment (${c.protected}) at ${path}:${c.line}`);
+    if (c.style === "string") {
+      const [head, ...rest] = c.text.split("\n");
+      const block = [`${spec.lineSigil}${stringId(c)} ${head!}`, ...rest.map((l) => c.indent + toSigil(l))];
+      splices.push({ start: c.start, end: c.end, text: block.join(eolOf(c)) });
+      continue;
+    }
     if (c.style === "line") {
       for (const span of c.spans) splices.push({ ...span, text: toSigil(lineText(source.slice(span.start, span.end))) });
       continue;
@@ -427,9 +505,7 @@ export function convertComments(path: string, source: string, comments: readonly
       splices.push({ start: c.start, end: c.end, text: toSigil(body.join(" ")) });
       continue;
     }
-    const row = lines[lineIndexAt(lines, c.start)]!;
-    const eol = row.end > row.contentEnd ? source.slice(row.contentEnd, row.end) : fallbackEol;
-    splices.push({ start: c.start, end: c.end, text: body.map(toSigil).join(eol + c.indent) });
+    splices.push({ start: c.start, end: c.end, text: body.map(toSigil).join(eolOf(c) + c.indent) });
   }
   return applySplices(source, splices);
 }

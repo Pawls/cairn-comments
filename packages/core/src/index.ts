@@ -4,10 +4,13 @@ export { appendIgnore, parseIgnore, type IgnoreEntry } from "./ignore.js";
 export {
   analyzeSource,
   convertComments,
+  convertDemoted,
   demoteTarget,
   fingerprintOf,
   newComments,
+  recordLiterals,
   scanSource,
+  type DemoteConversion,
   type Finding,
   type ProtectedClass,
   type ScanOptions,
@@ -30,6 +33,7 @@ export {
   type SyncResult,
 } from "./filter.js";
 export { resolveIds } from "./ids.js";
+export { LITERAL_KEY } from "./literals.js";
 export {
   placeComments,
   recordComments,

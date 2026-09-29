@@ -692,6 +692,19 @@ both as code actions. Tests: `packages/core/test/promote.test.ts`,
   commented-out code) but refuses doc, pragma, license, and unconvertible comments, whose
   meaning depends on staying in the code. Every target is checked before any file is
   written.
+- **Python strings used as comments** (`packages/core/src/literals.ts`). Demote also takes
+  a bare string statement (a `"""` note between two statements); scan never proposes one.
+  It refuses a docstring by PEP 257: the first statement of a module, class, or function,
+  and an attribute docstring, right after an assignment at module or class level or in
+  `__init__` (`__doc__`, Sphinx, Click help, and doctest read these). It also refuses an
+  f-string (it runs code), a string that is the only statement in its block (removing it
+  leaves an empty block), and one sharing its line with code or a comment. The string
+  becomes a sigil block stamped with a fresh id, and its entry records `literal` (quotes,
+  any `r`/`b` prefix, and whether text starts on the opening line or ends on the closing
+  one; e.g. `literal=triple-double,first-line`). Promote writes such an entry back as that
+  string, byte for byte when the continuation lines sat at the statement's indent. A body
+  edited so it no longer fits those quotes (the quote itself, or a line break in a
+  one-line string) comes back as `#` comments instead.
 - **Round trip.** Demote then promote restores the original bytes for a line comment
   written `<prefix> text` (any extra spaces after the prefix are kept in the body).
   A block comment comes back as line comments, and `#text` without the space comes back
