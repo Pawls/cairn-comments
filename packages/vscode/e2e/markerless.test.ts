@@ -337,6 +337,45 @@ suite("markerless", () => {
     });
   });
 
+  test("a cut function whose entry the paste leaves unchanged shows its comments where it lands, before a save", async () => {
+    const { api, editor } = await shown("codelens");
+    const document = editor.document;
+    // Its comment sits on `return None`, the third of `refund`'s five lines.
+    const refundLens = (line: number) => async () => (await api.refresh(editor)).placed!.lenses.some((l) => l.line === line && l.title === LENSES[3]![1]);
+    /** Cuts `refund`'s five lines and pastes them at an empty cursor on `to` (after the cut), which puts them above that line. */
+    const moveRefund = async (to: number | "last line") => {
+      const from = document.getText().split("\n").findIndex((l) => l.startsWith("def refund"));
+      const cut = new vscode.Range(from, 0, from + 5, 0);
+      const text = document.getText(cut);
+      const transfer = new vscode.DataTransfer();
+      await editor.edit((b) => b.delete(cut));
+      await api.paste.prepareDocumentPaste(document, [cut], transfer);
+      transfer.set("text/plain", new vscode.DataTransferItem(text));
+      const row = to === "last line" ? document.lineCount - 1 : to;
+      const edits = await api.paste.provideDocumentPasteEdits(document, [new vscode.Range(row, 0, row, 0)], transfer);
+      assert.equal(edits?.length, 1);
+      assert.equal(edits![0]!.insertText, "");
+      assert.ok(await vscode.workspace.applyEdit(edits![0]!.additionalEdit!));
+    };
+
+    // The fixture's anchors are hand-written, so the first move records them afresh.
+    const committed = sidecarText();
+    await moveRefund("last line");
+    await waitFor("the first move's anchors in the sidecar", () => sidecarText() !== committed);
+    await document.save();
+    await waitFor("refund's comment on the pasted function", refundLens(16));
+    // A late file watcher event for that sidecar change would place the comments again.
+    await settle(1_500);
+
+    // Moved again, the comment records exactly the entry it already has.
+    const recorded = sidecarText();
+    await moveRefund(9);
+    assert.equal(document.lineAt(9).text, "def refund(order):");
+    assert.ok(document.isDirty);
+    await waitFor("refund's comment on the pasted function, unsaved", refundLens(11));
+    assert.equal(sidecarText(), recorded);
+  });
+
   test("a highlighted line, whatever whitespace the highlight leaves out, pastes like a whole-line copy", async () => {
     const { api, editor } = await shown("codelens");
     const document = editor.document;
