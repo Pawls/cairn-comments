@@ -238,10 +238,12 @@ export function activate(context: vscode.ExtensionContext): TestApi {
   });
 
   // An undo or redo that reaches a sidecar reverts one of the extension's own edits (Ctrl+Z
-  // asks to undo across files). Its buffer is saved at once, with the source when the same
-  // step changed it; see design.md § Promote and demote, "Undo". The two files' changes
-  // arrive as separate events, in either order, so each is remembered for a moment.
+  // asks to undo across files). Its buffer is saved at once, and the source too when the
+  // same step changed it and it had no unsaved edits before; see design.md § Promote and
+  // demote, "Undo". The two files' changes arrive as separate events, in either order, so
+  // each is remembered for a moment.
   const undoneAt = new Map<string, number>();
+  const unchangedSinceSave = new Set<string>();
   const justUndone = (document: vscode.TextDocument) => Date.now() - (undoneAt.get(document.uri.toString()) ?? -Infinity) < UNDO_PAIR_MS;
   const saveUndone = async (document: vscode.TextDocument) => {
     undoneAt.set(document.uri.toString(), Date.now());
@@ -251,7 +253,7 @@ export function activate(context: vscode.ExtensionContext): TestApi {
     const source = vscode.workspace.textDocuments.find((d) => !isSidecar(d) && sameFile(locate(d)?.sidecar, sidecar.uri));
     // Not guarded by isDirty: the change event arrives before the dirty flag does.
     await sidecar.save();
-    if (source && justUndone(source)) await source.save();
+    if (source && justUndone(source) && unchangedSinceSave.has(source.uri.toString())) await source.save();
   };
 
   context.subscriptions.push(
@@ -264,7 +266,10 @@ export function activate(context: vscode.ExtensionContext): TestApi {
     vscode.workspace.onDidChangeTextDocument((e) => {
       // An event with no changes only reports the dirty flag.
       if (e.reason !== undefined) void saveUndone(e.document);
-      else if (e.contentChanges.length) undoneAt.delete(e.document.uri.toString());
+      else if (e.contentChanges.length) {
+        undoneAt.delete(e.document.uri.toString());
+        unchangedSinceSave.delete(e.document.uri.toString());
+      }
       if (isSidecar(e.document)) {
         const pending = pasteSaves.get(e.document.fileName);
         if (pending && e.document.isDirty) {
@@ -281,6 +286,7 @@ export function activate(context: vscode.ExtensionContext): TestApi {
     }),
     vscode.workspace.onDidSaveTextDocument((d) => {
       if (isSidecar(d)) return;
+      unchangedSinceSave.add(d.uri.toString());
       placedView.forget(d);
       editorsOf(d).forEach(schedule);
     }),
@@ -290,6 +296,7 @@ export function activate(context: vscode.ExtensionContext): TestApi {
       else {
         placedView.forget(d);
         placedDocuments.delete(d.uri.toString());
+        unchangedSinceSave.delete(d.uri.toString());
       }
     }),
     vscode.workspace.onDidChangeConfiguration((e) => {

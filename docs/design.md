@@ -704,9 +704,11 @@ suites.
   without saving then put an undone promote's ordinary comment back on disk while the
   sidecar buffer kept the entry again: the comment showed twice. So when an undo or redo
   changes a sidecar that no tab shows, the extension saves it at once, and saves the
-  source too when the same step changed it. Undoing a promote is then a demote on disk,
-  and undoing a delete, confirm, edit, or paste restores the stored entry. A sidecar open
-  in a tab is left to the user.
+  source too when the same step changed it and the source had no unsaved edits before
+  it (promote, demote, and a review's apply save the source; a paste does not). Undoing a
+  promote is then a demote on disk, and undoing a delete, confirm, edit, or paste restores
+  the stored entry without saving edits the owner had not saved. A sidecar open in a tab
+  is left to the user.
 
 ## Check
 
