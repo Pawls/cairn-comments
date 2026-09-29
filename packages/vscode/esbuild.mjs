@@ -3,6 +3,7 @@
 // its WASM and the grammars are copied beside the bundle, so the .vsix needs no node_modules.
 /* global URL */
 import * as esbuild from "esbuild";
+import { copyFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { copyWasmAssets } from "../../scripts/bundle-assets.mjs";
 
@@ -24,3 +25,8 @@ const common = {
 await esbuild.build({ ...common, entryPoints: ["src/extension.ts"], outfile: "dist/extension.cjs" });
 await esbuild.build({ ...common, entryPoints: ["e2e/index.ts"], outfile: "dist/e2e/index.cjs" });
 copyWasmAssets(fileURLToPath(new URL("dist", import.meta.url)));
+// The CLI bundle rides along, sharing the WASM above, so the extension can install it into
+// the CLI home (design.md § Packaging). Build it first: `npm run build` bundles the CLI before this.
+for (const file of ["main.js", "version.json"]) {
+  copyFileSync(new URL(`../cli/bundle/${file}`, import.meta.url), new URL(`dist/${file}`, import.meta.url));
+}

@@ -167,6 +167,11 @@
         "title": "Skip Until the Next Scan",
         "category": "Cairn Comments",
         "icon": "$(close)"
+      },
+      {
+        "command": "cairn.setup",
+        "title": "Set Up in This Repository",
+        "category": "Cairn Comments"
       }
     ],
     "views": {
@@ -351,7 +356,14 @@
           "icon": "media/cairn.svg"
         }
       ]
-    }
+    },
+    "viewsWelcome": [
+      {
+        "view": "cairn.review",
+        "when": "cairn.setupNeeded",
+        "contents": "This repository is not set up for Cairn Comments yet. Setup adds a git filter, git hooks, and lines in .gitattributes, and shows you the full list before it changes anything.\n[Set Up Cairn Comments in This Repository](command:cairn.setup)"
+      }
+    ]
   },
   "scripts": {
     "bundle": "node esbuild.mjs",

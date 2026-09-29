@@ -123,4 +123,49 @@ suite("scan review", () => {
       writeFileSync(file, original);
     }
   });
+
+  // The home comes from scratch.ts, so these never touch the developer's own.
+  const homeMain = () => path.join(process.env.CAIRN_CLI_HOME!, "main.js");
+  const recordedClean = () => `node "${homeMain().split(path.sep).join("/")}" clean %f`;
+
+  test("the extension installs its CLI into the home, which is what the repository records", async () => {
+    await api();
+    assert.equal(existsSync(homeMain()), true);
+    assert.equal(git("config", "--get", "filter.cairn.clean").trim(), recordedClean());
+  });
+
+  test("a repository whose recorded CLI is gone is repaired to the home's copy", async () => {
+    const a = await api();
+    git("config", "filter.cairn.clean", 'node "/gone/cairn/main.js" clean %f');
+    let missing = "";
+    const repaired = await a.repair(async (_root, gone) => {
+      missing = gone;
+      return true;
+    });
+    assert.equal(repaired, true);
+    assert.equal(missing, "/gone/cairn/main.js");
+    assert.equal(git("config", "--get", "filter.cairn.clean").trim(), recordedClean());
+    assert.equal(await a.repair(async () => true), false, "nothing to repair once it records the home");
+  });
+
+  // Last: it uninstalls the repository.
+  test("in a repository never set up, the review view offers setup, which runs init after its dry run and then scans", async () => {
+    const a = await api();
+    execFileSync("node", [homeMain(), "uninstall"], { cwd: repo() });
+    await a.review.scan();
+    assert.equal(a.review.message(), undefined, "the setup welcome takes the view's place");
+
+    assert.equal(await a.review.setup(async () => false), "", "declining the dry run changes nothing");
+    assert.throws(() => git("config", "--get", "filter.cairn.clean"));
+
+    let plan = "";
+    const report = await a.review.setup(async (_root, dryRun) => {
+      plan = dryRun;
+      return true;
+    });
+    assert.match(plan, /^dry run; would change:\n/);
+    assert.match(report, /git config: set filter\.cairn\.clean/);
+    assert.equal(git("config", "--get", "filter.cairn.clean").trim(), recordedClean());
+    assert.notEqual(a.review.message(), undefined, "setup scans, so the view shows the review again");
+  });
 });

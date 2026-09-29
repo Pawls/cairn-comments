@@ -1,8 +1,8 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { BRAND, FILTER_DRIVER, LANGUAGES, SCAN_IGNORE, SIDECAR_ROOT } from "@cairn-comments/core";
-import { ADAPTERS, adapterRoots, applySettingsChange, planAdapterInstall, planAdapterUninstall, type SettingsChange } from "./adapters.js";
+import { BRAND, FILTER_DRIVER, LANGUAGES, SCAN_IGNORE, SIDECAR_ROOT, cliHome, homeCommand, installCli, pendingInstall } from "@cairn-comments/core";
+import { ADAPTERS, adapterInstalled, adapterRoots, applySettingsChange, planAdapterInstall, planAdapterUninstall, type SettingsChange } from "./adapters.js";
 import { git, gitQuiet, worktreeRoots } from "./git.js";
 
 const HOOK_TAG = `managed by ${BRAND} init`;
@@ -16,10 +16,16 @@ const REFRESH_HOOKS = ["post-checkout", "post-merge", "post-commit", "post-rewri
 /** Set when `init` turned `extensions.worktreeConfig` on, so `uninstall` turns it off only then. */
 const WORKTREE_CONFIG_MARK = `filter.${FILTER_DRIVER}.worktreeConfigByInit`;
 
-/** How git and the hook invoke this CLI: by absolute path, so nothing depends on PATH. */
-export function defaultCommand(): string {
-  const main = path.join(path.dirname(fileURLToPath(import.meta.url)), "main.js");
-  return `node "${main.split(path.sep).join("/")}"`;
+/**
+ * Installs this bundle into the CLI home when it is newer than the copy there. `init`
+ * records the home's copy, never this one, which npx or an extension update may delete
+ * (design.md § Packaging).
+ */
+function homeInstallChange(home: string): Change | undefined {
+  const source = path.dirname(fileURLToPath(import.meta.url));
+  const incoming = pendingInstall(source, home);
+  if (!incoming) return undefined;
+  return { what: `${home}: install ${incoming.version} (build ${incoming.build})`, apply: () => installCli(source, home) };
 }
 
 /** The CLI invocation `init` recorded, recovered from the clean filter's config. */
@@ -240,10 +246,15 @@ function settingsChange(root: string, harness: string, change: SettingsChange | 
  * `worktree add` turns on smudge per worktree (design.md § Filter process).
  */
 export function planInit(root: string, options: InitOptions = {}): Change[] {
-  const command = options.command ?? defaultCommand();
-  const hooks = options.hooks ?? [];
+  const home = cliHome();
+  const command = options.command ?? homeCommand(home);
+  // Installed adapters are rewritten too, so a repository recording an old CLI path is fixed whole.
+  const installed = Object.keys(ADAPTERS).filter((h) => adapterInstalled(root, h));
+  const hooks = [...new Set([...(options.hooks ?? []), ...installed])];
   const worktreeConfigOn = localConfig(root, "extensions.worktreeConfig") === "true";
   const changes: (Change | undefined)[] = [
+    // First: everything after it records the home's copy.
+    options.command === undefined ? homeInstallChange(home) : undefined,
     ...configChanges(root, {
       "extensions.worktreeConfig": "true",
       // Recorded only when this run turns it on; an existing mark is kept as it is.

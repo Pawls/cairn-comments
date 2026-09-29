@@ -49,3 +49,4 @@ export {
   type Sidecar,
   type SidecarEntry,
 } from "./sidecar.js";
+export { CLI_HOME_ENV, cliHome, homeCommand, installCli, pendingInstall, type CliVersion, type InstallResult } from "./home.js";

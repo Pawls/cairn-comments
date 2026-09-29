@@ -3,6 +3,7 @@ import path from "node:path";
 import * as vscode from "vscode";
 import {
   BRAND,
+  BRAND_TITLE,
   SIDECAR_ROOT,
   demoteTarget,
   findMarkers,
@@ -23,6 +24,7 @@ import { CommentPaste } from "./paste.js";
 import { OWN_LINE_STYLES, PlacedComment, PlacedView, SHOW_COMMENT, type OwnLineStyle, type PlacedRender } from "./placed.js";
 import { findRepo, orphansOf, runCli, type OrphanComment, type StaleComment } from "./review.js";
 import { registerReviewTree, type ReviewApi } from "./reviewTree.js";
+import { installBundledCli, offerRepair } from "./setup.js";
 
 export const COMMANDS = {
   toggle: `${BRAND}.toggleOverlay`,
@@ -57,6 +59,8 @@ export interface TestApi {
   /** Recomputes and applies the overlay for one editor, returning what was applied. */
   refresh(editor: vscode.TextEditor): Promise<Applied>;
   review: ReviewApi;
+  /** The repair offer for a repository whose recorded CLI is gone, with `ask` in place of the prompt. */
+  repair(ask: (root: string, missing: string) => Promise<boolean>): Promise<boolean>;
   /** What the stale comment list offers, from `check --stale --json`; a string explains an empty list. */
   staleComments(): Promise<StaleComment[] | string>;
   orphanComments(): Promise<OrphanComment[] | string>;
@@ -125,6 +129,9 @@ async function markersIn(document: vscode.TextDocument, located: Located): Promi
 }
 
 export function activate(context: vscode.ExtensionContext): TestApi {
+  // Before anything runs the CLI: setup and repair record the home's copy.
+  installBundledCli(context);
+  const firstFolder = () => vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   const store = new SidecarStore();
   const overlayColor = (): string | vscode.ThemeColor => {
     const configured = vscode.workspace.getConfiguration(BRAND).get<string>("overlayColor", "");
@@ -347,10 +354,16 @@ export function activate(context: vscode.ExtensionContext): TestApi {
     ),
   );
   refreshAll();
+  const folder = firstFolder();
+  if (folder) void offerRepair(folder);
   return {
     mode,
     refresh,
     review: registerReviewTree(context),
+    repair: async (ask) => {
+      const at = firstFolder();
+      return at ? offerRepair(at, ask) : false;
+    },
     staleComments,
     orphanComments,
     lists,
@@ -365,7 +378,7 @@ export function deactivate(): void {}
 async function staleComments(): Promise<StaleComment[] | string> {
   const folder = vscode.workspace.workspaceFolders?.[0];
   const repo = folder ? await findRepo(folder.uri.fsPath) : undefined;
-  if (!repo?.cli) return repo ? `Run \`${BRAND} init\` in this repository to check for stale comments.` : "Open a git repository to check for stale comments.";
+  if (!repo?.cli) return repo ? `Set up ${BRAND_TITLE} from the AI Comments Review view to check for stale comments.` : "Open a git repository to check for stale comments.";
   // Exit 1 means stale comments were found; the list is still on stdout.
   const found = JSON.parse(await runCli(repo.cli, "check --stale --json", repo.root, undefined, [0, 1])) as StaleComment[];
   return found.map((c) => ({ ...c, file: path.join(repo.root, c.file) }));
@@ -375,7 +388,7 @@ async function staleComments(): Promise<StaleComment[] | string> {
 async function orphanComments(): Promise<OrphanComment[] | string> {
   const folder = vscode.workspace.workspaceFolders?.[0];
   const repo = folder ? await findRepo(folder.uri.fsPath) : undefined;
-  if (!repo?.cli) return repo ? `Run \`${BRAND} init\` in this repository to check for orphaned comments.` : "Open a git repository to check for orphaned comments.";
+  if (!repo?.cli) return repo ? `Set up ${BRAND_TITLE} from the AI Comments Review view to check for orphaned comments.` : "Open a git repository to check for orphaned comments.";
   // Exit 1 means problems were found; the report is still on stdout.
   const report = JSON.parse(await runCli(repo.cli, "check --orphans --json", repo.root, undefined, [0, 1])) as { problems: { kind: string }[] };
   return orphansOf(report).map((c) => ({ ...c, source: path.join(repo.root, c.source) }));

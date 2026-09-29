@@ -107,6 +107,12 @@ export function cliFromCleanConfig(clean: string): string | undefined {
   return clean.trim().endsWith(suffix) ? clean.trim().slice(0, -suffix.length) : undefined;
 }
 
+/** The script a recorded `node <main.js>` command runs; undefined for any other command, which may be on PATH. */
+export function recordedMain(cli: string): string | undefined {
+  const match = /^node\s+(?:"([^"]+)"|(\S+))$/.exec(cli.trim());
+  return match ? (match[1] ?? match[2]) : undefined;
+}
+
 function run(file: string, args: string[], cwd: string): Promise<string> {
   return new Promise((resolve, reject) =>
     execFile(file, args, { cwd, encoding: "utf8", maxBuffer: 1 << 28 }, (error, stdout) => (error ? reject(error) : resolve(stdout))),

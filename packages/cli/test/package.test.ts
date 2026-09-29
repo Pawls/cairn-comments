@@ -45,6 +45,7 @@ describe("the published CLI package", () => {
       "bundle/grammars/tree-sitter-tsx.wasm",
       "bundle/grammars/tree-sitter-typescript.wasm",
       "bundle/main.js",
+      "bundle/version.json",
       "bundle/web-tree-sitter.wasm",
       "package.json",
     ]);
@@ -57,7 +58,8 @@ describe("the published CLI package", () => {
     const main = box.path("main");
     box.write(box.path("main", "app.ts"), "export const port = 8080;\n");
     box.git(box.dir, "init", "-q", "main");
-    expect(box.cli(main, "init")).toContain(`${installed.split(path.sep).join("/")}/bundle/main.js`);
+    // The installed package copies itself into the CLI home and records that copy, never its own path.
+    expect(box.cli(main, "init")).toContain(`node "${box.home.split(path.sep).join("/")}/main.js" clean %f`);
     box.git(main, "add", "-A");
     box.git(main, "commit", "-qm", "base");
     box.cli(main, "worktree", "add", box.path("agent"), "-b", "agent");

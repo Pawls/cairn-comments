@@ -1,5 +1,7 @@
 **
 !dist/extension.cjs
+!dist/main.js
+!dist/version.json
 !dist/web-tree-sitter.wasm
 !dist/grammars/**
 !README.md

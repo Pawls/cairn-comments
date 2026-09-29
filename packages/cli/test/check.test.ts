@@ -159,7 +159,8 @@ describe("init --dry-run, uninstall, and promote --all", () => {
   it("a dry run prints the plan and changes nothing", () => {
     const before = config();
     const out = box.cli(main, "init", "--dry-run", "--hooks", "claude-code,cursor", "--agents-md");
-    expect(out).toMatch(/^dry run; would change:\n {2}git config: set extensions\.worktreeConfig = true\n/);
+    // The CLI home install comes first: every line after it records the home's copy.
+    expect(out).toMatch(/^dry run; would change:\n {2}\S.*: install \d+\.\d+\.\d+ \(build \d+\)\n {2}git config: set extensions\.worktreeConfig = true\n/);
     expect(out).toContain("  .gitattributes: add 16 line(s), remove 1 line(s)\n");
     expect(out).toContain("  .claude/settings.local.json: set the claude-code hook\n");
     expect(out).toContain("  .cursor/hooks.json: create with the cursor hook\n");

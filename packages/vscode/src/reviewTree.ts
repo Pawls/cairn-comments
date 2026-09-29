@@ -1,8 +1,9 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import * as vscode from "vscode";
-import { BRAND, SCAN_IGNORE, SIDECAR_ROOT } from "@cairn-comments/core";
+import { BRAND, BRAND_TITLE, SCAN_IGNORE, SIDECAR_ROOT } from "@cairn-comments/core";
 import { applyPrinted, saveOpen } from "./edits.js";
+import { runInit } from "./setup.js";
 import { ReviewModel, findRepo, runCli, type Decision, type Repo, type ReviewComment, type ReviewFile, type ReviewItem } from "./review.js";
 
 export const REVIEW_VIEW = `${BRAND}.review`;
@@ -14,10 +15,13 @@ export const REVIEW_COMMANDS = {
   markAi: `${BRAND}.review.markAi`,
   keep: `${BRAND}.review.keep`,
   skip: `${BRAND}.review.skip`,
+  setup: `${BRAND}.setup`,
 } as const;
 /** Context keys behind the title buttons' `enablement` in package.json. */
 const HAS_DECISIONS = `${BRAND}.reviewHasDecisions`;
 const HAS_COMMENTS = `${BRAND}.reviewHasComments`;
+/** Shows the setup welcome (package.json viewsWelcome) in a repository `init` never ran in. */
+const SETUP_NEEDED = `${BRAND}.setupNeeded`;
 
 type Node = { kind: "file"; group: ReviewFile } | { kind: "comment"; group: ReviewFile; comment: ReviewItem };
 
@@ -30,6 +34,8 @@ export interface ReviewApi {
   skip(file: string, line: number | undefined): void;
   /** Runs `scan --apply` on the decided comments (and, with `rest`, the undecided ones) and rescans; resolves to the CLI's report. */
   apply(rest?: Decision): Promise<string>;
+  /** Runs `init` once `confirm` accepts its dry run, then scans; resolves to the report, or "" when declined. */
+  setup(confirm?: (root: string, plan: string) => Promise<boolean>): Promise<string>;
   message(): string | undefined;
   visible(): boolean;
 }
@@ -130,8 +136,12 @@ export function registerReviewTree(context: vscode.ExtensionContext): ReviewApi 
     repo = folder ? await findRepo(folder.uri.fsPath) : undefined;
     loaded = false;
     model.load([], options);
-    if (!repo?.cli) {
-      setMessage(repo ? `Run \`${BRAND} init\` in this repository to review AI comments.` : "Open a git repository to review AI comments.");
+    void vscode.commands.executeCommand("setContext", SETUP_NEEDED, !!repo && !repo.cli);
+    if (!repo) {
+      setMessage("Open a git repository to review AI comments.");
+    } else if (!repo.cli) {
+      // The setup welcome takes the view's place.
+      setMessage(undefined);
     } else {
       const cli = repo.cli;
       const root = repo.root;
@@ -155,6 +165,25 @@ export function registerReviewTree(context: vscode.ExtensionContext): ReviewApi 
     // The extension writes the rewrite itself, as one edit Ctrl+Z reverts in every file.
     const report = await applyPrinted(root, await runCli(repo.cli, "scan --apply - --print", root, JSON.stringify(review)));
     await scan({ keepSkipped: true });
+    return report;
+  }
+
+  async function confirmSetup(root: string, plan: string): Promise<boolean> {
+    const choice = await vscode.window.showInformationMessage(
+      `Set up ${BRAND_TITLE} in ${path.basename(root)}?`,
+      { modal: true, detail: plan.trim() },
+      "Set Up",
+    );
+    return choice === "Set Up";
+  }
+
+  async function setup(confirm = confirmSetup): Promise<string> {
+    const folder = scanFolder();
+    const found = folder ? await findRepo(folder.uri.fsPath) : undefined;
+    if (!found) throw new Error(`open a git repository to set up ${BRAND_TITLE}`);
+    if (!(await confirm(found.root, await runInit(found.root, true)))) return "";
+    const report = await runInit(found.root, false);
+    await scan();
     return report;
   }
 
@@ -187,7 +216,25 @@ export function registerReviewTree(context: vscode.ExtensionContext): ReviewApi 
     vscode.commands.registerCommand(REVIEW_COMMANDS.markAi, onRow((file, line) => decide(file, line, "ai"))),
     vscode.commands.registerCommand(REVIEW_COMMANDS.keep, onRow((file, line) => decide(file, line, "keep"))),
     vscode.commands.registerCommand(REVIEW_COMMANDS.skip, onRow(skip)),
+    vscode.commands.registerCommand(REVIEW_COMMANDS.setup, guarded(() => setup())),
   );
   setMessage(`Scan to list likely AI comments. The ones you keep as ordinary comments are remembered in ${SCAN_IGNORE}.`);
-  return { scan: () => scan(), files: () => model.files(), decide, skip, apply, message: () => view.message, visible: () => view.visible };
+  void (async () => {
+    const folder = scanFolder();
+    const found = folder ? await findRepo(folder.uri.fsPath) : undefined;
+    if (found && !found.cli) {
+      setMessage(undefined);
+      await vscode.commands.executeCommand("setContext", SETUP_NEEDED, true);
+    }
+  })();
+  return {
+    scan: () => scan(),
+    files: () => model.files(),
+    decide,
+    skip,
+    apply,
+    setup: (confirm) => setup(confirm),
+    message: () => view.message,
+    visible: () => view.visible,
+  };
 }
