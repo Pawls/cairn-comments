@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import * as vscode from "vscode";
 import type { TestApi } from "../src/extension.js";
@@ -261,6 +261,39 @@ suite("markerless", () => {
     assert.equal(editor.document.isDirty, false);
     assert.doesNotMatch(sidecarText(), /## ewiw/);
     await waitFor("the lens to go", async () => (await api.refresh(editor)).placed!.lenses.length === 4);
+  });
+
+  test("a string that is not a docstring demotes, and Promote writes it back as the same string", async () => {
+    const { api } = await open();
+    await setMode(api, "on");
+    const file = path.join(repo(), "notes.py");
+    const notesSidecar = path.join(repo(), ".agents/comments/notes.py.md");
+    const original = 'def settle(order):\n    """Settle one order."""\n    ledger.write(order.id)\n    """\n    Idempotent: keyed on order.id.\n    """\n    notify(order)\n';
+    writeFileSync(file, original);
+    try {
+      const editor = await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(file));
+      const titles = async (line: number) => {
+        const found = await vscode.commands.executeCommand<vscode.CodeAction[]>("vscode.executeCodeActionProvider", editor.document.uri, new vscode.Range(line, 0, line, 0));
+        return found.filter((a) => a.command?.command.startsWith("cairn.")).map((a) => a.title);
+      };
+      assert.deepEqual(await titles(1), [], "a docstring stays in the code");
+      assert.deepEqual(await titles(4), ["Demote string to an AI comment (move it to the sidecar)"]);
+
+      assert.equal(await vscode.commands.executeCommand("cairn.demoteComment", { file, line: 5 }), "demoted 1 comment(s) in 1 file(s)\n");
+      const code = 'def settle(order):\n    """Settle one order."""\n    ledger.write(order.id)\n    notify(order)\n';
+      await waitFor("the string to leave the file", () => editor.document.getText() === code);
+      const id = /^## ([0-9a-z]{4})\n<!-- .*literal=triple-double/m.exec(readFileSync(notesSidecar, "utf8"))?.[1];
+      assert.ok(id, "the entry records the string's quotes");
+      await waitFor("the demoted comment's thread", async () => !!(await api.refresh(editor)).placed?.threads.length);
+
+      await vscode.commands.executeCommand("cairn.promoteComment", comment(api, editor, id));
+      assert.equal(readFileSync(file, "utf8"), original);
+      assert.equal(editor.document.isDirty, false);
+    } finally {
+      await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
+      rmSync(file, { force: true });
+      rmSync(notesSidecar, { force: true });
+    }
   });
 
   test("a copied function carries its comments to where it is pasted", async () => {
