@@ -294,6 +294,33 @@ suite("overlay", () => {
     await waitFor("the entry saved back", () => sidecarText() === committed);
   });
 
+  test("Ctrl+Z after a paste saves the sidecar but leaves the source's unsaved edits unsaved", async () => {
+    const { api, editor } = await shown("codelens");
+    const committed = readFileSync(samplePath(), "utf8");
+    const transfer = new vscode.DataTransfer();
+    const copied = new vscode.Range(9, 0, 15, 0);
+    await api.paste.prepareDocumentPaste(editor.document, [copied], transfer);
+    transfer.set("text/plain", new vscode.DataTransferItem(editor.document.getText(copied)));
+    const end = editor.document.lineAt(editor.document.lineCount - 1).range.end;
+    await editor.edit((b) => b.insert(end, "\n\n\n"));
+    const pasteAt = editor.document.lineCount - 1;
+    const at = new vscode.Range(pasteAt, 0, pasteAt, 0);
+    const pasted = (await api.paste.provideDocumentPasteEdits(editor.document, [at], transfer))![0]!;
+    // One edit, as a real paste lands, so one undo step covers the source and the sidecar.
+    const edit = new vscode.WorkspaceEdit();
+    edit.insert(editor.document.uri, at.start, pasted.insertText as string);
+    for (const [uri, edits] of pasted.additionalEdit!.entries()) for (const e of edits) edit.replace(uri, e.range, e.newText);
+    assert.ok(await vscode.workspace.applyEdit(edit));
+    await waitFor("the pasted comment in the sidecar", () => /copied-from=ewiw/.test(sidecarText()));
+
+    await vscode.window.showTextDocument(editor.document);
+    await vscode.commands.executeCommand("undo");
+    await waitFor("the pasted comment gone from the sidecar", () => !/copied-from=ewiw/.test(sidecarText()));
+    await settle(500); // a save of the source would follow the sidecar's
+    assert.equal(readFileSync(samplePath(), "utf8"), committed, "the edit made before the paste was saved");
+    assert.equal(editor.document.isDirty, true);
+  });
+
   test("a string that is not a docstring demotes, and Promote writes it back as the same string", async () => {
     const { api } = await open();
     await setMode(api, "on");
