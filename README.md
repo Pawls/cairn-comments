@@ -60,18 +60,36 @@ kept and listed until you remove it.
 
 Needs git and Node 22 or later.
 
+**From VS Code:** install **Cairn Comments: Hide AI Comments** from the Marketplace, open
+the repository, and open the AI Comments view in the Activity Bar. In a repository that is
+not set up yet, it offers **Set Up Cairn Comments in This Repository**: it lists every
+change it will make, and makes them when you confirm. No terminal or npm step.
+
+**From a terminal:**
+
 ```sh
 npm install -g cairn-comments
 cd your-repo
 cairn init                          # filter, merge driver, .gitattributes, git hooks
+```
+
+Either way, commit the result and give agents their own checkout:
+
+```sh
 git add .gitattributes && git commit -m "Set up Cairn Comments"
 cairn worktree add ../agent -b agent  # a checkout for agents, with full comments
 ```
 
 `init` prints every change it makes; `cairn init --dry-run` shows the list first and
 changes nothing. Git config and the hooks are local to your clone. Everyone who clones the
-repository runs `cairn init` once. Clones without it still work: they see the plain code,
-and [`check`](#keeping-the-repository-consistent) catches anything they commit wrong.
+repository sets it up once. Clones without it still work: they see the plain code, and
+[`check`](#keeping-the-repository-consistent) catches anything they commit wrong.
+
+Git runs the CLI on every status, diff, and commit, so `init` records a copy it keeps in
+its own folder (`%LOCALAPPDATA%\cairn\cli` on Windows, `~/.local/share/cairn/cli`
+elsewhere) rather than wherever npm or VS Code put it. The extension and `init` update that
+copy when they carry a newer version. If a repository's recorded CLI ever goes missing, the
+extension offers to repair it.
 
 Point your agent at `../agent`. The comments it writes as `#~ like this` stay out of the
 committed code, with the text in `.agents/comments/`. A commit that only adds or edits
@@ -79,8 +97,8 @@ comments changes no code, so git has nothing to commit until the sidecar is stag
 [agent hooks](#agent-setup) record it after every edit, and otherwise `cairn sync` then
 `git add .agents` does.
 
-Then install **Cairn Comments: Hide AI Comments** from the VS Code Marketplace. Toggle the
-overlay with the `AI comments` status bar item or `Ctrl+Alt+`` ` (`Cmd+Alt+`` ` on macOS).
+If you set up from a terminal, install **Cairn Comments: Hide AI Comments** from the VS Code
+Marketplace too. Toggle the overlay with the `AI comments` status bar item or `Ctrl+Alt+`` ` (`Cmd+Alt+`` ` on macOS).
 
 ## Agent setup
 
@@ -170,7 +188,8 @@ cairn uninstall          # undo init: config, hook, .gitattributes lines, harnes
 
 `uninstall --dry-run` lists the changes first. Uninstalling leaves `.agents/comments/`
 alone; it is your data. Without `promote --all`, the comments stay there and out of the
-code.
+code. The CLI's own folder stays too, since other repositories may still use it; delete it
+once none does.
 
 ## FAQ
 

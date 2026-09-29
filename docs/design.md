@@ -776,8 +776,9 @@ heading and the second branch's `<!-- ... -->` metadata line read back as body t
   web-tree-sitter looks, relative to its own module) and every grammar in `LANGUAGES` into
   `grammars/`, which `resolveWasm` prefers over `node_modules`. Neither package has runtime
   dependencies, so the grammar packages' native install scripts never run for users.
-- **Sizes.** The npm tarball is 0.88 MB (9.52 MB unpacked, 11 files; the C# grammar alone is
-  5.1 MB). The `.vsix` is 910 KB.
+- **Sizes.** The npm tarball is 0.88 MB (9.52 MB unpacked, 12 files; the C# grammar alone is
+  5.1 MB). The `.vsix` is 1.34 MB (2026-09-29): it also carries the CLI's `main.js` and
+  `version.json`, which share the extension's WASM and grammars in `dist/`.
 - **The bundle is also faster.** One-shot `clean` on Windows, Node 24, median of 9
   (2026-09-23, on the marker filter of that time): 47 ms for a file with no sigil and
   62 ms with one comment, against 60 ms and 75 ms from the `tsc` output, which loads each
@@ -791,8 +792,8 @@ heading and the second branch's `<!-- ... -->` metadata line read back as body t
   `init` writes an absolute `node "<path>/main.js"` into the filter, merge driver, and
   hooks, and git runs it in every initialized repository whether or not an editor is
   open. A path that disappears makes every commit fail in the pre-commit hook and leaves
-  `status` and `diff` unfiltered. Today `defaultCommand` records wherever the running CLI
-  sits, and none of the ways to run it gives a path that lasts:
+  `status` and `diff` unfiltered. Before A17, `init` recorded wherever the running CLI sat,
+  and none of the ways to run it gives a path that lasts:
   - The extension's own folder is versioned (`...-vscode-0.1.0`) and deleted on update.
   - `npx` runs from `~/.npm/_npx/<hash>`, a cache npm prunes. Recording `npx cairn-comments`
     itself instead would add package resolution to every git status, diff, and add.
@@ -805,6 +806,17 @@ heading and the second branch's `<!-- ... -->` metadata line read back as body t
   package on `init`. A copy replaces the installed one only when its version is newer, so
   an older global install never downgrades what the extension placed. `uninstall` leaves
   the home in place, since other repositories may still record it.
+
+  How it is built (`packages/core/src/home.ts`): each bundle carries `version.json`
+  (`version` from package.json, `build` a bundle timestamp, so a same-version rebuild still
+  counts as newer during development). An install copies the bundle into
+  `<home>/<version>-<build>/` under a temporary name and renames it whole, then replaces
+  `<home>/main.js`, a one-line `import` of that folder, by rename. A filter starting
+  mid-install loads the old copy or the new one, never a mix of files. The copy just
+  replaced stays until the next install, for a process that read the old `main.js` but has
+  not imported yet. `CAIRN_CLI_HOME` overrides the folder; the test harnesses set it. A
+  later `init` rewrites every recorded command, agent hooks already installed included, so
+  it is also the repair for a repository whose recorded path is gone.
 - **Rejected: VS Code's `globalStorage` as the home.** VS Code owns that folder and may clear
   it when the extension is uninstalled, but a repository stays wired to the CLI until
   `uninstall`, not until the extension goes.

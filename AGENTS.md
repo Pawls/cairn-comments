@@ -43,8 +43,9 @@ platform (WSL Ubuntu so far). The integration suites already run each scenario u
 - **The brand lives in one constant** (`packages/core/src/brand.ts`). The CLI `bin` key
   and the extension manifest repeat it; `packages/cli/test/brand.test.ts` guards them.
 - **Integration tests use the `Sandbox` harness** (`packages/cli/test/harness.ts`), which
-  isolates `GIT_CONFIG_GLOBAL` and `XDG_CONFIG_HOME` (git's global ignore file). Never let
-  a test touch the developer's git config or hooks.
+  isolates `GIT_CONFIG_GLOBAL`, `XDG_CONFIG_HOME` (git's global ignore file), and
+  `CAIRN_CLI_HOME` (where `init` installs the CLI); the e2e scratch repositories do the same.
+  Never let a test touch the developer's git config, hooks, or CLI home.
 - **Packages have no runtime dependencies.** Both bundle core and web-tree-sitter, and
   `scripts/bundle-assets.mjs` copies the WASM beside them; a new runtime import must bundle
   too (design.md § Packaging).
