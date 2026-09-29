@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import * as vscode from "vscode";
 import type { TestApi } from "../src/extension.js";
@@ -82,12 +82,21 @@ function comment(api: TestApi, editor: vscode.TextEditor, id: string): PlacedCom
 async function reset(): Promise<void> {
   for (const document of vscode.workspace.textDocuments) {
     if (!document.isDirty || document.uri.scheme !== "file") continue;
+    // A buffer with no editor (a sidecar) is shown only to revert it: a sidecar left in a
+    // tab is the user's to save, so a later test's undo would not save it.
+    const shown = vscode.window.visibleTextEditors.some((e) => e.document === document);
     await vscode.window.showTextDocument(document);
-    await vscode.commands.executeCommand("workbench.action.files.revert");
+    await vscode.commands.executeCommand(shown ? "workbench.action.files.revert" : "workbench.action.revertAndCloseActiveEditor");
   }
   execFileSync("git", ["checkout", "--", "."], { cwd: repo() });
+  // Every buffer, the sidecar's included, must reload before the next test edits it: VS Code
+  // refuses an edit or save to a buffer older than its file ("has changed in the meantime").
   const committed = readFileSync(samplePath(), "utf8");
   await waitFor("the file to reload", async () => (await vscode.workspace.openTextDocument(samplePath())).getText() === committed);
+  for (const document of vscode.workspace.textDocuments) {
+    if (document.uri.scheme !== "file" || !existsSync(document.fileName)) continue;
+    await waitFor(`${path.basename(document.fileName)} to reload`, () => document.getText() === readFileSync(document.fileName, "utf8"));
+  }
 }
 
 suite("overlay", () => {

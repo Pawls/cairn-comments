@@ -167,7 +167,6 @@ const TESTS: Record<string, (w: Window) => Promise<void>> = {
     const acrossFiles = w.page.locator(".monaco-dialog-box .monaco-button", { hasText: /Undo in \d+ Files/ });
     await acrossFiles.click({ timeout: 2_000 }).catch(() => undefined);
     await w.page.locator(".codelens-decoration a", { hasText: original }).waitFor({ timeout: 5_000 });
-    await w.command("File: Save All");
     await waitFor("the original body back in the sidecar", () => w.sidecar().includes(original) && !w.sidecar().includes("an edited body"));
     assert.equal(w.read("sample.py"), readFileSync(path.join(packageRoot, "e2e/fixture/sample.py"), "utf8"), "the source is untouched");
   },

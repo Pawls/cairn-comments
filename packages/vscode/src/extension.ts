@@ -39,6 +39,9 @@ export const COMMANDS = {
 /** How long a paste's sidecar change is expected before a later change is no longer taken for it. */
 const PASTE_SAVE_WINDOW_MS = 5_000;
 
+/** How close together a source's and its sidecar's undo events must come to count as one undo step. */
+const UNDO_PAIR_MS = 1_000;
+
 const STATE_KEY = "overlay.on";
 const DEBOUNCE_MS = 100;
 
@@ -95,6 +98,17 @@ class SidecarStore {
   entries(file: string): Map<string, SidecarEntry> {
     return new Map((this.get(file)?.entries ?? []).map((e) => [e.id, e]));
   }
+}
+
+function sameFile(file: string | undefined, uri: vscode.Uri): boolean {
+  return file !== undefined && vscode.Uri.file(file).toString() === uri.toString();
+}
+
+/** Whether a tab shows `uri`, so its unsaved changes are the user's to keep or discard. */
+function isInTab(uri: vscode.Uri): boolean {
+  return vscode.window.tabGroups.all.some((group) =>
+    group.tabs.some((tab) => tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === uri.toString()),
+  );
 }
 
 function locate(document: vscode.TextDocument): Located | undefined {
@@ -223,6 +237,23 @@ export function activate(context: vscode.ExtensionContext): TestApi {
     },
   });
 
+  // An undo or redo that reaches a sidecar reverts one of the extension's own edits (Ctrl+Z
+  // asks to undo across files). Its buffer is saved at once, with the source when the same
+  // step changed it; see design.md § Promote and demote, "Undo". The two files' changes
+  // arrive as separate events, in either order, so each is remembered for a moment.
+  const undoneAt = new Map<string, number>();
+  const justUndone = (document: vscode.TextDocument) => Date.now() - (undoneAt.get(document.uri.toString()) ?? -Infinity) < UNDO_PAIR_MS;
+  const saveUndone = async (document: vscode.TextDocument) => {
+    undoneAt.set(document.uri.toString(), Date.now());
+    const sidecarFile = isSidecar(document) ? document.fileName : locate(document)?.sidecar;
+    const sidecar = vscode.workspace.textDocuments.find((d) => sameFile(sidecarFile, d.uri));
+    if (!sidecar || !justUndone(sidecar) || isInTab(sidecar.uri)) return;
+    const source = vscode.workspace.textDocuments.find((d) => !isSidecar(d) && sameFile(locate(d)?.sidecar, sidecar.uri));
+    // Not guarded by isDirty: the change event arrives before the dirty flag does.
+    await sidecar.save();
+    if (source && justUndone(source)) await source.save();
+  };
+
   context.subscriptions.push(
     watcher,
     watcher.onDidChange(onSidecarChange),
@@ -231,6 +262,9 @@ export function activate(context: vscode.ExtensionContext): TestApi {
     { dispose: () => pasteSaves.forEach((t) => clearTimeout(t)) },
     vscode.window.onDidChangeVisibleTextEditors(refreshAll),
     vscode.workspace.onDidChangeTextDocument((e) => {
+      // An event with no changes only reports the dirty flag.
+      if (e.reason !== undefined) void saveUndone(e.document);
+      else if (e.contentChanges.length) undoneAt.delete(e.document.uri.toString());
       if (isSidecar(e.document)) {
         const pending = pasteSaves.get(e.document.fileName);
         if (pending && e.document.isDirty) {

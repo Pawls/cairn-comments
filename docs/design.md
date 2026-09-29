@@ -291,7 +291,7 @@ code action, which runs the CLI.
   saves the source, as the CLI's promote leaves it. Each is one edit that includes the
   source file, so Ctrl+Z there undoes it; Edit, Confirm, and Delete change only the sidecar
   and add an empty edit to the source, which puts it in the same undo step without
-  dirtying it. With the overlay off there are no threads. VS Code opens its Comments panel the first time a file with threads opens in a
+  dirtying it. The undo is saved in both files (§ Promote and demote, "Undo"). With the overlay off there are no threads. VS Code opens its Comments panel the first time a file with threads opens in a
   session (`comments.openView`); the extension leaves that user setting alone.
 - **Live tracking.** Placement runs on open, on save, and whenever the buffer
   is clean again after an edit (a revert, an undo to the saved text, a reload after a
@@ -669,7 +669,8 @@ suites.
   outside an agent worktree. It overrides the scan-only protections (ticketed TODO,
   commented-out code) but refuses doc, pragma, license, and unconvertible comments, whose
   meaning depends on staying in the code. Every target is checked before any file is
-  written.- **Python strings used as comments** (`packages/core/src/literals.ts`). Demote also takes
+  written.
+- **Python strings used as comments** (`packages/core/src/literals.ts`). Demote also takes
   a bare string statement (a `"""` note between two statements); scan never proposes one.
   It refuses a docstring by PEP 257: the first statement of a module, class, or function,
   and an attribute docstring, right after an assignment at module or class level or in
@@ -698,6 +699,14 @@ suites.
   (`promotePlaced`) through the same single edit. These rewrites always change a source's clean output
   (a comment leaves or joins the code), so skipping the CLI's re-stat cannot leave git
   with a modified-but-empty diff (§ Git behavior, item 5).
+- **Undo.** VS Code's undo does not save, so after Ctrl+Z the source and its sidecar
+  both held unsaved changes, and nobody sees the sidecar's buffer. Closing the source
+  without saving then put an undone promote's ordinary comment back on disk while the
+  sidecar buffer kept the entry again: the comment showed twice. So when an undo or redo
+  changes a sidecar that no tab shows, the extension saves it at once, and saves the
+  source too when the same step changed it. Undoing a promote is then a demote on disk,
+  and undoing a delete, confirm, edit, or paste restores the stored entry. A sidecar open
+  in a tab is left to the user.
 
 ## Check
 
