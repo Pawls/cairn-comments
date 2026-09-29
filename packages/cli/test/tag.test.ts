@@ -51,16 +51,16 @@ describe.each([false, true])("tag and hook adapters (autocrlf=%s)", (autocrlf) =
     box.write(box.path("main", "src/new.py"), "# Now we compute the total\nx = 1\n");
     const out = box.cli(main, "tag", "--changed", "--by", "manual", "--model", "m-1", "--session", "s-1");
     expect(out).toBe("tagged 2 comment(s); synced 2 file(s)\n");
-    expect(read("main", "src/app.py")).toMatch(/^def total\(items\):\n {4}# sum of line prices\n {4}#~[0-9a-z]{4}\n {4}return/);
-    expect(read("main", "src/new.py")).toMatch(/^#~[0-9a-z]{4}\nx = 1\n$/);
+    expect(read("main", "src/app.py")).toBe(BASE);
+    expect(read("main", "src/new.py")).toBe("x = 1\n");
     const [entry] = entries("main", "src/app.py");
     expect(entry!.body).toBe("Prices are already tax-inclusive");
-    expect([...entry!.meta.keys()]).toEqual(["by", "model", "session", "at", "anchor"]);
+    expect([...entry!.meta.keys()].slice(0, 5)).toEqual(["by", "model", "session", "at", "pos"]);
     expect(entry!.meta.get("by")).toBe("manual");
     expect(entry!.meta.get("at")).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
-    expect(read("main", ".agents/comments/src/app.py.md")).toMatch(/<!-- by=manual model=m-1 session=s-1 at=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z anchor=[0-9a-f]{8} -->/);
-    // A second run finds nothing new.
-    expect(box.cli(main, "tag", "--changed")).toBe("tagged 0 comment(s); synced 2 file(s)\n");
+    expect(read("main", ".agents/comments/src/app.py.md")).toMatch(/<!-- by=manual model=m-1 session=s-1 at=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z pos=before scope=total /);
+    // A second run finds nothing new; app.py reads as committed again, so only the new file is changed.
+    expect(box.cli(main, "tag", "--changed")).toBe("tagged 0 comment(s); synced 1 file(s)\n");
     if (autocrlf) expect(readFileSync(box.path("main", "src/app.py"), "utf8")).not.toMatch(/[^\r]\n/);
     box.git(main, "add", "-A");
     box.git(main, "commit", "-qm", "tagged");
@@ -71,18 +71,16 @@ describe.each([false, true])("tag and hook adapters (autocrlf=%s)", (autocrlf) =
     const file = `src/${harness}.py`;
     box.write(box.path("wt", file), EDITED);
     expect(box.cliWithInput(wt, payload(harness, wt, file), "hook", harness)).toBe("");
-    // The agent keeps reading the comment inline; the diff shows a bare marker only.
+    // The agent keeps reading the comment inline; git sees the code unchanged.
     expect(read("wt", file)).toMatch(/\n {4}#~[0-9a-z]{4} Prices are already tax-inclusive\n/);
-    expect(box.git(wt, "diff", "--no-color", "-U0", file).split("\n").filter((l) => /^[-+][^-+]/.test(l))).toEqual([
-      expect.stringMatching(/^\+ {4}#~[0-9a-z]{4}$/),
-    ]);
+    expect(box.git(wt, "diff", "--no-color", file)).toBe("");
     const meta = Object.fromEntries(entries("wt", file)[0]!.meta);
     const expected = {
       "claude-code": { by: "claude-code", model: "claude-haiku-4-5-20251001", session: "4f5ee155-6738-4fd8-b6bc-110299f93d24" },
       codex: { by: "codex", model: "gpt-5.5-codex", session: "019a6f2c-7d1e-7b30-9c4a-3f5d2e8b1a60" },
       cursor: { by: "cursor", model: "claude-sonnet-5", session: "5c1d9a4e-2b7f-4e61-a3d8-0f9e6b2c7a14" },
     }[harness];
-    expect(meta).toEqual({ ...expected, at: expect.stringMatching(/Z$/), anchor: expect.stringMatching(/^[0-9a-f]{8}$/) });
+    expect(meta).toMatchObject({ ...expected, at: expect.stringMatching(/Z$/), pos: "before", scope: "total" });
   });
 
   it("a hook for a file outside any initialized repository does nothing", () => {

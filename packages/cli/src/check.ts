@@ -1,15 +1,15 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { BRAND, LANGUAGES, SIDECAR_ROOT, findMarkers, languageForPath, parseSidecar, placeComments, sidecarPathFor, type Marker, type Sidecar } from "@cairn-comments/core";
+import { BRAND, SIDECAR_ROOT, findMarkers, languageForPath, parseSidecar, placeComments, sidecarPathFor, type Sidecar, type SidecarEntry } from "@cairn-comments/core";
 import { decodeExact, readSidecar, writeSidecar } from "./files.js";
-import { grepTokens, ignoredByPattern, indexBlobs, managedFiles, markerless, stage, stagedFiles, toRepoPath, trackedFiles } from "./git.js";
+import { indexBlobs, managedFiles, stage, stagedFiles, toRepoPath, trackedFiles } from "./git.js";
 
 export type Problem =
-  /** A sigil comment whose text reached the index: a clone without the filter, or a failed `clean`. */
+  /** A sigil comment that reached the index: a clone without the filter, or a failed `clean`. */
   | { kind: "expanded"; file: string; line: number; id?: string; text: string }
-  | { kind: "missing-body"; file: string; line: number; id: string; sidecar: string }
-  | { kind: "orphan-body"; file: string; id: string; source: string; hint?: string }
-  /** Markerless: an entry that no longer places in its source; `scope` is its last known declaration. */
+  /** An entry whose sidecar's source is not in the index: renamed or deleted. */
+  | { kind: "missing-source"; file: string; id: string; source: string; hint?: string }
+  /** An entry that no longer places in its source; `scope` is its last known declaration. */
   | { kind: "unplaced"; file: string; id: string; source: string; scope?: string; text: string };
 
 export type Fix =
@@ -22,9 +22,9 @@ export interface CheckOptions {
   /** Staged sources, their sidecars, and staged sidecar changes: what a commit is about to record. */
   staged: boolean;
   fix: boolean;
-  /** Markerless: also list entries that no longer place in their source. */
+  /** Also list entries that no longer place in their source. */
   orphans?: boolean;
-  /** Markerless, with `fix`: remove those entries. Nothing else ever deletes them. */
+  /** With `fix`: remove those entries. Nothing else ever deletes them. */
   prune?: boolean;
 }
 
@@ -33,22 +33,17 @@ export interface CheckReport {
   fixes: Fix[];
 }
 
-interface Indexed {
-  markers: Marker[];
-  text: string;
-}
-
 const PREFIX = `${SIDECAR_ROOT}/`;
 const isSidecarPath = (p: string) => p.startsWith(PREFIX) && p.endsWith(".md");
 const sourceOf = (sidecar: string) => sidecar.slice(PREFIX.length, -".md".length);
 const lineAt = (text: string, offset: number) => text.slice(0, offset).split("\n").length;
-const SIGILS = [...new Set(LANGUAGES.map((l) => l.lineSigil))];
 
 /**
  * The guard for clones without the filter (design.md § Check). Reads the index, never the
  * working tree, so the pre-commit hook and CI judge exactly what is or will be committed.
- * `fix` moves an orphaned body to the one file whose marker lacks it (a rename) and
- * removes bodies no marker references anywhere, then stages the sidecars it changed.
+ * `fix` moves a renamed file's sidecar to the file its comments now place in, removes a
+ * deleted file's, and (with `prune`) drops entries that no longer place, then stages the
+ * sidecars it changed.
  */
 export async function check(root: string, options: CheckOptions): Promise<CheckReport> {
   const tracked = trackedFiles(root);
@@ -64,133 +59,83 @@ export async function check(root: string, options: CheckOptions): Promise<CheckR
   }
 
   const blobs = indexBlobs(root, [...sources, ...sidecars, ...[...sidecars].map(sourceOf)]);
-  const load = (files: Iterable<string>) => {
-    const missing = [...files].filter((f) => !blobs.has(f));
-    for (const [f, b] of indexBlobs(root, missing)) blobs.set(f, b);
-  };
-  const parsed = new Map<string, Promise<Indexed | undefined>>();
-  const indexed = (file: string): Promise<Indexed | undefined> => {
-    let p = parsed.get(file);
-    if (!p) {
-      p = (async () => {
-        const spec = languageForPath(file);
-        const bytes = blobs.get(file);
-        const text = bytes && decodeExact(bytes);
-        if (!spec || text === undefined) return undefined;
-        return { text, markers: await findMarkers(spec, text) };
-      })();
-      parsed.set(file, p);
-    }
-    return p;
+  const textOf = (file: string) => {
+    const bytes = blobs.get(file);
+    return bytes && decodeExact(bytes);
   };
   const sidecarIn = (file: string): Sidecar => parseSidecar(blobs.get(file)?.toString("utf8") ?? "");
-  const hasBody = (sidecar: string, id: string) => sidecarIn(sidecar).entries.some((e) => e.id === id && e.body);
-  const markerIds = async (file: string) => new Set((await indexed(file))?.markers.flatMap((m) => (m.id ? [m.id] : [])) ?? []);
 
   const problems: Problem[] = [];
-  // Markerless blobs hold no markers: any sigil comment in one is a leak, and an entry is an
-  // orphan when it no longer places in its source's blob (design.md § Anchoring).
-  if (markerless(root)) {
-    for (const file of sources) {
-      const found = await indexed(file);
-      for (const m of found?.markers ?? []) {
-        problems.push({ kind: "expanded", file, line: lineAt(found!.text, m.start), id: m.id, text: (m.text ?? "").split("\n")[0]! });
-      }
-    }
-    if (!options.orphans && !options.prune) return { problems: sortProblems(problems), fixes: [] };
-    const fixes: Fix[] = [];
-    for (const sidecar of sidecars) {
-      if (!blobs.has(sidecar)) continue;
-      const entries = sidecarIn(sidecar).entries;
-      const source = sourceOf(sidecar);
-      const text = blobs.has(source) ? decodeExact(blobs.get(source)!) : undefined;
-      // A sidecar whose source is gone places nothing.
-      const unplaced = text === undefined ? entries.filter((e) => e.meta.has("pos")).map((e) => e.id) : (await placeComments(source, text, { preamble: "", entries })).unplaced;
-      for (const id of unplaced) {
-        const entry = entries.find((e) => e.id === id)!;
-        if (options.fix && options.prune) fixes.push({ kind: "pruned-unplaced", id, from: sidecar });
-        else problems.push({ kind: "unplaced", file: sidecar, id, source, scope: entry.meta.get("scope"), text: entry.body.split("\n")[0]! });
-      }
-    }
-    await applyFixes(root, fixes, sidecarIn);
-    return { problems: sortProblems(problems), fixes };
-  }
-  // Zero-trace mode (design.md § Decisions): with the folder ignored, markers dangle by choice.
-  const bodiesKept = !ignoredByPattern(root, `${PREFIX}x.md`);
-  const missing: Extract<Problem, { kind: "missing-body" }>[] = [];
   for (const file of sources) {
-    const found = await indexed(file);
-    if (!found) continue;
-    for (const m of found.markers) {
-      const line = lineAt(found.text, m.start);
-      if (m.kind !== "bare") problems.push({ kind: "expanded", file, line, id: m.id, text: m.text!.split("\n")[0]! });
-      else if (bodiesKept && !hasBody(sidecarPathFor(file), m.id!)) {
-        missing.push({ kind: "missing-body", file, line, id: m.id!, sidecar: sidecarPathFor(file) });
-      }
+    const spec = languageForPath(file);
+    const text = textOf(file);
+    if (!spec || text === undefined) continue;
+    for (const m of await findMarkers(spec, text)) {
+      problems.push({ kind: "expanded", file, line: lineAt(text, m.start), id: m.id, text: (m.text ?? "").split("\n")[0]! });
     }
   }
-  if (!bodiesKept) return { problems, fixes: [] };
-
-  const orphans: { sidecar: string; id: string }[] = [];
-  const orphansIn = async (sidecar: string) => {
-    const ids = await markerIds(sourceOf(sidecar));
-    return sidecarIn(sidecar).entries.filter((e) => !ids.has(e.id)).map((e) => ({ sidecar, id: e.id }));
-  };
-  for (const sidecar of sidecars) if (blobs.has(sidecar)) orphans.push(...(await orphansIn(sidecar)));
-
-  // A body renamed away can sit in a sidecar outside the scope; look it up by id.
-  const unmatched = [...new Set(missing.filter((m) => !orphans.some((o) => o.id === m.id)).map((m) => m.id))];
-  const elsewhere = grepTokens(root, unmatched.map((id) => `## ${id}`), true);
-  const extra = [...new Set([...elsewhere.values()].flatMap((s) => [...s]))].filter((s) => isSidecarPath(s) && !sidecars.has(s));
-  load([...extra, ...extra.map(sourceOf)]);
-  for (const sidecar of extra) orphans.push(...(await orphansIn(sidecar)).filter((o) => unmatched.includes(o.id)));
-
-  // Where each orphan's id is a marker now: in the index, then anywhere in the working tree.
-  const tokens = (id: string) => SIGILS.map((s) => s + id);
-  const orphanIds = [...new Set(orphans.map((o) => o.id))];
-  const inIndex = grepTokens(root, orphanIds.flatMap(tokens), true);
-  const inWorktree = grepTokens(root, orphanIds.flatMap(tokens), false);
-  const filesWith = (found: Map<string, Set<string>>, id: string) => [...new Set(tokens(id).flatMap((t) => [...(found.get(t) ?? [])]))];
-  const referencing = [...new Set(orphanIds.flatMap((id) => filesWith(inIndex, id)))];
-  load(managedFiles(root, referencing).flatMap((f) => [f, sidecarPathFor(f)]));
 
   const fixes: Fix[] = [];
-  const claimed = new Set<string>();
-  for (const orphan of orphans) {
-    const holders: string[] = [];
-    const lacking: string[] = [];
-    for (const f of managedFiles(root, filesWith(inIndex, orphan.id))) {
-      if (!(await markerIds(f)).has(orphan.id)) continue;
-      holders.push(f);
-      if (!hasBody(sidecarPathFor(f), orphan.id)) lacking.push(f);
+  const gone = [...sidecars].filter((s) => blobs.has(s) && !blobs.has(sourceOf(s)));
+  if (gone.length) {
+    // A staged rename's new half is a staged addition; outside a commit, any file without a sidecar.
+    const indexed = new Set(tracked);
+    const candidates = managedFiles(root, options.staged ? stagedFiles(root, "A") : tracked).filter((f) => !indexed.has(sidecarPathFor(f)));
+    for (const [f, b] of indexBlobs(root, candidates.filter((f) => !blobs.has(f)))) blobs.set(f, b);
+    const claimed = new Set<string>();
+    for (const sidecar of gone) {
+      const entries = sidecarIn(sidecar).entries;
+      const targets = await placesIn(sourceOf(sidecar), entries, candidates, textOf);
+      const target = targets.length === 1 && !claimed.has(targets[0]!) ? targets[0] : undefined;
+      if (target) claimed.add(target);
+      for (const { id } of entries) {
+        if (target) fixes.push({ kind: "relocated", id, from: sidecar, to: sidecarPathFor(target) });
+        else if (!targets.length) fixes.push({ kind: "pruned", id, from: sidecar });
+        else problems.push({ kind: "missing-source", file: sidecar, id, source: sourceOf(sidecar), hint: `its comments place in more than one file: ${targets.join(", ")}` });
+      }
     }
-    const rivals = orphans.filter((o) => o.id === orphan.id).length;
-    const report = (hint?: string) => {
-      if (sidecars.has(orphan.sidecar)) problems.push({ kind: "orphan-body", file: orphan.sidecar, id: orphan.id, source: sourceOf(orphan.sidecar), hint });
-    };
-    if (lacking.length === 1 && rivals === 1) {
-      fixes.push({ kind: "relocated", id: orphan.id, from: orphan.sidecar, to: sidecarPathFor(lacking[0]!) });
-      claimed.add(`${lacking[0]}\0${orphan.id}`);
-    } else if (lacking.length) report(`ambiguous: markers in ${lacking.join(", ")} and ${rivals} bodies with this id`);
-    else if (!holders.length && managedFiles(root, filesWith(inWorktree, orphan.id)).length) {
-      report(`referenced in the working tree by ${managedFiles(root, filesWith(inWorktree, orphan.id)).join(", ")}; stage it`);
-    } else if (sidecars.has(orphan.sidecar)) fixes.push({ kind: "pruned", id: orphan.id, from: orphan.sidecar });
   }
-  problems.push(...missing.filter((m) => !claimed.has(`${m.file}\0${m.id}`)));
+
+  if (options.orphans || options.prune) {
+    for (const sidecar of sidecars) {
+      const text = textOf(sourceOf(sidecar));
+      if (!blobs.has(sidecar) || text === undefined) continue;
+      const entries = sidecarIn(sidecar).entries;
+      for (const id of (await placeComments(sourceOf(sidecar), text, { preamble: "", entries })).unplaced) {
+        const entry = entries.find((e) => e.id === id)!;
+        if (options.fix && options.prune) fixes.push({ kind: "pruned-unplaced", id, from: sidecar });
+        else problems.push({ kind: "unplaced", file: sidecar, id, source: sourceOf(sidecar), scope: entry.meta.get("scope"), text: entry.body.split("\n")[0]! });
+      }
+    }
+  }
 
   if (!options.fix) {
     for (const f of fixes) {
-      if (f.kind === "relocated") {
-        if (sidecars.has(f.from)) problems.push({ kind: "orphan-body", file: f.from, id: f.id, source: sourceOf(f.from), hint: `\`${BRAND} check --fix\` moves it to ${f.to}` });
-        // The target is outside the checked scope when only the old side was named or staged.
-        const target = missing.find((m) => m.id === f.id && sidecarPathFor(m.file) === f.to);
-        if (target) problems.push(target);
-      } else problems.push({ kind: "orphan-body", file: f.from, id: f.id, source: sourceOf(f.from), hint: `\`${BRAND} check --fix\` removes it` });
+      if (f.kind === "pruned-unplaced") continue;
+      const hint = f.kind === "relocated" ? `\`${BRAND} check --fix\` moves it to ${f.to}` : `\`${BRAND} check --fix\` removes it`;
+      problems.push({ kind: "missing-source", file: f.from, id: f.id, source: sourceOf(f.from), hint });
     }
     return { problems: sortProblems(problems), fixes: [] };
   }
   await applyFixes(root, fixes, sidecarIn);
   return { problems: sortProblems(problems), fixes };
+}
+
+/**
+ * The candidates in `source`'s language where any of `entries` anchored to code places:
+ * where a renamed source went. A comment kept by line number alone (`pos=row`) places in
+ * any file, so it says nothing.
+ */
+async function placesIn(source: string, entries: SidecarEntry[], candidates: string[], textOf: (file: string) => string | undefined): Promise<string[]> {
+  const anchored = entries.filter((e) => e.meta.has("pos") && e.meta.get("pos") !== "row");
+  if (!anchored.length) return [];
+  const found: string[] = [];
+  for (const candidate of candidates) {
+    const text = textOf(candidate);
+    if (text === undefined || languageForPath(candidate) !== languageForPath(source)) continue;
+    if ((await placeComments(candidate, text, { preamble: "", entries: anchored })).placed.length) found.push(candidate);
+  }
+  return found;
 }
 
 function sortProblems(problems: Problem[]): Problem[] {
@@ -225,15 +170,16 @@ export function formatCheck(report: CheckReport): string {
   const lines: string[] = [];
   for (const f of report.fixes) {
     if (f.kind === "relocated") lines.push(`relocated ${f.id}: ${f.from} -> ${f.to}`);
-    else if (f.kind === "pruned") lines.push(`removed ${f.id} from ${f.from}: its marker is gone from ${sourceOf(f.from)}`);
+    else if (f.kind === "pruned") lines.push(`removed ${f.id} from ${f.from}: ${sourceOf(f.from)} is gone`);
     else lines.push(`removed ${f.id} from ${f.from}: it no longer places in ${sourceOf(f.from)}`);
   }
   for (const p of report.problems) {
-    if (p.kind === "expanded") {
+    if (p.kind === "expanded" && !p.text) {
+      lines.push(`${p.file}:${p.line}: sigil comment committed (${p.id})`);
+    } else if (p.kind === "expanded") {
       lines.push(`${p.file}:${p.line}: comment committed with its text${p.id ? ` (${p.id})` : ""}: ${p.text}`);
-    } else if (p.kind === "missing-body") lines.push(`${p.file}:${p.line}: marker ${p.id} has no body in ${p.sidecar}`);
-    else if (p.kind === "unplaced") lines.push(`${p.file}: ${p.id} no longer places in ${p.source}${p.scope ? ` (last in ${p.scope})` : ""}: ${p.text}`);
-    else lines.push(`${p.file}: body ${p.id} has no marker in ${p.source}${p.hint ? ` (${p.hint})` : ""}`);
+    } else if (p.kind === "missing-source") lines.push(`${p.file}: ${p.id} has no source; ${p.source} is gone${p.hint ? ` (${p.hint})` : ""}`);
+    else lines.push(`${p.file}: ${p.id} no longer places in ${p.source}${p.scope ? ` (last in ${p.scope})` : ""}: ${p.text}`);
   }
   if (report.problems.some((p) => p.kind === "expanded")) {
     lines.push(`hint: this clone commits without the filter; run \`${BRAND} init\`, then \`${BRAND} collapse\` and commit the result`);

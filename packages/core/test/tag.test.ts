@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { convertComments, newComments, parseSidecar, serializeSidecar, sync } from "../src/index.js";
+import { convertComments, newComments, parseSidecar, recordComments, serializeSidecar } from "../src/index.js";
 
 const texts = async (path: string, source: string, baseline: string) => (await newComments(path, source, baseline)).map((c) => c.text);
 
@@ -41,7 +41,7 @@ describe("newComments", () => {
   });
 });
 
-describe("sync provenance", () => {
+describe("recorded provenance", () => {
   const meta = new Map([
     ["by", "claude-code"],
     ["model", "claude-haiku-4-5"],
@@ -51,12 +51,13 @@ describe("sync provenance", () => {
   it("stamps new and edited entries and leaves untouched ones alone", async () => {
     const stored = parseSidecar("## ab12\n<!-- hash=x -->\nold text\n\n## cd34\nsame\n");
     const source = "#~ab12 new text\n#~cd34 same\nx = 1\n#~ fresh\n";
-    const { sidecar } = await sync("a.py", source, stored, { meta });
+    const { sidecar } = await recordComments("a.py", source, stored, { meta });
     const byId = new Map(sidecar.entries.map((e) => [e.id, e]));
-    expect([...byId.get("ab12")!.meta.keys()]).toEqual(["hash", "by", "model", "at", "anchor"]);
-    // An unchanged body gains only its anchor, never provenance.
-    expect([...byId.get("cd34")!.meta.keys()]).toEqual(["anchor"]);
-    expect(new Map([...sidecar.entries[2]!.meta].filter(([k]) => k !== "anchor"))).toEqual(meta);
+    const provenance = (id: string) => [...byId.get(id)!.meta.keys()].filter((k) => !["pos", "node", "nth", "skip", "seq"].includes(k));
+    expect(provenance("ab12")).toEqual(["hash", "by", "model", "at"]);
+    // An unchanged body gains only its placement, never provenance.
+    expect(provenance("cd34")).toEqual([]);
+    expect(provenance(sidecar.entries[2]!.id)).toEqual(["by", "model", "at"]);
     expect(stored.entries[0]!.meta.size).toBe(1);
   });
 

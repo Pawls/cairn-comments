@@ -1,3 +1,4 @@
+import { PLACEMENT_KEYS } from "./placement.js";
 import type { Sidecar, SidecarEntry } from "./sidecar.js";
 
 export interface MergeResult {
@@ -10,14 +11,25 @@ function conflictText(ours: string, theirs: string): string {
   return ["<<<<<<< ours", ours, "=======", theirs, ">>>>>>> theirs"].join("\n");
 }
 
-/** Per key: a side that changed it wins; when both changed it differently, ours does. */
+const isPlacementKey = (key: string) => (PLACEMENT_KEYS as readonly string[]).includes(key);
+
+function placementOf(meta: ReadonlyMap<string, string>): string {
+  return JSON.stringify([...meta].filter(([k]) => isPlacementKey(k)));
+}
+
+/**
+ * Per key: a side that changed it wins; when both changed it differently, ours does. The
+ * placement keys are one unit, taken whole from one side: a scope from one recording and a
+ * node hash from another would place the comment on code neither side meant.
+ */
 function mergeMeta(base: ReadonlyMap<string, string>, ours: ReadonlyMap<string, string>, theirs: ReadonlyMap<string, string>): Map<string, string> {
+  const placement = placementOf(ours) === placementOf(base) ? theirs : ours;
   const merged = new Map<string, string>();
   for (const key of new Set([...ours.keys(), ...theirs.keys(), ...base.keys()])) {
     const b = base.get(key);
     const o = ours.get(key);
     const t = theirs.get(key);
-    const value = o === b ? t : o;
+    const value = isPlacementKey(key) ? placement.get(key) : o === b ? t : o;
     if (value !== undefined) merged.set(key, value);
   }
   return merged;

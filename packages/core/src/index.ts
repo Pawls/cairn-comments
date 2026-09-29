@@ -16,22 +16,6 @@ export {
   type ScanOptions,
   type ScannedComment,
 } from "./scan.js";
-export {
-  ANCHOR_KEY,
-  anchorsOf,
-  clean,
-  confirm,
-  isStale,
-  promote,
-  smudge,
-  staleMarkers,
-  sync,
-  type ConfirmResult,
-  type PromoteResult,
-  type StaleMarker,
-  type SyncOptions,
-  type SyncResult,
-} from "./filter.js";
 export { resolveIds } from "./ids.js";
 export { LITERAL_KEY } from "./literals.js";
 export {
@@ -55,7 +39,7 @@ export {
 } from "./owner.js";
 export { mergeSidecars, type MergeResult } from "./merge.js";
 export { LANGUAGES, languageForPath, type LanguageSpec } from "./languages.js";
-export { STALE_TAG, findMarkers, type FindOptions, type Marker, type MarkerKind } from "./markers.js";
+export { STALE_TAG, findMarkers, type Marker, type MarkerKind } from "./markers.js";
 export {
   bodiesOf,
   normalizeBody,

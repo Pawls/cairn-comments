@@ -75,7 +75,7 @@ describe.each([false, true])("scan (autocrlf=%s)", (autocrlf) => {
     expect(box.status(main)).toBe("");
   });
 
-  it("applies a reviewed list: accepted comments become markers, the rejected one is ignored", () => {
+  it("applies a reviewed list: accepted comments leave the code for the sidecar, the rejected one is ignored", () => {
     box.cli(main, "init");
     box.git(main, "add", "-A");
     box.git(main, "commit", "-qm", "init");
@@ -92,16 +92,11 @@ describe.each([false, true])("scan (autocrlf=%s)", (autocrlf) => {
       "?? .agents/scan-ignore",
       " M src/app.py",
     ].sort());
-    // Only the two accepted comment lines changed, each to a bare marker at its place.
+    // Only the two accepted comment lines changed: they left the code.
     const changed = box.git(main, "diff", "--no-color", "-U0", APP).split("\n").filter((l) => /^[-+][^-+]/.test(l));
-    expect(changed).toEqual([
-      "-    # Step 1: Read the file contents",
-      expect.stringMatching(/^\+ {4}#~[0-9a-z]{4}$/),
-      "-    # In a real application, you would hash the password here",
-      expect.stringMatching(/^\+ {4}#~[0-9a-z]{4}$/),
-    ]);
+    expect(changed).toEqual(["-    # Step 1: Read the file contents", "-    # In a real application, you would hash the password here"]);
     expect(read("main", ".agents/comments/src/app.py.md")).toMatch(
-      /^## [0-9a-z]{4}\n<!-- anchor=[0-9a-f]{8} -->\nStep 1: Read the file contents\n\n## [0-9a-z]{4}\n<!-- anchor=[0-9a-f]{8} -->\nIn a real application, you would hash the password here\n$/,
+      /^## [0-9a-z]{4}\n<!-- pos=before scope=load [^\n]*-->\nStep 1: Read the file contents\n\n## [0-9a-z]{4}\n<!-- pos=before scope=save [^\n]*-->\nIn a real application, you would hash the password here\n$/,
     );
     expect(read("main", ".agents/scan-ignore")).toMatch(/\nsrc\/app\.py\t[0-9a-f]{8}\tUpdated to return the raw text\n$/);
     if (autocrlf) expect(readFileSync(box.path("main", APP), "utf8")).not.toMatch(/[^\r]\n/);
@@ -112,7 +107,7 @@ describe.each([false, true])("scan (autocrlf=%s)", (autocrlf) => {
     expect(box.cli(main, "scan")).toBe("0 likely AI comment(s) in 0 file(s)\n");
   });
 
-  it("round-trips: a committed apply expands back to the original text in an agent worktree", () => {
+  it("round-trips: a committed apply places the original text back in an agent worktree", () => {
     box.git(main, "add", "-A");
     box.git(main, "commit", "-qm", "stash AI comments");
     expect(box.status(main)).toBe("");
@@ -128,8 +123,8 @@ describe.each([false, true])("scan (autocrlf=%s)", (autocrlf) => {
   it("mark-all converts every unprotected comment and leaves doc, pragma, and license comments", () => {
     expect(box.cli(main, "scan", "--mark-all", LIB)).toBe("converted 1 comment(s) in 1 file(s)\n");
     const lib = read("main", LIB);
-    expect(lib).toMatch(/^\/\*\* Adds two numbers\. \*\/\n.*\n {2}\/\/ eslint-disable-next-line no-console\n {2}console\.log\(a\);\n {2}\/\/~[0-9a-z]{4}\n/);
-    expect(read("main", ".agents/comments/src/lib.ts.md")).toMatch(/^## [0-9a-z]{4}\n<!-- anchor=[0-9a-f]{8} -->\nsum them\n$/);
+    expect(lib).toMatch(/^\/\*\* Adds two numbers\. \*\/\n.*\n {2}\/\/ eslint-disable-next-line no-console\n {2}console\.log\(a\);\n {2}return a \+ b;\n/);
+    expect(read("main", ".agents/comments/src/lib.ts.md")).toMatch(/^## [0-9a-z]{4}\n<!-- pos=before scope=add [^\n]*-->\nsum them\n$/);
     // Over the whole repo it still keeps the license header, the noqa pragma, and the ignored
     // comment; a group holding commented-out code stays whole, prose line included.
     expect(box.cli(main, "scan", "--mark-all")).toBe("converted 0 comment(s) in 0 file(s)\n");
@@ -139,7 +134,7 @@ describe.each([false, true])("scan (autocrlf=%s)", (autocrlf) => {
     expect(app).toContain("return data  # Updated to return the raw text\n");
   });
 
-  it("in an agent worktree, apply leaves the converted comments expanded", () => {
+  it("in an agent worktree, apply leaves the converted comments in view", () => {
     const wt = box.path("wt");
     const file = box.path("wt", "src/new.py");
     box.write(file, "def f():\n    # Now we iterate over each row\n    pass\n");
@@ -148,6 +143,6 @@ describe.each([false, true])("scan (autocrlf=%s)", (autocrlf) => {
     writeFileSync(review, box.cli(wt, "scan", "--json", "src/new.py"));
     box.cli(wt, "scan", "--apply", review);
     expect(read("wt", "src/new.py")).toMatch(/^def f\(\):\n {4}#~[0-9a-z]{4} Now we iterate over each row\n/);
-    expect(read("wt", ".agents/comments/src/new.py.md")).toMatch(/^## [0-9a-z]{4}\n<!-- anchor=[0-9a-f]{8} -->\nNow we iterate over each row\n$/);
+    expect(read("wt", ".agents/comments/src/new.py.md")).toMatch(/^## [0-9a-z]{4}\n<!-- pos=before scope=f [^\n]*-->\nNow we iterate over each row\n$/);
   });
 });

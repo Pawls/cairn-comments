@@ -1,14 +1,19 @@
+import ledger
+
+
 def settle(order):
-    #~a1b2
-    ledger.write(order.id)  #~c3d4
-    #~e5f6
+    ledger.write(order.id)
+    notify(order)
     return order
 
 
-def refund(order):  #~ this comment already carries its text
+def refund(order):
+    if order.closed:
+        return None
     ledger.reverse(order.id)
+    return order
 
 
 def audit(order):
-    #~g7h8
     ledger.check(order.id)
+    return ledger.balance(order.account, strict=True)

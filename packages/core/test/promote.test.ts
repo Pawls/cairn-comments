@@ -1,59 +1,30 @@
 import { describe, expect, it } from "vitest";
 import {
   analyzeSource,
-  clean,
   convertDemoted,
   demoteTarget,
-  parseSidecar,
-  promote,
+  promotePlaced,
+  recordComments,
   recordLiterals,
-  sync,
+  stripComments,
   type ScannedComment,
   type Sidecar,
 } from "../src/index.js";
 
 const empty: Sidecar = { preamble: "", entries: [] };
 
-/** What `demote <file>:<line>` does in a normal checkout: convert, sync, collapse. */
-async function demote(path: string, source: string, line: number, sidecar: Sidecar = empty): Promise<{ source: string; sidecar: Sidecar }> {
+/** What `demote <file>:<line>` does in the owner's checkout: convert, record, strip. */
+async function demote(path: string, source: string, line: number, sidecar: Sidecar = empty): Promise<{ source: string; sidecar: Sidecar; id: string }> {
   const target = await demoteTarget(path, source, line);
   if (typeof target === "string") throw new Error(target);
   const converted = convertDemoted(path, source, [target], new Set(sidecar.entries.map((e) => e.id)));
-  const synced = await sync(path, converted.source, sidecar);
-  return { source: await clean(path, synced.source), sidecar: recordLiterals(synced.sidecar, converted.literals) };
+  const recorded = await recordComments(path, converted.source, sidecar);
+  return { source: await stripComments(path, recorded.source), sidecar: recordLiterals(recorded.sidecar, converted.literals), id: recorded.ids[0]! };
 }
 
-const idOf = (source: string) => /[#/]~([0-9a-z]{4})/.exec(source)![1]!;
-
-describe("promote", () => {
-  it("replaces a bare marker with the stored body and drops the entry, anchor included", async () => {
-    const sidecar = parseSidecar("## ab12\n<!-- anchor=0123abcd by=claude -->\nfirst line\n\nsecond line\n\n## cd34\nkept\n");
-    const result = await promote("a.py", "def f():\n    #~ab12\n    x = 1  #~cd34\n", sidecar, ["ab12"]);
-    expect(result.source).toBe("def f():\n    # first line\n    #\n    # second line\n    x = 1  #~cd34\n");
-    expect(result.sidecar.entries.map((e) => e.id)).toEqual(["cd34"]);
-    expect(result.missing).toEqual([]);
-  });
-
-  it("keeps each line's CRLF terminator and flattens a body onto a trailing marker", async () => {
-    const sidecar = parseSidecar("## ab12\nsee\nthe ledger\n");
-    expect((await promote("a.ts", "f();  //~ab12\r\ng();\r\n", sidecar, ["ab12"])).source).toBe("f();  // see the ledger\r\ng();\r\n");
-    expect((await promote("a.ts", "  //~ab12\r\ng();\r\n", sidecar, ["ab12"])).source).toBe("  // see\r\n  // the ledger\r\ng();\r\n");
-  });
-
-  it("promotes an expanded marker's own text, stale tag stripped", async () => {
-    const sidecar = parseSidecar("## ab12\nold text\n");
-    const result = await promote("a.py", "#~ab12 [stale?] edited text\n#  indented continuation\nx = 1\n", sidecar, ["ab12"]);
-    expect(result.source).toBe("# edited text\n#  indented continuation\nx = 1\n");
-  });
-
-  it("reports ids with no marker or no body and changes nothing for them", async () => {
-    const source = "#~ab12\nx = 1\n";
-    const result = await promote("a.py", source, parseSidecar("## zz99\norphan\n"), ["ab12", "zz99"]);
-    expect(result.missing).toEqual(["ab12", "zz99"]);
-    expect(result.source).toBe(source);
-    expect(result.sidecar.entries.map((e) => e.id)).toEqual(["zz99"]);
-  });
-});
+async function promote(path: string, demoted: { source: string; sidecar: Sidecar; id: string }) {
+  return promotePlaced(path, demoted.source, demoted.sidecar, [demoted.id]);
+}
 
 describe("demoteTarget", () => {
   it("finds the whole group around a line and overrides scan-only protection", async () => {
@@ -112,12 +83,17 @@ describe("demote then promote", () => {
 
   it.each(CASES)("restores the original bytes (%s, %j)", async (path, original, line) => {
     const demoted = await demote(path, original, line);
-    const id = idOf(demoted.source);
     expect(demoted.source).not.toBe(original);
-    expect(demoted.sidecar.entries.map((e) => [e.id, e.meta.has("anchor")])).toEqual([[id, true]]);
-    const promoted = await promote(path, demoted.source, demoted.sidecar, [id]);
+    expect(demoted.sidecar.entries.map((e) => [e.id, e.meta.has("pos")])).toEqual([[demoted.id, true]]);
+    const promoted = await promote(path, demoted);
     expect(promoted.source).toBe(original);
     expect(promoted.sidecar.entries).toEqual([]);
+  });
+
+  it("reports an id that does not place and changes nothing", async () => {
+    const demoted = await demote("a.py", CASES[0]![1], 2);
+    const promoted = await promotePlaced("a.py", demoted.source, demoted.sidecar, ["zz99"]);
+    expect(promoted).toEqual({ source: demoted.source, sidecar: demoted.sidecar, missing: ["zz99"] });
   });
 
   const STRINGS: [string, string, number][] = [
@@ -130,12 +106,9 @@ describe("demote then promote", () => {
 
   it.each(STRINGS)("restores a demoted string's bytes (%s, %j)", async (path, original, line) => {
     const demoted = await demote(path, original, line);
-    const id = idOf(demoted.source);
-    expect(demoted.source).toMatch(/#~[0-9a-z]{4}\r?\n/);
     expect(demoted.source).not.toContain(original.split("\n")[line - 1]!.trim());
     expect(demoted.sidecar.entries.map((e) => e.meta.has("literal"))).toEqual([true]);
-    const promoted = await promote(path, demoted.source, demoted.sidecar, [id]);
-    expect(promoted.source).toBe(original);
+    expect((await promote(path, demoted)).source).toBe(original);
   });
 
   it("stores a demoted string's text without its quotes or indentation", async () => {
@@ -145,15 +118,14 @@ describe("demote then promote", () => {
 
   it("promotes an edited string body that no longer fits its quotes as comments", async () => {
     const demoted = await demote("a.py", STRINGS[2]![1], 3);
-    const id = idOf(demoted.source);
     demoted.sidecar.entries[0]!.body = 'now "quoted"\nand two lines';
-    expect((await promote("a.py", demoted.source, demoted.sidecar, [id])).source).toBe(
+    expect((await promote("a.py", demoted)).source).toBe(
       'def f():\n    x = 1\n    # now "quoted"\n    # and two lines\n    y = 2\n',
     );
   });
 
   it("brings a block comment back as line comments", async () => {
     const demoted = await demote("a.ts", "/* two\n   lines */\nf();\n", 1);
-    expect((await promote("a.ts", demoted.source, demoted.sidecar, [idOf(demoted.source)])).source).toBe("// two\n// lines\nf();\n");
+    expect((await promote("a.ts", demoted)).source).toBe("// two\n// lines\nf();\n");
   });
 });

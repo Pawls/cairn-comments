@@ -62,8 +62,11 @@ describe("the published CLI package", () => {
     box.git(main, "commit", "-qm", "base");
     box.cli(main, "worktree", "add", box.path("agent"), "-b", "agent");
     box.write(box.path("agent", "app.ts"), "//~ the proxy in front expects this port\nexport const port = 8080;\n");
-    box.git(box.path("agent"), "commit", "-qam", "explain the port");
-    expect(box.git(main, "show", "agent:app.ts")).toMatch(/^\/\/~[0-9a-z]{4}\nexport const port = 8080;\n$/);
+    // A comment-only edit leaves the code as committed; sync (a hook adapter's job) records it.
+    box.cli(box.path("agent"), "sync");
+    box.git(box.path("agent"), "add", "-A");
+    box.git(box.path("agent"), "commit", "-qm", "explain the port");
+    expect(box.git(main, "show", "agent:app.ts")).toBe("export const port = 8080;\n");
     expect(box.git(main, "show", "agent:.agents/comments/app.ts.md")).toContain("the proxy in front expects this port");
     expect(box.status(box.path("agent"))).toBe("");
     expect(box.cliResult(box.path("agent"), "check")).toMatchObject({ status: 0, stdout: "" });

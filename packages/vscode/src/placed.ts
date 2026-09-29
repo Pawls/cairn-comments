@@ -1,4 +1,4 @@
-// Markerless view (design.md § Anchoring): the owner's file holds no trace of a comment, so
+// The owner's view (design.md § Anchoring): the owner's file holds no trace of a comment, so
 // each one renders against the site `placeComments` reports, and the sites follow the
 // owner's edits until the next save or external change places them from anchors again.
 import * as vscode from "vscode";
@@ -223,7 +223,7 @@ export class PlacedView implements vscode.CodeLensProvider, vscode.Disposable {
     // it is drawn on the last line instead.
     const anchorLine = (row: number) => Math.min(row, lastLine);
     const lineAbove = (row: number) => Math.max(Math.min(row - 1, lastLine), 0);
-    const title = (s: (typeof shown)[number]) => (s.stale ? `${STALE_TAG} ` : "") + labelFor(s.entry.body, "on");
+    const title = (s: (typeof shown)[number]) => (s.stale ? `${STALE_TAG} ` : "") + labelFor(s.entry.body);
 
     const out: PlacedRender = { lenses: [], threads: [], labels: [] };
     for (const s of shown) {

@@ -2,7 +2,7 @@
 // the editor as they do for the owner. The e2e suite runs in a window without focus, where
 // Ctrl+X/Ctrl+V never fire a clipboard event and Ctrl+Z's "undo across files" prompt
 // cannot be answered; these tests cover those paths. Each test gets a fresh window and a
-// scratch copy of e2e/fixture-markerless, with native/competitor installed beside the
+// scratch copy of e2e/fixture, with native/competitor installed beside the
 // extension as a stand-in for Pylance's paste provider. Set CAIRN_E2E_EXTENSION=<dir> to
 // test an unpacked .vsix instead of this package. Windows only so far.
 import assert from "node:assert/strict";
@@ -169,7 +169,7 @@ const TESTS: Record<string, (w: Window) => Promise<void>> = {
     await w.page.locator(".codelens-decoration a", { hasText: original }).waitFor({ timeout: 5_000 });
     await w.command("File: Save All");
     await waitFor("the original body back in the sidecar", () => w.sidecar().includes(original) && !w.sidecar().includes("an edited body"));
-    assert.equal(w.read("sample.py"), readFileSync(path.join(packageRoot, "e2e/fixture-markerless/sample.py"), "utf8"), "the source is untouched");
+    assert.equal(w.read("sample.py"), readFileSync(path.join(packageRoot, "e2e/fixture/sample.py"), "utf8"), "the source is untouched");
   },
 };
 
@@ -177,7 +177,7 @@ const only = process.argv[2];
 let failed = 0;
 for (const [name, test] of Object.entries(TESTS)) {
   if (only && !name.includes(only)) continue;
-  const scratch = scratchRepo((repo) => cpSync(path.join(packageRoot, "e2e/fixture-markerless"), repo, { recursive: true }), ["--markerless"]);
+  const scratch = scratchRepo((repo) => cpSync(path.join(packageRoot, "e2e/fixture"), repo, { recursive: true }));
   let window: Window | undefined;
   try {
     window = await launch(scratch);

@@ -8,12 +8,11 @@ import { git, gitQuiet, worktreeRoots } from "./git.js";
 const HOOK_TAG = `managed by ${BRAND} init`;
 const chainedName = (hook: string) => `${hook}.${BRAND}-chained`;
 /**
- * In markerless mode a git operation can bring new sidecar entries without touching the
- * source they belong to (a cherry-pick of a comment-only commit), so nothing smudges it;
- * these hooks place the comments afterwards (design.md § Anchoring).
+ * A git operation can bring new sidecar entries without touching the source they belong to
+ * (a cherry-pick of a comment-only commit), so nothing smudges it; these hooks place the
+ * comments afterwards (design.md § Anchoring).
  */
 const REFRESH_HOOKS = ["post-checkout", "post-merge", "post-commit", "post-rewrite"];
-const MARKERLESS_KEY = `filter.${FILTER_DRIVER}.markerless`;
 /** Set when `init` turned `extensions.worktreeConfig` on, so `uninstall` turns it off only then. */
 const WORKTREE_CONFIG_MARK = `filter.${FILTER_DRIVER}.worktreeConfigByInit`;
 
@@ -59,8 +58,6 @@ export interface InitOptions {
   hooks?: string[];
   /** Write the sigil convention into AGENTS.md. */
   agentsMd?: boolean;
-  /** Keep no markers in committed code (design.md § Anchoring). Never turned off by a later `init`. */
-  markerless?: boolean;
 }
 
 const localConfig = (root: string, key: string) => gitQuiet(["config", "--local", "--get", key], root)?.trim();
@@ -132,8 +129,8 @@ function hookScript(name: string, body: string[]): string {
   ].join("\n");
 }
 
-/** The pre-commit hook, plus the refresh hooks in markerless mode. */
-function hookChanges(root: string, command: string, markerless: boolean): (Change | undefined)[] {
+/** The pre-commit hook and the refresh hooks. */
+function hookChanges(root: string, command: string): (Change | undefined)[] {
   const preCommit = hookScript("pre-commit", [
     `if git config --get filter.${FILTER_DRIVER}.clean >/dev/null 2>&1; then`,
     `  ${command} sync --staged --add || exit 1`,
@@ -143,7 +140,7 @@ function hookChanges(root: string, command: string, markerless: boolean): (Chang
   // A failed refresh must not fail the git command that already happened.
   const refresh = (name: string) =>
     hookScript(name, [`if git config --get filter.${FILTER_DRIVER}.smudge >/dev/null 2>&1; then`, `  ${command} refresh || true`, "fi"]);
-  return [hookChange(root, "pre-commit", preCommit), ...(markerless ? REFRESH_HOOKS.map((h) => hookChange(root, h, refresh(h))) : [])];
+  return [hookChange(root, "pre-commit", preCommit), ...REFRESH_HOOKS.map((h) => hookChange(root, h, refresh(h)))];
 }
 
 /**
@@ -186,7 +183,7 @@ export function agentsSnippet(): string {
     "## AI comments",
     "",
     `Write the comments you add as sigil comments: ${byLanguages.join("; ")}. The space after the sigil matters.`,
-    `On commit, ${BRAND} moves their text to \`${SIDECAR_ROOT}/\` and leaves a short marker in the code, so the owner's view stays clean while agents still read the comments inline.`,
+    `On commit, ${BRAND} moves them to \`${SIDECAR_ROOT}/\` and keeps them out of the committed code, so the owner's view stays clean while agents still read the comments inline.`,
     "",
     "- A comment such as `#~a1b2 text` is already stored: edit its text freely, but keep the four-character id, and delete the whole comment to delete it.",
     "- Never put four letters or digits straight after the sigil (`#~todo`); that reads as an id.",
@@ -255,11 +252,9 @@ export function planInit(root: string, options: InitOptions = {}): Change[] {
       [`filter.${FILTER_DRIVER}.process`]: options.oneShot ? undefined : `${command} filter-process`,
       [`merge.${FILTER_DRIVER}.name`]: `${BRAND} sidecar merge`,
       [`merge.${FILTER_DRIVER}.driver`]: `${command} merge-sidecar %O %A %B`,
-      // Switching an existing repository back would strand every placed comment, so only on.
-      [MARKERLESS_KEY]: options.markerless ? "true" : localConfig(root, MARKERLESS_KEY),
     }),
     attributesChange(root, attributeLines(), LEGACY_ATTRIBUTES),
-    ...hookChanges(root, command, options.markerless || localConfig(root, MARKERLESS_KEY) === "true"),
+    ...hookChanges(root, command),
     ...hooks.flatMap((h) => adapterRoots(root, h).map((wt) => settingsChange(root, h, planAdapterInstall(wt, h, command), true))),
     options.agentsMd ? agentsMdChange(root, false) : undefined,
   ];
@@ -295,8 +290,8 @@ function otherWorktreeConfig(wt: string): string[] {
 }
 
 /**
- * Every change `uninstall` would make. Comment bodies and the markers in the code are
- * user data and stay; `promote --all` first turns them into ordinary comments.
+ * Every change `uninstall` would make. The sidecars are user data and stay; `promote --all`
+ * first turns their comments into ordinary ones.
  */
 export function planUninstall(root: string): Change[] {
   const changes: (Change | undefined)[] = [];

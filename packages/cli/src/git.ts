@@ -150,18 +150,13 @@ export function restat(root: string, files: string[]): void {
   if (identical.length) git(["update-index", "-z", "--stdin"], { cwd: root, input: identical.join("\0") + "\0" });
 }
 
-/** An agent worktree shows full comments; everywhere else a working file holds bare markers. */
+/** An agent worktree shows every comment; everywhere else a working file holds only the code. */
 export function smudges(root: string): boolean {
   try {
     return git(["config", "--get", `filter.${FILTER_DRIVER}.smudge`], { cwd: root }).trim() !== "";
   } catch {
     return false;
   }
-}
-
-/** Whether `init --markerless` set this repository up to keep no markers in committed code. */
-export function markerless(root: string): boolean {
-  return gitQuiet(["config", "--get", `filter.${FILTER_DRIVER}.markerless`], root)?.trim() === "true";
 }
 
 /** This worktree's own git directory (`.git/worktrees/<name>` for a linked one), absolute. */

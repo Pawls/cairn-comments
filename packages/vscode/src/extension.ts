@@ -4,7 +4,6 @@ import * as vscode from "vscode";
 import {
   BRAND,
   SIDECAR_ROOT,
-  confirm,
   demoteTarget,
   findMarkers,
   languageForPath,
@@ -16,9 +15,9 @@ import {
   type Sidecar,
   type SidecarEntry,
 } from "@cairn-comments/core";
-import { MarkerlessActions, type CommentRef, type Located } from "./actions.js";
+import { PlacedActions, type CommentRef, type Located } from "./actions.js";
 import { registerLists, type ListsApi } from "./lists.js";
-import { entryIsStale, findSidecarRoot, hoverMarkdown, planOverlay, type OverlayMode, type PlannedDecoration } from "./overlay.js";
+import { findSidecarRoot, type OverlayMode } from "./overlay.js";
 import { applyPrinted } from "./edits.js";
 import { CommentPaste } from "./paste.js";
 import { OWN_LINE_STYLES, PlacedComment, PlacedView, SHOW_COMMENT, type OwnLineStyle, type PlacedRender } from "./placed.js";
@@ -69,10 +68,7 @@ export interface TestApi {
 }
 
 export interface Applied {
-  hidden: vscode.DecorationOptions[];
-  revealed: vscode.DecorationOptions[];
-  missing: vscode.DecorationOptions[];
-  /** A markerless file's comments; absent when the file holds markers or the overlay is off. */
+  /** The file's placed comments; absent when it shows its comments inline or the overlay is off. */
   placed?: PlacedRender;
 }
 
@@ -109,8 +105,9 @@ function locate(document: vscode.TextDocument): Located | undefined {
   return { root, file, sidecar: path.join(root, sidecarPathFor(file)) };
 }
 
+/** The sigil comments a document shows inline: an agent worktree's, or a file after `expand`. */
 async function markersIn(document: vscode.TextDocument, located: Located): Promise<Marker[]> {
-  return findMarkers(languageForPath(located.file)!, document.getText(), { anchors: true });
+  return findMarkers(languageForPath(located.file)!, document.getText());
 }
 
 export function activate(context: vscode.ExtensionContext): TestApi {
@@ -119,26 +116,10 @@ export function activate(context: vscode.ExtensionContext): TestApi {
     const configured = vscode.workspace.getConfiguration(BRAND).get<string>("overlayColor", "");
     return configured || new vscode.ThemeColor("editorCodeLens.foreground");
   };
-
-  // Spike result (design.md § Overlay rendering): the token is removed from the rendered
-  // line by injecting `display: none` through `textDecoration`, and the label is drawn
-  // as an `after` attachment, which VS Code renders as a sibling of the hidden span.
-  const hiddenType = vscode.window.createTextEditorDecorationType({
-    textDecoration: "none; display: none",
-    rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
-  });
-  const revealedType = vscode.window.createTextEditorDecorationType({
-    rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
-  });
-  const missingType = vscode.window.createTextEditorDecorationType({
-    color: new vscode.ThemeColor("editorWarning.foreground"),
-    textDecoration: "underline wavy",
-    rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
-  });
   const placedView = new PlacedView();
-  context.subscriptions.push(hiddenType, revealedType, missingType, placedView);
-  /** Documents that showed no markers and had comments in their sidecar at their last refresh. */
-  const markerless = new Set<string>();
+  context.subscriptions.push(placedView);
+  /** Documents that showed no comments inline and had comments in their sidecar at their last refresh. */
+  const placedDocuments = new Set<string>();
   const ownLineStyle = (): OwnLineStyle => {
     const configured = vscode.workspace.getConfiguration(BRAND).get<string>("ownLineStyle", "codelens");
     return OWN_LINE_STYLES.find((s) => s === configured) ?? "codelens";
@@ -151,44 +132,34 @@ export function activate(context: vscode.ExtensionContext): TestApi {
   const renderStatus = () => {
     const on = mode() === "on";
     status.text = on ? "$(eye) AI comments" : "$(eye-closed) AI comments";
-    status.tooltip = on ? "AI comment overlay is on: click to show bare markers" : "AI comment overlay is off: click to show comment text";
+    status.tooltip = on ? "AI comments are shown: click to hide them" : "AI comments are hidden: click to show them";
     status.show();
   };
   renderStatus();
   context.subscriptions.push(status);
 
   async function refresh(editor: vscode.TextEditor): Promise<Applied> {
-    const applied: Applied = { hidden: [], revealed: [], missing: [] };
+    const applied: Applied = {};
     const located = locate(editor.document);
-    if (located) {
-      const document = editor.document;
-      const markers = await markersIn(document, located);
-      if (editor.document !== document || document.isClosed) return applied;
-      const sidecar = store.get(located.sidecar);
-      if (!markers.length && sidecar?.entries.length) {
-        markerless.add(document.uri.toString());
-        if (!placedView.isCurrent(document) && !(await placedView.place(document, located.file, sidecar))) {
-          // The document changed while placing; the refresh its change scheduled places it again.
-          return applied;
-        }
-        if (editor.document !== document || document.isClosed) return applied;
-        if (mode() === "on") applied.placed = placedView.render(editor, store.entries(located.sidecar), ownLineStyle(), overlayColor());
-        else placedView.clear(editor);
-      } else {
-        markerless.delete(document.uri.toString());
-        placedView.forget(document);
-        placedView.clear(editor);
-      }
-      const cursorRows = new Set(editor.selections.flatMap((s) => rows(document, s)));
-      const planned = planOverlay(markers, store.entries(located.sidecar), mode(), (m) =>
-        cursorRows.has(document.positionAt(m.start).line),
-      );
-      const color = overlayColor();
-      for (const p of planned) applied[p.kind].push(toOptions(document, p, color));
+    if (!located) return applied;
+    const document = editor.document;
+    const markers = await markersIn(document, located);
+    if (editor.document !== document || document.isClosed) return applied;
+    const sidecar = store.get(located.sidecar);
+    if (markers.length || !sidecar?.entries.length) {
+      placedDocuments.delete(document.uri.toString());
+      placedView.forget(document);
+      placedView.clear(editor);
+      return applied;
     }
-    editor.setDecorations(hiddenType, applied.hidden);
-    editor.setDecorations(revealedType, applied.revealed);
-    editor.setDecorations(missingType, applied.missing);
+    placedDocuments.add(document.uri.toString());
+    if (!placedView.isCurrent(document) && !(await placedView.place(document, located.file, sidecar))) {
+      // The document changed while placing; the refresh its change scheduled places it again.
+      return applied;
+    }
+    if (editor.document !== document || document.isClosed) return applied;
+    if (mode() === "on") applied.placed = placedView.render(editor, store.entries(located.sidecar), ownLineStyle(), overlayColor());
+    else placedView.clear(editor);
     return applied;
   }
 
@@ -217,10 +188,10 @@ export function activate(context: vscode.ExtensionContext): TestApi {
     refreshAll();
     lists.scheduleRefresh();
   };
-  const actions = new MarkerlessActions({
+  const actions = new PlacedActions({
     view: placedView,
     locate,
-    isMarkerless: (document) => markerless.has(document.uri.toString()),
+    isPlaced: (document) => placedDocuments.has(document.uri.toString()),
     sidecar: (file) => store.get(file),
     written: (file) => onSidecarChange(vscode.Uri.file(file)),
   });
@@ -259,7 +230,6 @@ export function activate(context: vscode.ExtensionContext): TestApi {
     watcher.onDidDelete(onSidecarChange),
     { dispose: () => pasteSaves.forEach((t) => clearTimeout(t)) },
     vscode.window.onDidChangeVisibleTextEditors(refreshAll),
-    vscode.window.onDidChangeTextEditorSelection((e) => schedule(e.textEditor)),
     vscode.workspace.onDidChangeTextDocument((e) => {
       if (isSidecar(e.document)) {
         const pending = pasteSaves.get(e.document.fileName);
@@ -285,7 +255,7 @@ export function activate(context: vscode.ExtensionContext): TestApi {
       if (isSidecar(d)) onSidecarChange(d.uri);
       else {
         placedView.forget(d);
-        markerless.delete(d.uri.toString());
+        placedDocuments.delete(d.uri.toString());
       }
     }),
     vscode.workspace.onDidChangeConfiguration((e) => {
@@ -297,13 +267,19 @@ export function activate(context: vscode.ExtensionContext): TestApi {
       refreshAll();
     }),
     // A thread's Edit button edits in place; from the palette or a list, the sidecar entry opens.
-    vscode.commands.registerCommand(COMMANDS.edit, (arg?: CommentRef) => (arg instanceof PlacedComment ? actions.startEdit(arg) : editComment(arg))),
+    vscode.commands.registerCommand(COMMANDS.edit, async (arg?: CommentRef) => {
+      if (arg instanceof PlacedComment) return actions.startEdit(arg);
+      const atCursor = arg ? undefined : await actions.resolve();
+      const ref = arg ?? (atCursor && { file: atCursor.document.fileName, id: atCursor.id });
+      if (ref) await editComment(ref);
+      else void vscode.window.showInformationMessage("No AI comment on this line.");
+    }),
     vscode.commands.registerCommand(COMMANDS.saveEdit, (comment: PlacedComment) => actions.saveEdit(comment)),
     vscode.commands.registerCommand(COMMANDS.cancelEdit, (comment: PlacedComment) => actions.cancelEdit(comment)),
     vscode.commands.registerCommand(COMMANDS.confirm, async (arg?: CommentRef) => {
       const placed = await actions.resolve(arg);
       if (placed) await actions.confirm(placed);
-      else await confirmComment(arg);
+      else void vscode.window.showInformationMessage("No AI comment on this line.");
       refreshAll();
     }),
     vscode.commands.registerCommand(COMMANDS.reviewStale, () => reviewStale()),
@@ -319,12 +295,7 @@ export function activate(context: vscode.ExtensionContext): TestApi {
     vscode.commands.registerCommand(COMMANDS.demote, (arg?: LineRef) => demoteComment(arg)),
     vscode.commands.registerCommand(SHOW_COMMENT, (uri: vscode.Uri, id: string) => placedView.toggle(uri, id)),
     ...VSCODE_LANGUAGE_IDS.map((language) => vscode.languages.registerDocumentPasteEditProvider({ scheme: "file", language }, paste, CommentPaste.metadata)),
-    ...VSCODE_LANGUAGE_IDS.map((language) =>
-      vscode.languages.registerHoverProvider(
-        { scheme: "file", language },
-        { provideHover: (document, position) => provideHover(store, document, position) },
-      ),
-    ),
+
     ...VSCODE_LANGUAGE_IDS.map((language) => vscode.languages.registerCodeLensProvider({ scheme: "file", language }, placedView)),
     ...VSCODE_LANGUAGE_IDS.map((language) =>
       vscode.languages.registerCodeActionsProvider(
@@ -348,88 +319,6 @@ export function activate(context: vscode.ExtensionContext): TestApi {
 }
 
 export function deactivate(): void {}
-
-function rows(document: vscode.TextDocument, selection: vscode.Selection): number[] {
-  const out: number[] = [];
-  for (let line = selection.start.line; line <= selection.end.line; line++) out.push(line);
-  return out;
-}
-
-function toOptions(document: vscode.TextDocument, p: PlannedDecoration, color: string | vscode.ThemeColor): vscode.DecorationOptions {
-  const range = new vscode.Range(document.positionAt(p.start), document.positionAt(p.end));
-  const text = p.kind === "hidden" ? p.label : `  ${p.label}`;
-  const after: vscode.ThemableDecorationAttachmentRenderOptions = {
-    contentText: text,
-    color: p.kind === "missing" || p.stale ? new vscode.ThemeColor("editorWarning.foreground") : color,
-    fontStyle: "italic",
-  };
-  return { range, renderOptions: { after } };
-}
-
-/**
- * The bare marker on `line`, at or after `column` when one is given. A hidden token has
- * no width, so its overlay label maps to the token's end column; accepting anything from
- * the sigil to the end of the line covers it without claiming the code before it.
- */
-async function markerAt(document: vscode.TextDocument, line: number, column?: number): Promise<{ marker: Marker; located: Located } | undefined> {
-  const located = locate(document);
-  if (!located) return undefined;
-  for (const marker of await markersIn(document, located)) {
-    const start = document.positionAt(marker.start);
-    if (marker.kind === "bare" && marker.id && start.line === line && (column === undefined || column >= start.character)) {
-      return { marker, located };
-    }
-  }
-  return undefined;
-}
-
-async function provideHover(store: SidecarStore, document: vscode.TextDocument, position: vscode.Position): Promise<vscode.Hover | undefined> {
-  const hit = await markerAt(document, position.line, position.character);
-  if (!hit) return undefined;
-  const { marker, located } = hit;
-  const entry = store.entries(located.sidecar).get(marker.id!);
-  const stale = entryIsStale(marker, entry);
-  const args = encodeURIComponent(JSON.stringify({ file: document.fileName, id: marker.id }));
-  const links = [`[Edit comment](command:${COMMANDS.edit}?${args})`];
-  if (stale) links.push(`[Confirm: still accurate](command:${COMMANDS.confirm}?${args})`);
-  const markdown = new vscode.MarkdownString(`${hoverMarkdown(marker.id!, entry, sidecarPathFor(located.file), stale)}\n\n${links.join(" · ")}`, true);
-  markdown.isTrusted = { enabledCommands: [COMMANDS.edit, COMMANDS.confirm] };
-  const range = new vscode.Range(document.positionAt(marker.start), document.positionAt(marker.end));
-  return new vscode.Hover(markdown, range);
-}
-
-async function resolveRef(arg?: CommentRef): Promise<{ document: vscode.TextDocument; located: Located; id: string } | undefined> {
-  if (arg) {
-    const document = await vscode.workspace.openTextDocument(arg.file);
-    const located = locate(document);
-    return located && { document, located, id: arg.id };
-  }
-  const editor = vscode.window.activeTextEditor;
-  if (!editor) return undefined;
-  const hit = await markerAt(editor.document, editor.selection.active.line);
-  if (!hit) {
-    void vscode.window.showInformationMessage("No AI comment marker on this line.");
-    return undefined;
-  }
-  return { document: editor.document, located: hit.located, id: hit.marker.id! };
-}
-
-/**
- * Records the anchor the open document shows now, so a stale comment reads as current
- * again. Runs in process rather than through `confirm`, which would hash the saved file.
- */
-async function confirmComment(arg?: CommentRef): Promise<void> {
-  const ref = await resolveRef(arg);
-  if (!ref || !existsSync(ref.located.sidecar)) return;
-  const uri = vscode.Uri.file(ref.located.sidecar);
-  const sidecarDocument = await vscode.workspace.openTextDocument(uri);
-  const result = await confirm(ref.located.file, ref.document.getText(), parseSidecar(sidecarDocument.getText()), [ref.id]);
-  if (!result.changed) return;
-  const edit = new vscode.WorkspaceEdit();
-  edit.replace(uri, new vscode.Range(sidecarDocument.positionAt(0), sidecarDocument.positionAt(sidecarDocument.getText().length)), serializeSidecar(result.sidecar));
-  await vscode.workspace.applyEdit(edit);
-  await sidecarDocument.save();
-}
 
 /** Stale comments across the repository through the CLI, as CI would see them. */
 async function staleComments(): Promise<StaleComment[] | string> {
@@ -471,10 +360,10 @@ async function reviewStale(): Promise<void> {
 }
 
 /** Opens the sidecar at `## <id>`, creating the file or the entry when either is missing. */
-async function editComment(arg?: CommentRef): Promise<void> {
-  const ref = await resolveRef(arg);
-  if (!ref) return;
-  const { located, id } = ref;
+async function editComment(ref: CommentRef): Promise<void> {
+  const located = locate(await vscode.workspace.openTextDocument(ref.file));
+  if (!located) return;
+  const { id } = ref;
 
   const uri = vscode.Uri.file(located.sidecar);
   if (!existsSync(located.sidecar)) await vscode.workspace.fs.writeFile(uri, new Uint8Array());

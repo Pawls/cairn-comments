@@ -18,7 +18,7 @@ export interface ScratchRepo {
  * `init` from writing a hook into the developer's `core.hooksPath`, and the extension host
  * inherits it.
  */
-export function scratchRepo(populate: (repo: string) => void, initArgs: string[] = []): ScratchRepo {
+export function scratchRepo(populate: (repo: string) => void): ScratchRepo {
   const dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "cairn-e2e-")));
   const config = path.join(dir, "gitconfig");
   writeFileSync(config, "[user]\n\tname = e2e\n\temail = e2e@example.com\n[core]\n\tautocrlf = false\n[init]\n\tdefaultBranch = main\n");
@@ -28,7 +28,7 @@ export function scratchRepo(populate: (repo: string) => void, initArgs: string[]
   populate(repo);
   const opts = { cwd: repo, env: { ...process.env, ...env }, stdio: "ignore" as const };
   execFileSync("git", ["init", "-q"], opts);
-  execFileSync(process.execPath, [cli, "init", ...initArgs], opts);
+  execFileSync(process.execPath, [cli, "init"], opts);
   execFileSync("git", ["add", "-A"], opts);
   execFileSync("git", ["commit", "-qm", "base"], opts);
   return { dir, repo, env };

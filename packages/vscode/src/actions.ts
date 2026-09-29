@@ -1,6 +1,6 @@
-// Actions on markerless comments, from their thread's buttons or from the palette with the
+// Actions on placed comments, from their thread's buttons or from the palette with the
 // cursor on the code a comment describes. They change the sidecar in process against the
-// open document, which may be unsaved, as confirm does for markers.
+// open document, which may be unsaved.
 import * as vscode from "vscode";
 import { confirmPlaced, normalizeBody, promotePlaced, serializeSidecar, type Sidecar } from "@cairn-comments/core";
 import { applyFiles } from "./edits.js";
@@ -13,7 +13,7 @@ export interface Located {
   sidecar: string;
 }
 
-/** A comment named by a thread, a hover link, or a list (absolute source path). */
+/** A comment named by a thread, a code action, or a list (absolute source path). */
 export interface CommentRef {
   file: string;
   id: string;
@@ -28,21 +28,21 @@ export interface PlacedRef {
 export interface ActionDeps {
   view: PlacedView;
   locate(document: vscode.TextDocument): Located | undefined;
-  /** Whether `document` shows its comments without markers. */
-  isMarkerless(document: vscode.TextDocument): boolean;
+  /** Whether `document` shows its comments through the placed view rather than inline. */
+  isPlaced(document: vscode.TextDocument): boolean;
   sidecar(path: string): Sidecar | undefined;
   /** Called after a sidecar was written, so everything showing it refreshes. */
   written(path: string): void;
 }
 
-export class MarkerlessActions {
+export class PlacedActions {
   constructor(private readonly deps: ActionDeps) {}
 
-  /** The markerless comment `arg` names, or the one at the cursor; undefined in a file with markers. */
+  /** The placed comment `arg` names, or the one at the cursor; undefined in a file that shows its comments inline. */
   async resolve(arg?: CommentRef): Promise<PlacedRef | undefined> {
     const editor = vscode.window.activeTextEditor;
     const document = arg ? await vscode.workspace.openTextDocument(arg.file) : editor?.document;
-    if (!document || !this.deps.isMarkerless(document)) return undefined;
+    if (!document || !this.deps.isPlaced(document)) return undefined;
     const located = this.deps.locate(document);
     const id = arg?.id ?? (editor && this.deps.view.idAt(document, editor.selection.active.line));
     return located && id ? { document, located, id } : undefined;

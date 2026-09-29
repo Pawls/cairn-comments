@@ -6,28 +6,21 @@ import {
   BRAND,
   LANGUAGES,
   SIDECAR_ROOT,
-  anchorsOf,
   bodiesOf,
-  clean,
-  confirm,
   confirmPlaced,
   findMarkers,
   languageForPath,
   parseSidecar,
   placeComments,
-  promote,
+  promotePlaced,
   recordComments,
   serializeSidecar,
   sidecarPathFor,
-  smudge,
-  staleMarkers,
   stripComments,
-  sync,
   type Sidecar,
-  type SyncOptions,
 } from "@cairn-comments/core";
 import { capturing, readWorkFile, removeWorkFile, writeWorkFile } from "./workfiles.js";
-import { filesContaining, indexBlobs, managedFiles, markerless, restat, smudges, stage, stagedFiles, toRepoPath, trackedFiles, worktreeGitDir } from "./git.js";
+import { filesContaining, indexBlobs, managedFiles, restat, smudges, stage, stagedFiles, toRepoPath, trackedFiles, worktreeGitDir } from "./git.js";
 
 /** Text of a buffer, or undefined when it is not UTF-8 that re-encodes to the same bytes. */
 export function decodeExact(bytes: Buffer): string | undefined {
@@ -51,10 +44,6 @@ export async function readSidecar(root: string, file: string): Promise<Sidecar> 
 function readSidecarSync(root: string, file: string): Sidecar {
   const sidecarFile = path.join(root, sidecarPathFor(file));
   return parseSidecar(readWorkFile(sidecarFile)?.toString("utf8") ?? "");
-}
-
-function smudgeFrom(file: string, source: string, sidecar: Sidecar): Promise<string> {
-  return smudge(file, source, bodiesOf(sidecar), anchorsOf(sidecar));
 }
 
 /**
@@ -82,39 +71,29 @@ function writeSeen(gitDir: string, file: string, ids: readonly string[]): void {
 }
 
 export interface FilterMode {
-  markerless: boolean;
-  /** Set on a smudging worktree in markerless mode, where smudge keeps the seen record. */
+  /** Set on a smudging worktree, where smudge keeps the seen record. */
   gitDir?: string;
 }
 
 /** How this worktree filters, read once per command or filter process. */
 export function filterMode(root: string, smudging: boolean): FilterMode {
-  const on = markerless(root);
-  return { markerless: on, gitDir: on && smudging ? worktreeGitDir(root) : undefined };
+  return { gitDir: smudging ? worktreeGitDir(root) : undefined };
 }
 
 /**
  * One file through a filter endpoint, for the one-shot commands and the filter process
  * alike. Returns `input` itself when nothing changes, so non-UTF-8 passes byte for byte.
  */
-export async function filterContent(
-  endpoint: "clean" | "smudge",
-  root: string,
-  file: string,
-  input: Buffer,
-  mode: FilterMode = { markerless: false },
-): Promise<Buffer> {
+export async function filterContent(endpoint: "clean" | "smudge", root: string, file: string, input: Buffer, mode: FilterMode = {}): Promise<Buffer> {
   const text = decodeExact(input);
   if (text === undefined) return input;
   let result: string;
   if (endpoint === "clean") {
-    result = mode.markerless ? await stripComments(file, text) : await clean(file, text);
-  } else if (mode.markerless) {
+    result = await stripComments(file, text);
+  } else {
     const placed = await placeComments(file, text, await readSidecar(root, file));
     if (mode.gitDir) writeSeen(mode.gitDir, file, placed.placed);
     result = placed.source;
-  } else {
-    result = await smudgeFrom(file, text, await readSidecar(root, file));
   }
   return result === text ? input : Buffer.from(result, "utf8");
 }
@@ -133,12 +112,12 @@ export function selectFiles(root: string, selection: Selection): string[] {
 const SIGILS = [...new Set(LANGUAGES.map((l) => l.lineSigil))];
 
 /**
- * In markerless mode a comment-only edit cleans to the committed blob, so git never
- * stages it; the staged set grows by every file that still holds a sigil.
+ * A comment-only edit cleans to the committed blob, so git never stages it; the staged set
+ * grows by every file that still holds a sigil.
  */
 function selectionCandidates(root: string, selection: Selection): string[] {
   if (selection.files.length) return selection.files.map((f) => toRepoPath(root, f));
-  if (selection.staged) return markerless(root) ? [...new Set([...stagedFiles(root), ...filesContaining(root, SIGILS)])] : stagedFiles(root);
+  if (selection.staged) return [...new Set([...stagedFiles(root), ...filesContaining(root, SIGILS)])];
   return trackedFiles(root);
 }
 
@@ -151,43 +130,6 @@ function filesWithSidecars(root: string): string[] {
   return managedFiles(root, sources).filter((f) => existsSync(path.join(root, f)));
 }
 
-/** A new source, or a new source and sidecar when the rewrite moves bodies itself. */
-type Rewrite = (file: string, source: string, sidecar: Sidecar) => Promise<string | Rewritten>;
-
-interface Rewritten {
-  source: string;
-  sidecar: Sidecar;
-}
-
-/**
- * Syncs each working file into its sidecar, optionally rewrites the file, and finishes
- * with the guarded re-stat. Sync always runs first so a rewrite never drops a body that
- * exists only inline, and never meets a comment that still lacks an id.
- */
-async function rewriteFiles(
-  root: string,
-  files: string[],
-  rewrite?: Rewrite,
-  options: SyncOptions = {},
-): Promise<string[]> {
-  const done: string[] = [];
-  for (const file of files) {
-    const absolute = path.join(root, file);
-    const bytes = readWorkFile(absolute);
-    const original = bytes && decodeExact(bytes);
-    if (original === undefined) continue;
-    const synced = await sync(file, original, readSidecarSync(root, file), options);
-    if (synced.sidecarChanged) writeSidecar(root, file, synced.sidecar);
-    const rewritten = rewrite ? await rewrite(file, synced.source, synced.sidecar) : synced.source;
-    const source = typeof rewritten === "string" ? rewritten : rewritten.source;
-    if (typeof rewritten !== "string") writeSidecar(root, file, rewritten.sidecar);
-    if (source !== original) writeWorkFile(absolute, source);
-    done.push(file);
-  }
-  if (!capturing()) restat(root, done);
-  return done;
-}
-
 /** An emptied sidecar is removed rather than left as a zero-byte file. */
 export function writeSidecar(root: string, file: string, sidecar: Sidecar): void {
   const sidecarFile = path.join(root, sidecarPathFor(file));
@@ -195,12 +137,17 @@ export function writeSidecar(root: string, file: string, sidecar: Sidecar): void
   else writeWorkFile(sidecarFile, serializeSidecar(sidecar));
 }
 
+export interface SyncOptions {
+  /** Provenance merged into the metadata of every entry whose body this run writes. */
+  meta?: ReadonlyMap<string, string>;
+}
+
 /**
- * The markerless counterpart of `rewriteFiles`: records every file, then leaves its
- * comments as they are (`sync`), places all of them (`expand`), or strips them
- * (`collapse`). Where git smudges, the seen record follows each write.
+ * Records every file into its sidecar, then leaves its comments as they are (`sync`),
+ * places all of them (`expand`), or strips them (`collapse`), and finishes with the
+ * guarded re-stat. Where git smudges, the seen record follows each write.
  */
-async function rewriteMarkerless(
+async function rewriteFiles(
   root: string,
   files: string[],
   then: "sync" | "expand" | "collapse",
@@ -244,43 +191,38 @@ async function rewriteMarkerless(
 }
 
 export async function syncFiles(root: string, files: string[], options: SyncOptions & { add: boolean }): Promise<void> {
-  const done = markerless(root) ? await rewriteMarkerless(root, files, "sync", options) : await rewriteFiles(root, files, undefined, options);
+  const done = await rewriteFiles(root, files, "sync", options);
   if (options.add) stage(root, done.map(sidecarPathFor).filter((s) => existsSync(path.join(root, s))));
 }
 
-/** Expands bare markers and brings every `[stale?]` tag up to date; in markerless mode, places every comment. */
+/** Places every comment, bringing each `[stale?]` tag up to date. */
 export async function expandFiles(root: string, files: string[]): Promise<void> {
-  if (markerless(root)) await rewriteMarkerless(root, files, "expand");
-  else await rewriteFiles(root, files, smudgeFrom);
+  await rewriteFiles(root, files, "expand");
 }
 
 /**
- * Brings a smudged markerless worktree in line with its sidecars after a git operation
- * that changed them without rewriting the sources: every file with a sidecar or a
- * leftover sigil comment is placed again from the sidecar it now has.
+ * Brings a smudged worktree in line with its sidecars after a git operation that changed
+ * them without rewriting the sources: every file with a sidecar or a leftover sigil
+ * comment is placed again from the sidecar it now has.
  */
 export async function refreshFiles(root: string): Promise<void> {
   const files = new Set([...filesWithSidecars(root), ...managedFiles(root, filesContaining(root, SIGILS))]);
-  await rewriteMarkerless(root, [...files].filter((f) => existsSync(path.join(root, f))), "expand", { afterCheckout: true });
+  await rewriteFiles(root, [...files].filter((f) => existsSync(path.join(root, f))), "expand", { afterCheckout: true });
 }
 
 export async function collapseFiles(root: string, files: string[], options: SyncOptions = {}): Promise<void> {
-  if (markerless(root)) await rewriteMarkerless(root, files, "collapse", options);
-  else await rewriteFiles(root, files, (file, source) => clean(file, source), options);
+  await rewriteFiles(root, files, "collapse", options);
 }
 
 export interface StaleReport {
   file: string;
-  /**
-   * 1-based line of the comment; in markerless mode, where the file shows no comments, the
-   * line of the code it would be placed against.
-   */
+  /** 1-based line of the comment; where the file shows no comments, the line of the code it would be placed against. */
   line: number;
   id: string;
   body: string;
 }
 
-/** Possibly stale comments across `files` (design.md § Staleness); reads only, so CI can run it. */
+/** Possibly stale comments across `files` (design.md § Anchoring); reads only, so CI can run it. */
 export async function staleIn(root: string, files: string[]): Promise<StaleReport[]> {
   const found: StaleReport[] = [];
   const lineOf = (source: string, offset: number) => source.slice(0, offset).split("\n").length;
@@ -288,10 +230,6 @@ export async function staleIn(root: string, files: string[]): Promise<StaleRepor
     const source = decodeExact(readFileSync(path.join(root, file)));
     if (source === undefined) continue;
     const sidecar = readSidecarSync(root, file);
-    if (!markerless(root)) {
-      for (const s of await staleMarkers(file, source, sidecar)) found.push({ file, line: lineOf(source, s.marker.start), id: s.id, body: s.body });
-      continue;
-    }
     if (!sidecar.entries.length) continue;
     const placed = await placeComments(file, await stripComments(file, source), sidecar);
     const shown = new Map((await findMarkers(languageForPath(file)!, source)).map((m) => [m.id, lineOf(source, m.start)]));
@@ -302,49 +240,45 @@ export async function staleIn(root: string, files: string[]): Promise<StaleRepor
 }
 
 /**
- * Records the current anchor for each id in `file`, clearing its stale flag. In an agent
+ * Records the current placement of each id in `file`, clearing its stale flag. In an agent
  * worktree the file is expanded again so its `[stale?]` tags match. Returns ids not found.
  */
 export async function confirmIds(root: string, file: string, ids: string[], expand: boolean): Promise<string[]> {
   const source = decodeExact(readFileSync(path.join(root, file)));
   if (source === undefined) return ids;
-  if (markerless(root)) {
-    const confirmed = await confirmPlaced(file, await stripComments(file, source), readSidecarSync(root, file), ids);
-    if (confirmed.missing.length) return confirmed.missing;
-    if (confirmed.changed) writeSidecar(root, file, confirmed.sidecar);
-    if (expand) await expandFiles(root, [file]);
-    return [];
-  }
-  const result = await confirm(file, source, readSidecarSync(root, file), ids);
-  if (result.changed) writeSidecar(root, file, result.sidecar);
+  const confirmed = await confirmPlaced(file, await stripComments(file, source), readSidecarSync(root, file), ids);
+  if (confirmed.missing.length) return confirmed.missing;
+  if (confirmed.changed) writeSidecar(root, file, confirmed.sidecar);
   if (expand) await expandFiles(root, [file]);
-  return result.missing;
+  return [];
 }
 
-/** Ids of the markers in a working file that have a body to promote, inline or stored. */
+/** Ids of the comments that place in a working file, and so can be promoted there. */
 export async function promotableIds(root: string, file: string): Promise<string[]> {
-  const spec = languageForPath(file);
   const source = decodeExact(readFileSync(path.join(root, file)));
-  if (!spec || source === undefined) return [];
-  const bodies = bodiesOf(readSidecarSync(root, file));
-  const ids = new Set<string>();
-  for (const m of await findMarkers(spec, source)) {
-    if (m.id && (m.text || bodies.get(m.id))) ids.add(m.id);
-  }
-  return [...ids];
+  const sidecar = readSidecarSync(root, file);
+  if (source === undefined || !sidecar.entries.length) return [];
+  return (await placeComments(file, await stripComments(file, source), sidecar)).placed;
 }
 
 /**
- * Promotes each id in `file` to an ordinary comment. Outside an agent worktree the rest
- * of the file is collapsed as well, as `collapse` would. Returns ids not found.
+ * Promotes each id in `file` to an ordinary comment where it places. The file is synced
+ * first, so a comment's text as shown wins over the stored body; in an agent worktree
+ * (`expand`) the other comments are placed again. Returns ids not found.
  */
 export async function promoteIds(root: string, file: string, ids: string[], expand: boolean): Promise<string[]> {
-  let missing: string[] = [];
-  await rewriteFiles(root, [file], async (f, source, sidecar) => {
-    const result = await promote(f, source, sidecar, ids);
-    missing = result.missing;
-    if (missing.length) return source;
-    return { source: expand ? result.source : await clean(f, result.source), sidecar: result.sidecar };
-  });
-  return missing;
+  await syncFiles(root, [file], { add: false });
+  const absolute = path.join(root, file);
+  const bytes = readWorkFile(absolute);
+  const original = bytes && decodeExact(bytes);
+  if (original === undefined) return ids;
+  const result = await promotePlaced(file, await stripComments(file, original), readSidecarSync(root, file), ids);
+  if (result.missing.length) return result.missing;
+  writeSidecar(root, file, result.sidecar);
+  const placed = expand ? await placeComments(file, result.source, result.sidecar) : undefined;
+  const source = placed?.source ?? result.source;
+  if (source !== original) writeWorkFile(absolute, source);
+  if (smudges(root)) writeSeen(worktreeGitDir(root), file, placed?.placed ?? []);
+  if (!capturing()) restat(root, [file]);
+  return [];
 }

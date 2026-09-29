@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { PassThrough, Writable } from "node:stream";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { recordComments, serializeSidecar } from "@cairn-comments/core";
 import { contentPackets, FLUSH, MAX_PACKET_DATA, PacketReader, textPacket } from "../src/pktline.js";
 import { serveFilterProcess } from "../src/process.js";
 import { Sandbox } from "./harness.js";
@@ -36,13 +37,16 @@ function session(options: { root: string; delayBudget?: number }) {
   };
 }
 
-/** A worktree root holding one sidecar, `src/a.py` → id ab12. */
-function sidecarRoot(): string {
+/** A worktree root holding one sidecar: `src/a.py` shows `x = 1  #~ab12 why one`. */
+async function sidecarRoot(): Promise<string> {
   const root = mkdtempSync(path.join(os.tmpdir(), "cairn-proc-"));
   mkdirSync(path.join(root, ".agents/comments/src"), { recursive: true });
-  writeFileSync(path.join(root, ".agents/comments/src/a.py.md"), "## ab12\nwhy one\n");
+  const { sidecar } = await recordComments("src/a.py", SHOWN, { preamble: "", entries: [] });
+  writeFileSync(path.join(root, ".agents/comments/src/a.py.md"), serializeSidecar(sidecar));
   return root;
 }
+
+const SHOWN = "x = 1  #~ab12 why one\n";
 
 async function* chunked(bytes: Buffer, size: number): AsyncGenerator<Buffer> {
   for (let i = 0; i < bytes.length; i += size) yield bytes.subarray(i, i + size);
@@ -118,9 +122,9 @@ describe("filter process protocol", () => {
       ...request("clean", "empty.py", ""),
     ]);
     expect(responses.map((r) => r.status)).toEqual(Array(4).fill("status=success"));
-    expect(responses[0]!.content!.toString()).toMatch(/^x = 1 {2}#~[0-9a-z]{4}\r\n$/);
+    expect(responses[0]!.content!.toString()).toBe("x = 1\r\n");
     expect(responses[1]!.content).toEqual(latin1);
-    expect(responses[2]!.content!.toString()).toMatch(/^let y = 2; \/\/~[0-9a-z]{4}\n$/);
+    expect(responses[2]!.content!.toString()).toBe("let y = 2;\n");
     expect(responses[3]!.content).toEqual(Buffer.alloc(0));
   });
 
@@ -131,27 +135,27 @@ describe("filter process protocol", () => {
     expect(responses).toHaveLength(1);
     const cleaned = responses[0]!.content!.toString();
     expect(cleaned.startsWith(body)).toBe(true);
-    expect(cleaned.slice(body.length)).toMatch(/^y = 2 {2}#~[0-9a-z]{4}\n$/);
+    expect(cleaned.slice(body.length)).toBe("y = 2\n");
   });
 
   it("smudges from the sidecar under the worktree root", async () => {
-    const root = sidecarRoot();
+    const root = await sidecarRoot();
     try {
-      const { responses } = await serve([...GREETING, ...OFFER, ...request("smudge", "src/a.py", "x = 1  #~ab12\n")], { smudge: true, root });
-      expect(responses).toEqual([{ status: "status=success", content: Buffer.from("x = 1  #~ab12 why one\n") }]);
+      const { responses } = await serve([...GREETING, ...OFFER, ...request("smudge", "src/a.py", "x = 1\n")], { smudge: true, root });
+      expect(responses).toEqual([{ status: "status=success", content: Buffer.from(SHOWN) }]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
   it("delays a smudge git allows to wait, lists it once ready, and hands it over on the re-request", async () => {
-    const root = sidecarRoot();
+    const root = await sidecarRoot();
     const s = session({ root });
     try {
       s.send([...GREETING, ...OFFER]);
       await s.reader.readList();
       expect(await s.reader.readList()).toEqual(["capability=clean", "capability=smudge", "capability=delay"]);
-      s.send(request("smudge", "src/a.py", "x = 1  #~ab12\n", ["can-delay=1"]));
+      s.send(request("smudge", "src/a.py", "x = 1\n", ["can-delay=1"]));
       expect(await s.reader.readList()).toEqual(["status=delayed"]);
       // A clean in between is answered in line.
       s.send(request("clean", "b.py", "y = 2\n"));
@@ -163,7 +167,7 @@ describe("filter process protocol", () => {
       expect(await s.reader.readList()).toEqual(["status=success"]);
       s.send(request("smudge", "src/a.py", ""));
       expect(await s.reader.readList()).toEqual(["status=success"]);
-      expect((await s.reader.readContent()).toString()).toBe("x = 1  #~ab12 why one\n");
+      expect((await s.reader.readContent()).toString()).toBe(SHOWN);
       expect(await s.reader.readList()).toEqual([]);
       // Nothing outstanding: an empty list tells git to stop asking.
       s.send(LIST_AVAILABLE);
@@ -176,14 +180,14 @@ describe("filter process protocol", () => {
   });
 
   it("answers in line once delayed content would exceed the byte budget", async () => {
-    const root = sidecarRoot();
+    const root = await sidecarRoot();
     const s = session({ root, delayBudget: 0 });
     try {
-      s.send([...GREETING, ...OFFER, ...request("smudge", "src/a.py", "x = 1  #~ab12\n", ["can-delay=1"])]);
+      s.send([...GREETING, ...OFFER, ...request("smudge", "src/a.py", "x = 1\n", ["can-delay=1"])]);
       await s.reader.readList();
       await s.reader.readList();
       expect(await s.reader.readList()).toEqual(["status=success"]);
-      expect((await s.reader.readContent()).toString()).toBe("x = 1  #~ab12 why one\n");
+      expect((await s.reader.readContent()).toString()).toBe(SHOWN);
       await s.finish();
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -196,7 +200,7 @@ describe("filter process protocol", () => {
     mkdirSync(path.join(root, ".agents/comments/a.py.md"), { recursive: true });
     const s = session({ root });
     try {
-      s.send([...GREETING, ...OFFER, ...request("smudge", "a.py", "x = 1  #~ab12\n", ["can-delay=1"]), ...LIST_AVAILABLE]);
+      s.send([...GREETING, ...OFFER, ...request("smudge", "a.py", "x = 1\n", ["can-delay=1"]), ...LIST_AVAILABLE]);
       await s.reader.readList();
       await s.reader.readList();
       expect(await s.reader.readList()).toEqual(["status=delayed"]);
@@ -204,7 +208,7 @@ describe("filter process protocol", () => {
       expect(await s.reader.readList()).toEqual(["status=success"]);
       s.send(request("smudge", "a.py", ""));
       expect(await s.reader.readList()).toEqual(["status=success"]);
-      expect((await s.reader.readContent()).toString()).toBe("x = 1  #~ab12\n");
+      expect((await s.reader.readContent()).toString()).toBe("x = 1\n");
       expect(s.log).toEqual([expect.stringMatching(/^a\.py: .*; checked out unfiltered$/)]);
       await s.finish();
     } finally {
@@ -216,7 +220,7 @@ describe("filter process protocol", () => {
     const { responses, log } = await serve([
       ...GREETING,
       ...OFFER,
-      ...request("smudge", "a.py", "x = 1  #~ab12\n"),
+      ...request("smudge", "a.py", "x = 1\n"),
       ...request("clean", "a.py", "x = 1\n"),
     ]);
     expect(responses).toEqual([{ status: "status=error" }, { status: "status=success", content: Buffer.from("x = 1\n") }]);
@@ -312,10 +316,10 @@ describe("a filter process crash mid-stream", () => {
       const result = box.gitResult(main, "add", "-A");
       expect(result.status).toBe(0);
       expect(result.stderr).toMatch(/^error: external filter '.*crash\.mjs"' failed$/m);
-      expect(box.git(main, "show", ":a.py")).toMatch(/^a = 2 {2}#~[0-9a-z]{4}\n$/);
+      expect(box.git(main, "show", ":a.py")).toBe("a = 2\n");
       // Documented fallback (design.md § Filter process): unfiltered, whole, and caught by `check`.
       expect(box.git(main, "show", ":b.py")).toBe("b = 2  #~ changed b\n");
-      expect(box.git(main, "show", ":c.py")).toMatch(/^c = 2 {2}#~[0-9a-z]{4}\n$/);
+      expect(box.git(main, "show", ":c.py")).toBe("c = 2\n");
     } finally {
       box.cli(main, "init");
     }

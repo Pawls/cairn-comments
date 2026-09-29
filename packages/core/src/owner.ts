@@ -1,13 +1,55 @@
-// Changes made to markerless comments from a checkout that shows none of them (the owner's,
-// through the extension): each works on the code as it stands and returns the new sidecar.
-import { promote } from "./filter.js";
+// Changes made to AI comments from a checkout that shows none of them (the owner's, through
+// the extension or the CLI): each works on the code as it stands and returns the new sidecar.
 import { freshId } from "./ids.js";
 import { languageForPath } from "./languages.js";
+import { LITERAL_KEY, writeLiteral } from "./literals.js";
 import { applySplices, dominantEol, splitLines, type Splice } from "./lines.js";
+import { findMarkers } from "./markers.js";
 import { PLACEMENT_KEYS, placeComments, recordComments, stripComments } from "./placement.js";
 import { normalizeBody, type Sidecar, type SidecarEntry } from "./sidecar.js";
 
 export const COPIED_FROM_KEY = "copied-from";
+
+/** The terminator ending the line at `offset`, or `fallback` on an unterminated last line. */
+function eolAt(source: string, offset: number, fallback: string): string {
+  if (source.startsWith("\r\n", offset)) return "\r\n";
+  if (source[offset] === "\n") return "\n";
+  return fallback;
+}
+
+/**
+ * Turns each named sigil comment in `source` into an ordinary comment under the language's
+ * plain line prefix (`#`, `//`), or back into the string it was demoted from, and drops its
+ * entry. Inverse of `convertComments` for a line comment written `<prefix> text`
+ * (design.md § Promote and demote). Returns the ids with no comment to promote.
+ */
+async function promoteShown(path: string, source: string, sidecar: Sidecar, ids: readonly string[]): Promise<{ source: string; sidecar: Sidecar; missing: string[] }> {
+  const spec = languageForPath(path);
+  const markers = spec ? await findMarkers(spec, source) : [];
+  const fallbackEol = dominantEol(source);
+  const splices: Splice[] = [];
+  const promoted = new Set<string>();
+  const missing: string[] = [];
+  for (const id of ids) {
+    const m = markers.find((x) => x.id === id);
+    const body = m && normalizeBody(m.text ?? "");
+    if (!spec || !m || !body) {
+      missing.push(id);
+      continue;
+    }
+    const prefix = spec.lineSigil.slice(0, -1);
+    const toComment = (line: string) => (line ? `${prefix} ${line}` : prefix);
+    const eol = eolAt(source, m.end, fallbackEol);
+    const literal = sidecar.entries.find((e) => e.id === id)?.meta.get(LITERAL_KEY);
+    const trailing = m.placement === "trailing";
+    const asString = literal !== undefined && !trailing ? writeLiteral(literal, body, m.indent, eol) : undefined;
+    const lines = trailing ? [body.split("\n").join(" ")] : body.split("\n");
+    splices.push({ start: m.start, end: m.end, text: asString ?? lines.map(toComment).join(eol + m.indent) });
+    promoted.add(id);
+  }
+  const entries = sidecar.entries.filter((e) => !promoted.has(e.id)).map((e) => ({ ...e, meta: new Map(e.meta) }));
+  return { source: applySplices(source, splices), sidecar: { preamble: sidecar.preamble, entries }, missing };
+}
 
 export interface ConfirmPlacedResult {
   sidecar: Sidecar;
@@ -46,7 +88,7 @@ export async function promotePlaced(path: string, code: string, sidecar: Sidecar
   const placed = await placeComments(path, code, sidecar);
   const missing = ids.filter((id) => !placed.placed.includes(id));
   if (missing.length) return { source: code, sidecar, missing };
-  const promoted = await promote(path, placed.source, sidecar, ids);
+  const promoted = await promoteShown(path, placed.source, sidecar, ids);
   const recorded = await recordComments(path, promoted.source, promoted.sidecar, { baseline: code });
   return { source: await stripComments(path, recorded.source), sidecar: recorded.sidecar, missing: promoted.missing };
 }

@@ -16,9 +16,9 @@ export function freshId(path: string, text: string, taken: Set<string>): string 
 }
 
 /**
- * Final id per marker, in order. Pure in (path, markers) so that `clean` and `sync`
- * always agree: a new comment's id hashes path, text, and occurrence index, salted past
- * any id already present in the file. An expanded comment that reuses an earlier id with
+ * Final id per sigil comment, in order. Pure in (path, markers), so recording the same file
+ * twice gives the same ids: a new comment's id hashes path, text, and occurrence index,
+ * salted past any id already present in the file. A comment that reuses an earlier id with
  * different text (a copy-pasted line that was then edited) is re-identified as new.
  */
 export function resolveIds(path: string, markers: readonly Marker[]): string[] {

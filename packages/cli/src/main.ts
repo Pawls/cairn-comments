@@ -18,7 +18,7 @@ import {
   syncFiles,
 } from "./files.js";
 import { ADAPTERS } from "./adapters.js";
-import { markerless, repoRoot, smudges, toRepoPath, trackedFiles } from "./git.js";
+import { repoRoot, smudges, toRepoPath, trackedFiles } from "./git.js";
 import { runHook } from "./hook.js";
 import { agentsSnippet, planInit, planUninstall, runPlan } from "./init.js";
 import { serveFilterProcess } from "./process.js";
@@ -29,20 +29,20 @@ import { addWorktree } from "./worktree.js";
 
 const USAGE = `usage: ${BRAND} <command>
 
-  init [--command <cli>] [--one-shot] [--hooks <harness,...>] [--agents-md] [--markerless] [--dry-run]
+  init [--command <cli>] [--one-shot] [--hooks <harness,...>] [--agents-md] [--dry-run]
                                 configure the filter, merge driver, .gitattributes, and pre-commit
                                 hook, printing each change; --one-shot runs a process per file
                                 instead of one per git command; --hooks installs post-edit adapters
                                 (${Object.keys(ADAPTERS).join(", ")}); --agents-md writes the sigil
-                                convention into AGENTS.md; --markerless keeps no markers in committed
-                                code, only in the sidecar; --dry-run prints without changing
-  uninstall [--dry-run]         undo init, adapters and AGENTS.md included; sidecars and markers stay
+                                convention into AGENTS.md; --dry-run prints without changing
+  uninstall [--dry-run]         undo init, adapters and AGENTS.md included; sidecars stay
   worktree add <git args...>    add a worktree whose checkout shows full comments
   sync [--staged] [--add] [files...]
-                                move comment bodies into sidecars and stamp new ids
-  expand [files...]             show full comments in working files
-  collapse [files...]           reduce working files to bare markers (markerless: remove the comments)
-  refresh                       in a smudged markerless worktree, place the comments of every file
+                                record where each comment sits and its text in the sidecars,
+                                stamping ids onto new comments
+  expand [files...]             place every comment in the working files
+  collapse [files...]           remove the comments from the working files
+  refresh                       in an agent worktree, place the comments of every file
                                 with a sidecar (the post-checkout, post-merge, post-commit hooks)
   scan [--json] [--all] [files...]
                                 list likely AI comments; --all adds detectors that ship disabled
@@ -53,18 +53,18 @@ const USAGE = `usage: ${BRAND} <command>
                                 turn comments new since the index into sigil comments and sync,
                                 recording the provenance given; --changed adds every edited file
   check [--staged] [--fix] [--json] [files...]
-                                check what is committed (the index): comments committed with
-                                their text, markers without bodies, bodies without markers;
-                                --fix moves bodies after renames and drops unreferenced ones;
-                                exits 1 when problems remain
+                                check what is committed (the index): sigil comments committed
+                                in the code, and sidecars whose source is gone; --fix moves a
+                                renamed file's sidecar and drops a deleted file's; exits 1
+                                when problems remain
   check --stale [--json] [files...]
                                 list comments whose code changed while their body did not;
                                 exits 1 when any are found
   check --orphans [--json] [files...]
-                                markerless: list comments that no longer place in their code,
-                                with their last known declaration; exits 1 when any are found
+                                list comments that no longer place in their code, with their
+                                last known declaration; exits 1 when any are found
   check --fix --prune [files...]
-                                markerless: remove those comments from their sidecars
+                                remove those comments from their sidecars
   confirm <id|file:id>...       accept the current code for a stale comment, clearing its flag
   promote <id|file:id>... | --all [files...]
                                 turn AI comments into ordinary committed comments
@@ -299,12 +299,11 @@ async function runInit(args: string[]): Promise<void> {
       "one-shot": { type: "boolean", default: false },
       hooks: { type: "string" },
       "agents-md": { type: "boolean", default: false },
-      markerless: { type: "boolean", default: false },
       "dry-run": { type: "boolean", default: false },
     },
   });
   const hooks = values.hooks?.split(",").map((h) => h.trim()).filter(Boolean);
-  const options = { command: values.command, oneShot: values["one-shot"], hooks, agentsMd: values["agents-md"], markerless: values.markerless };
+  const options = { command: values.command, oneShot: values["one-shot"], hooks, agentsMd: values["agents-md"] };
   for (const line of runPlan(planInit(repoRoot(), options), values["dry-run"])) console.log(line);
 }
 
@@ -315,7 +314,7 @@ async function runUninstall(args: string[]): Promise<void> {
   const kept = trackedFiles(root).filter((f) => f.startsWith(`${SIDECAR_ROOT}/`)).length;
   if (kept) {
     console.log(
-      `note: ${kept} sidecar file(s) under ${SIDECAR_ROOT}/ and their markers stay; ` +
+      `note: ${kept} sidecar file(s) under ${SIDECAR_ROOT}/ stay; ` +
         `\`${BRAND} promote --all\` before uninstalling turns them into ordinary comments`,
     );
   }
@@ -337,7 +336,7 @@ async function runMergeSidecar(args: string[]): Promise<void> {
 /** Places comments that a git operation brought in without smudging their source. */
 async function runRefresh(): Promise<void> {
   const root = repoRoot();
-  if (!markerless(root) || !smudges(root)) return;
+  if (!smudges(root)) return;
   await refreshFiles(root);
 }
 

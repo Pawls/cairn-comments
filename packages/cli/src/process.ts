@@ -7,7 +7,7 @@ export interface FilterProcessOptions {
   root: string;
   /** Advertise smudge. Only agent worktrees set it, through their per-worktree config. */
   smudge: boolean;
-  /** Markerless mode and where smudge keeps its seen record; marker mode when absent. */
+  /** Where smudge keeps its seen record; absent where git does not smudge. */
   mode?: FilterMode;
   log: (message: string) => void;
   /** Most source bytes held for delayed smudges before answering synchronously again. */

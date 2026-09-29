@@ -1,37 +1,15 @@
 import { createHash } from "node:crypto";
 import type { Node } from "web-tree-sitter";
 import type { LanguageSpec } from "./languages.js";
-import type { Line } from "./lines.js";
 
-/**
- * The code a marker describes, as a hash of its normalized tokens (design.md § Staleness).
- * An own-line marker anchors to the node that starts the next code line at the marker's
- * indent; a trailing marker anchors to the code before it on its own line. Undefined
- * when there is no such code (the last comment of a block, the end of the file).
- */
-export function anchorHash(
-  spec: LanguageSpec,
-  root: Node,
-  source: string,
-  lines: readonly Line[],
-  marker: { placement: "own-line" | "trailing"; start: number; end: number; indent: string },
-  row: { first: number; last: number },
-): string | undefined {
-  const text =
-    marker.placement === "trailing"
-      ? serialize(spec, root, { start: lines[row.first]!.start, end: marker.start }, new Set())
-      : ownLineAnchor(spec, root, source, lines, marker.indent, row.last);
-  return text ? digest(text) : undefined;
-}
+// Hashes of the code a comment describes, blind to what formatters change (design.md
+// § Anchoring, "Normalization").
 
 function digest(text: string): string {
   return createHash("sha256").update(text).digest("hex").slice(0, 8);
 }
 
-/**
- * Hash of a node's normalized tokens, as `anchorHash` computes it for the node below an
- * own-line marker: a declaration contributes its signature only, unless `withBodies`.
- */
+/** Hash of a node's normalized tokens: a declaration contributes its signature only, unless `withBodies`. */
 export function nodeHash(spec: LanguageSpec, node: Node, withBodies = false): string {
   const skipped = withBodies ? new Set<number>() : declarationBodies(node);
   return digest(serialize(spec, node, { start: node.startIndex, end: node.endIndex }, skipped));
@@ -44,25 +22,6 @@ export function nodeHash(spec: LanguageSpec, node: Node, withBodies = false): st
 export function bodyHash(spec: LanguageSpec, declaration: Node): string {
   const name = declaration.childForFieldName("name");
   return digest(serialize(spec, declaration, { start: declaration.startIndex, end: declaration.endIndex }, new Set(name ? [name.id] : [])));
-}
-
-function ownLineAnchor(spec: LanguageSpec, root: Node, source: string, lines: readonly Line[], indent: string, lastRow: number): string | undefined {
-  for (let r = lastRow + 1; r < lines.length; r++) {
-    const line = lines[r]!;
-    const content = source.slice(line.start, line.contentEnd);
-    const lead = /^[ \t]*/.exec(content)![0];
-    if (lead.length === content.length) continue;
-    const at = line.start + lead.length;
-    const leaf = root.descendantForIndex(at, at);
-    if (!leaf || spec.commentTypes.includes(leaf.type)) continue;
-    // Code at another indent belongs to an enclosing or nested construct, not to this comment.
-    if (lead !== indent) return undefined;
-    let node = leaf;
-    // Python's `block` starts at its first statement; climbing into it would take the whole body.
-    while (node.parent?.parent && node.parent.startIndex === node.startIndex && node.parent.type !== "block") node = node.parent;
-    return serialize(spec, node, { start: node.startIndex, end: node.endIndex }, declarationBodies(node));
-  }
-  return undefined;
 }
 
 const DECLARATION = /function|method|class|interface|struct|enum|namespace|internal_module|constructor|record|property|object_declaration|companion_object/;
