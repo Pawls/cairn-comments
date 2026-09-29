@@ -132,3 +132,56 @@ describe.each([true, false])("--print reports the rewrite instead of writing it 
     for (const [file, text] of Object.entries(printed.files)) expect(readFileSync(box.path("main", file), "utf8")).toBe(text);
   });
 });
+
+const NOTED = "src/noted.py";
+const NOTED_SIDECAR = ".agents/comments/src/noted.py.md";
+const NOTED_SOURCE = [
+  "def settle(order):",
+  '    """Settle one order."""',
+  "    ledger.write(order.id)",
+  '    """',
+  "    Idempotent: the ledger is keyed on order.id.",
+  '    """',
+  "    notify(order)",
+  "",
+].join("\n");
+
+describe.each([true, false])("demoting a Python string through git (autocrlf=%s)", (autocrlf) => {
+  let box: Sandbox;
+
+  beforeAll(() => {
+    box = new Sandbox({ autocrlf });
+    for (const repo of ["marked", "markerless"]) {
+      box.write(box.path(repo, NOTED), NOTED_SOURCE);
+      box.git(box.dir, "init", "-q", repo);
+      box.cli(box.path(repo), "init", ...(repo === "markerless" ? ["--markerless"] : []));
+      box.git(box.path(repo), "add", "-A");
+      box.git(box.path(repo), "commit", "-qm", "base");
+    }
+  });
+  afterAll(() => box.dispose());
+
+  it("refuses the docstring", () => {
+    expect(box.cliResult(box.path("marked"), "demote", `${NOTED}:2`)).toMatchObject({ status: 1, stderr: `cairn: ${NOTED}:2: a docstring stays in the code\n` });
+  });
+
+  it("demote then promote restores the committed bytes", () => {
+    const repo = box.path("marked");
+    const committed = readFileSync(box.path("marked", NOTED));
+    expect(box.cli(repo, "demote", `${NOTED}:5`)).toBe("demoted 1 comment(s) in 1 file(s)\n");
+    const id = /#~([0-9a-z]{4})/.exec(box.read(box.path("marked", NOTED)))![1]!;
+    expect(box.read(box.path("marked", NOTED_SIDECAR))).toContain("literal=");
+    expect(box.cli(repo, "promote", id)).toBe(`promoted ${id} in ${NOTED}\n`);
+    expect(readFileSync(box.path("marked", NOTED))).toEqual(committed);
+    expect(box.status(repo)).toBe("");
+  });
+
+  it("markerless demote takes the string out of the file and records its quotes", () => {
+    const repo = box.path("markerless");
+    expect(box.cli(repo, "demote", `${NOTED}:4`)).toBe("demoted 1 comment(s) in 1 file(s)\n");
+    expect(box.read(box.path("markerless", NOTED))).toBe('def settle(order):\n    """Settle one order."""\n    ledger.write(order.id)\n    notify(order)\n');
+    const sidecar = box.read(box.path("markerless", NOTED_SIDECAR));
+    expect(sidecar).toMatch(/literal=triple-double\b/);
+    expect(sidecar).toContain("\nIdempotent: the ledger is keyed on order.id.\n");
+  });
+});

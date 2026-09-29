@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { carryComments, confirmPlaced, placeComments, promotePlaced, recordComments, stripComments, type Sidecar } from "../src/index.js";
+import {
+  carryComments,
+  confirmPlaced,
+  convertDemoted,
+  demoteTarget,
+  placeComments,
+  promotePlaced,
+  recordComments,
+  recordLiterals,
+  stripComments,
+  type Sidecar,
+} from "../src/index.js";
 
 const EMPTY: Sidecar = { preamble: "", entries: [] };
 
@@ -60,6 +71,22 @@ describe("promotePlaced", () => {
     const { code, sidecar, ids } = await owner();
     const result = await promotePlaced("a.py", code, sidecar, [ids[1]!]);
     expect(result.source).toContain("    ledger.write(order.id)  # keyed on order.id\n");
+  });
+
+  it("writes a demoted string back as the same string", async () => {
+    const original = 'def settle(order):\n    ledger.write(order.id)\n    """\n    Idempotent: keyed on order.id.\n    """\n    notify(order)\n';
+    const target = await demoteTarget("a.py", original, 4);
+    if (typeof target === "string") throw new Error(target);
+    const converted = convertDemoted("a.py", original, [target], new Set());
+    const recorded = await recordComments("a.py", converted.source, EMPTY);
+    const sidecar = recordLiterals(recorded.sidecar, converted.literals);
+    const code = await stripComments("a.py", recorded.source);
+    expect(code).toBe("def settle(order):\n    ledger.write(order.id)\n    notify(order)\n");
+
+    const result = await promotePlaced("a.py", code, sidecar, [sidecar.entries[0]!.id]);
+    expect(result.missing).toEqual([]);
+    expect(result.source).toBe(original);
+    expect(result.sidecar.entries).toEqual([]);
   });
 
   it("keeps a stale comment stale", async () => {

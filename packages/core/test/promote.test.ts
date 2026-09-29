@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { clean, convertComments, demoteTarget, parseSidecar, promote, sync, type ScannedComment, type Sidecar } from "../src/index.js";
+import {
+  analyzeSource,
+  clean,
+  convertDemoted,
+  demoteTarget,
+  parseSidecar,
+  promote,
+  recordLiterals,
+  sync,
+  type ScannedComment,
+  type Sidecar,
+} from "../src/index.js";
 
 const empty: Sidecar = { preamble: "", entries: [] };
 
@@ -7,8 +18,9 @@ const empty: Sidecar = { preamble: "", entries: [] };
 async function demote(path: string, source: string, line: number, sidecar: Sidecar = empty): Promise<{ source: string; sidecar: Sidecar }> {
   const target = await demoteTarget(path, source, line);
   if (typeof target === "string") throw new Error(target);
-  const synced = await sync(path, convertComments(path, source, [target]), sidecar);
-  return { source: await clean(path, synced.source), sidecar: synced.sidecar };
+  const converted = convertDemoted(path, source, [target], new Set(sidecar.entries.map((e) => e.id)));
+  const synced = await sync(path, converted.source, sidecar);
+  return { source: await clean(path, synced.source), sidecar: recordLiterals(synced.sidecar, converted.literals) };
 }
 
 const idOf = (source: string) => /[#/]~([0-9a-z]{4})/.exec(source)![1]!;
@@ -59,6 +71,33 @@ describe("demoteTarget", () => {
     expect(await demoteTarget("a.ts", "/** Docs. */\nfunction f() {}\n", 1)).toBe("a doc comment stays in the code");
     expect(await demoteTarget("a.txt", "# x\n", 1)).toBe("not a supported language");
   });
+
+  it("finds a bare string statement that is not a docstring, on any of its lines", async () => {
+    const source = 'def f():\n    """Doc."""\n    x = 1\n    """\n    Note about y.\n    """\n    y = 2\n';
+    for (const line of [4, 5, 6]) {
+      expect(await demoteTarget("a.py", source, line)).toMatchObject({ style: "string", line: 4, endLine: 6, text: "Note about y.", protected: undefined });
+    }
+    expect(await demoteTarget("a.py", 'def f():\n    x = 1\n    """After an assignment in a function."""\n    y = 2\n', 3)).toMatchObject({ style: "string" });
+  });
+
+  it("refuses docstrings, attribute docstrings, f-strings, and a string alone in its block", async () => {
+    const docstring = "a docstring stays in the code";
+    expect(await demoteTarget("a.py", '"""Module."""\nx = 1\n', 1)).toBe(docstring);
+    expect(await demoteTarget("a.py", '#!/usr/bin/env python\n# header\n"""Module."""\nx = 1\n', 3)).toBe(docstring);
+    expect(await demoteTarget("a.py", 'def f():\n    """Doc."""\n    return 1\n', 2)).toBe(docstring);
+    expect(await demoteTarget("a.py", 'class C:\n    """Doc."""\n    x = 1\n', 2)).toBe(docstring);
+    expect(await demoteTarget("a.py", "x = 1\n'''About x.'''\ny = 2\n", 2)).toBe(docstring);
+    expect(await demoteTarget("a.py", 'class C:\n    x: int = 1\n    """About x."""\n    y = 2\n', 3)).toBe(docstring);
+    expect(await demoteTarget("a.py", 'class C:\n    def __init__(self):\n        self.x = 1\n        """About x."""\n        self.y = 2\n', 4)).toBe(docstring);
+    expect(await demoteTarget("a.py", 'def f():\n    x = 1\n    f"""{x}"""\n    y = 2\n', 3)).toBe("an f-string runs code, so it stays in the code");
+    expect(await demoteTarget("a.py", 'def f(x):\n    y = 1\n    if x:\n        "only"\n', 4)).toBe("the only statement in its block stays in the code");
+    expect(await demoteTarget("a.py", 'def f():\n    x = 1\n    "a" "b"\n    y = 2\n', 3)).toBe("no comment on this line");
+    expect(await demoteTarget("a.py", 'def f():\n    x = 1\n    y = "text"\n', 3)).toBe("no comment on this line");
+  });
+
+  it("never offers a string to scan", async () => {
+    expect(await analyzeSource("a.py", 'def f():\n    x = 1\n    """Note."""\n    y = 2\n')).toEqual([]);
+  });
 });
 
 describe("demote then promote", () => {
@@ -79,6 +118,38 @@ describe("demote then promote", () => {
     const promoted = await promote(path, demoted.source, demoted.sidecar, [id]);
     expect(promoted.source).toBe(original);
     expect(promoted.sidecar.entries).toEqual([]);
+  });
+
+  const STRINGS: [string, string, number][] = [
+    ["a.py", 'def f():\n    x = 1\n    """\n    Note about y.\n\n      indented more\n    """\n    y = 2\n', 4],
+    ["a.py", "def f():\r\n    x = 1\r\n    r'''Raw \\d note,\r\n    second line.'''\r\n    y = 2\r\n", 3],
+    ["a.py", 'def f():\n    x = 1\n    "short note"\n    y = 2\n', 3],
+    ["a.py", '"""Module."""\nimport os\n\n"""Helpers below.\n"""\ndef g():\n    pass\n', 4],
+    ["a.py", 'def f():\n    x = 1\n    """Last statement."""\n', 3],
+  ];
+
+  it.each(STRINGS)("restores a demoted string's bytes (%s, %j)", async (path, original, line) => {
+    const demoted = await demote(path, original, line);
+    const id = idOf(demoted.source);
+    expect(demoted.source).toMatch(/#~[0-9a-z]{4}\r?\n/);
+    expect(demoted.source).not.toContain(original.split("\n")[line - 1]!.trim());
+    expect(demoted.sidecar.entries.map((e) => e.meta.has("literal"))).toEqual([true]);
+    const promoted = await promote(path, demoted.source, demoted.sidecar, [id]);
+    expect(promoted.source).toBe(original);
+  });
+
+  it("stores a demoted string's text without its quotes or indentation", async () => {
+    const demoted = await demote("a.py", STRINGS[0]![1], 5);
+    expect(demoted.sidecar.entries[0]!.body).toBe("Note about y.\n\n  indented more");
+  });
+
+  it("promotes an edited string body that no longer fits its quotes as comments", async () => {
+    const demoted = await demote("a.py", STRINGS[2]![1], 3);
+    const id = idOf(demoted.source);
+    demoted.sidecar.entries[0]!.body = 'now "quoted"\nand two lines';
+    expect((await promote("a.py", demoted.source, demoted.sidecar, [id])).source).toBe(
+      'def f():\n    x = 1\n    # now "quoted"\n    # and two lines\n    y = 2\n',
+    );
   });
 
   it("brings a block comment back as line comments", async () => {
