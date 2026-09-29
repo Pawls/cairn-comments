@@ -179,7 +179,7 @@ describe("placement across code changes", () => {
     expect(placed.source).toMatch(/#~[0-9a-z]{4} quoted\n {4}return "q"/);
   });
 
-  // The Python pairs of stale.test.ts's FORMATTER_ONLY (A7), with a comment in place of the bare marker.
+  // The Python pairs of normalization.test.ts, checked here against the placed text.
   const PYTHON_FORMATTER_PAIRS: [string, string][] = [
     ["x = foo(a,b)\n", "x   =   foo( a, b )\n"],
     ["x = foo(a, b)\n", "x = foo(\n    a,\n    b,\n)\n"],
@@ -534,7 +534,7 @@ const LANGUAGE_FIXTURES: [string, string, (string | undefined)[]][] = [
   ["a.kt", KOTLIN, [undefined, "Ledger", "Ledger", "Ledger.toString", "Ledger.make", "Registry.find"]],
 ];
 
-describe("markerless in every language", () => {
+describe("anchoring in every language", () => {
   it.each(LANGUAGE_FIXTURES)("restores %s exactly, LF and CRLF", async (path, working) => {
     await expectExact(path, working);
     await expectExact(path, working.replaceAll("\n", "\r\n"));
@@ -599,7 +599,7 @@ describe("markerless in every language", () => {
     expect(placed.source).toMatch(/export const refund = async \(order: Order\) => \{\n {2}\/\/~[0-9a-z]{4} reverse before notifying\n/);
   });
 
-  // The non-Python pairs of stale.test.ts's FORMATTER_ONLY (A7), with a comment in place of the bare marker.
+  // Formatter pairs as in normalization.test.ts, inside a function, so its body hash must survive them too.
   const FORMATTER_PAIRS: [string, string, string][] = [
     ["a.ts", "//~ why\nconst f = y => y\n", "const f = (y) => y;\n"],
     ["a.ts", "//~ why\nconst o = {a:1,b:[1,2,],}\n", "const o = { a: 1, b: [1, 2] };\n"],

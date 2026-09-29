@@ -15,7 +15,7 @@ export interface LanguageSpec {
   /** Module specifier of the grammar's prebuilt WASM. */
   wasm: string;
   /**
-   * Node types that scope markerless anchors (placement.ts): a comment inside a function is
+   * Node types that scope comment anchors (placement.ts): a comment inside a function is
    * placed only while that function is unchanged; classes only name the path. A node of
    * these types with no name (a callback) is not a scope; see `scopeName` there. C#'s
    * file-scoped namespace is left out: it is a sibling of the file's types, not their parent.

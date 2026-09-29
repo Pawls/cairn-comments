@@ -1,7 +1,8 @@
 # Agent notes
 
-Cairn Comments keeps AI-written comments out of committed code: sigil comments collapse to id
-markers through a git filter, bodies live in `.agents/comments/`. Start with
+Cairn Comments keeps AI-written comments out of committed code: a git filter removes sigil
+comments whole, and their bodies live in `.agents/comments/` with a record of where each
+goes (the anchor), from which agent worktrees get them back. Start with
 [docs/design.md](docs/design.md) (decisions and every settled rule) and
 [docs/plans/v1.md](docs/plans/v1.md) (vertical slices; all v1 work lands on branch `v1`).
 
@@ -15,7 +16,7 @@ markers through a git filter, bodies live in `.agents/comments/`. Start with
 | `npm run package -w packages/vscode` | Build `packages/vscode/cairn-comments.vsix` (after `npm run build`). Packaging only; nothing is published. |
 | `npm run lint` | eslint over the whole workspace. |
 | `npm run bench` | 2,000-file checkout benchmark (design.md § Filter process). Slow; run only when touching the filter path. |
-| `npm run replay -- --repo <path>` | Markerless placement replayed over a repository's history (design.md § Anchoring, "Measured"). Minutes per repository; run when changing placement. |
+| `npm run replay -- --repo <path>` | Comment placement replayed over a repository's history (design.md § Anchoring, "Measured"). Minutes per repository; run when changing placement. |
 
 A change is signed off on Windows (`autocrlf=true` scenarios included) and on an LF
 platform (WSL Ubuntu so far). The integration suites already run each scenario under both
@@ -23,8 +24,16 @@ platform (WSL Ubuntu so far). The integration suites already run each scenario u
 
 ## Invariants the tests do not fully guard
 
-- **`clean` is pure in (path, source).** Git calls it on status, diff, and add; it never
-  reads or writes a sidecar. Sidecar writes happen only in `sync`.
+- **`clean` is pure in (path, source).** Git calls it on status, diff, and add;
+  `stripComments` never reads or writes a sidecar. Sidecar writes happen only in `sync`
+  (`recordComments`) and in the commands built on it.
+- **Placement is exact or it is refused.** A comment goes back only on the node its
+  anchor names, or through the documented fallbacks (design.md § Anchoring, "When it is
+  placed"); anything else is an orphan, kept in the sidecar. Never add a best-guess
+  placement: a confident wrong one attaches a true comment to the wrong code.
+- **Deletion needs the seen record.** A comment counts as deleted only when the tool last
+  wrote it into that worktree's file and it is gone now (design.md § Anchoring,
+  "Deleting"); a sidecar entry absent from a file proves nothing.
 - **Every rewrite keeps each line's terminator.** Build output with `applySplices`
   (`packages/core/src/lines.ts`); never normalize a whole source file.
 - **A tool rewrite of a working file ends with the guarded re-stat** (`restat` in
@@ -44,8 +53,5 @@ platform (WSL Ubuntu so far). The integration suites already run each scenario u
 
 ## Known noise
 
-- The `clean undoes smudge` property in `packages/core/test/filter.test.ts` fails on some
-  seeds: a known grammar ambiguity (design.md § Known gaps, "A lone sigil line below a
-  bare marker"). A failure there is not caused by an unrelated change.
 - This repository does not run Cairn Comments on itself; there is no filter in its
   `.gitattributes`, so write ordinary comments here.

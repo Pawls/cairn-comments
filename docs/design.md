@@ -10,22 +10,25 @@ the context. Keeping them clutters the code.
 
 ## Approach
 
-AI comments are marked with a sigil (`#~`, `//~`, `/*~ */`). Committed code keeps only a
-short ID marker where each comment was. Comment bodies live in tracked markdown sidecar
-files. A git filter expands markers back to full inline comments in agent worktrees, so
-agents read and write ordinary comments at ordinary token cost. The owner's checkout
-stays collapsed, and a VS Code extension renders the bodies as a toggleable overlay.
+AI comments are marked with a sigil (`#~`, `//~`). Committed code keeps no trace of them:
+the git filter removes each one whole. Comment bodies live in tracked markdown sidecar
+files, each with a record of where it goes (§ Anchoring). The filter places them back as
+full inline comments in agent worktrees, so agents read and write ordinary comments at
+ordinary token cost. The owner's checkout shows only the code, and a VS Code extension
+renders the comments as a toggleable overlay.
 
 ```text
 Committed blob / owner checkout          Agent worktree (smudged)
   def settle(order):                       def settle(order):
-      #~a1b2                                   #~a1b2 retries are safe: ledger write is idempotent
-      ledger.write(order.id)  #~c3d4           ledger.write(order.id)  #~c3d4 keyed on order.id
+                                               #~a1b2 retries are safe: ledger write is idempotent
+      ledger.write(order.id)                   ledger.write(order.id)  #~c3d4 keyed on order.id
 
 .agents/comments/src/settle.py.md
   ## a1b2
+  <!-- pos=before scope=settle body=… node=… -->
   retries are safe: ledger write is idempotent
   ## c3d4
+  <!-- pos=trail scope=settle body=… node=… -->
   keyed on order.id
 ```
 
@@ -34,10 +37,10 @@ Committed blob / owner checkout          Agent worktree (smudged)
 | Decision | Choice | Why |
 | --- | --- | --- |
 | Agent view | Real bytes on disk in agent worktrees | Agents touch files through Read, Grep, exact-string Edit, LSP, ast-grep, and shell. Virtualizing all of those per harness does not hold; an Edit whose `old_string` includes text that is not on disk fails. |
-| Anchoring | Being replaced (2026-09-25): no markers in committed code; the sidecar records where each comment goes (§ Anchoring). Behind `init --markerless` until v1 A16 removes marker mode. | The owner judged that id markers in committed code would stop serious developers from adopting the tool, overlay or not. The earlier reason to keep markers, that zero-trace anchoring meant fuzzy matching, no longer holds: placement is exact per declaration (§ Anchoring, "Rejected: scored fuzzy placement"). |
+| Anchoring | No markers in committed code; the sidecar records where each comment goes (§ Anchoring). Decided 2026-09-25; marker mode (a `#~a1b2` id left in the code) was removed in v1 A16. | The owner judged that id markers in committed code would stop serious developers from adopting the tool, overlay or not. The earlier reason to keep markers, that zero-trace anchoring meant fuzzy matching, no longer holds: placement is exact per declaration (§ Anchoring, "Rejected: scored fuzzy placement"). |
 | Pure pointer links (no filter) | Rejected | Every pointer costs tokens on every read, and using a comment costs an extra Read call plus the whole sidecar file. Strictly more tokens than inline whenever comments are used. |
-| Sidecar storage | Tracked markdown under `.agents/comments/`, mirroring source paths | Travels with clones, cloud agents, and PRs; human-readable; users who want zero trace can gitignore the folder and are left with harmless dangling markers. |
-| Human view | Virtual overlay in VS Code | Files on disk stay collapsed. With markers, the marker line itself is the render site; long bodies show the first line plus a hover. Without markers, each comment renders against the site placement reports: a CodeLens above its code line (a trailing one at the end of its line), and a native comment thread with provenance and actions (§ Overlay rendering). |
+| Sidecar storage | Tracked markdown under `.agents/comments/`, mirroring source paths | Travels with clones, cloud agents, and PRs; human-readable. Users who want the comments kept on one machine can gitignore the folder; the committed code is the same either way. |
+| Human view | Virtual overlay in VS Code | Files on disk hold only the code. Each comment renders against the site placement reports: a CodeLens above its code line (a trailing one at the end of its line), and a native comment thread with provenance and actions (§ Overlay rendering). |
 | Detection | Sigil is the source of truth; harness hooks auto-tag unmarked comments an agent just wrote; a repeatable `scan` finds existing AI comments by heuristic tells, with a mark-all mode | Covers users who never write agent instructions. |
 | Implementation | TypeScript everywhere, `web-tree-sitter` for parsing | One codebase for the CLI, the git filter, the hook adapters, and the extension. |
 | Languages in v1 | Python, TypeScript/JavaScript, C#, Java, Kotlin | Doc comments (docstrings, JSDoc, `///`, Javadoc, KDoc), pragmas, license headers, and suppression directives are never stripped. Kotlin arrived last, once a `web-tree-sitter`-compatible grammar WASM was found (see § Languages). |
@@ -46,20 +49,22 @@ Committed blob / owner checkout          Agent worktree (smudged)
 
 ## Mechanics
 
-**Marker grammar.** `<sigil><id>` where the id is 4 chars of `[0-9a-z]`. A new comment is
-`<sigil><space><text>`. An expanded comment is `<sigil><id><space><text>`. Consecutive
-own-line sigil lines form one block; the first line carries the id.
+**Sigil grammar.** A new comment is `<sigil><space><text>`. Once recorded, an agent
+worktree shows it as `<sigil><id><space><text>`, where the id is 4 chars of `[0-9a-z]`.
+Consecutive own-line sigil lines form one block; the first line carries the id. The id
+never reaches a blob: it lives in the sidecar and in agent worktrees only.
 
 **Clean filter is pure.** Git runs clean often (status, diff, add), so it must be a
-function of its input. New comments get a deterministic id: a hash of path, text, and
-occurrence index. Clean never writes the sidecar.
+function of its input: `stripComments` removes every sigil comment whole and changes
+nothing else. Clean never reads or writes the sidecar.
 
-**Sync writes the sidecar.** `sync` extracts bodies from expanded working files into the
-sidecar and stamps ids onto new comments. It runs from the pre-commit hook (and stages
-the sidecar), from the harness hook adapters after each edit, and on demand.
+**Sync writes the sidecar.** `sync` moves the bodies of the comments in a working file
+into its sidecar, records where each one goes, and stamps ids onto new comments (a hash
+of path, text, and occurrence index). It runs from the pre-commit hook (and stages the
+sidecar), from the harness hook adapters after each edit, and on demand.
 
 **Smudge is per worktree.** `extensions.worktreeConfig` plus
-`git config --worktree filter.<name>.smudge` turns expansion on only in agent worktrees.
+`git config --worktree filter.<name>.smudge` turns placement on only in agent worktrees.
 `git worktree add` checks out before per-worktree config can be set, so the CLI wraps it:
 `--no-checkout`, set config, then check out.
 
@@ -73,20 +78,22 @@ What git does that the design relies on. First measured with a throwaway regex f
 Windows, git 2.55, `core.autocrlf=true`; `packages/cli/test/roundtrip.test.ts` and
 `hooks.test.ts` now cover every item.
 
-1. The round trip holds: `git diff` in a smudged worktree shows only bare markers, blobs
-   stay collapsed, the owner's checkout gets bare markers on merge, and smudged worktrees
+1. The round trip holds: `git diff` in a smudged worktree shows no comment, blobs hold
+   only the code, the owner's checkout gets only the code on merge, and smudged worktrees
    stay `git status` clean across checkout, branch switch, and cherry-pick.
 2. Sidecars are on disk before the sources that need them during a checkout
    (`.agents/` sorts first in index order). Treat that as a convenience, not a contract:
-   a marker whose body is missing stays a bare marker, and a `post-checkout` /
-   `post-merge` expand is the backstop.
+   the `post-checkout`, `post-merge`, `post-commit`, and `post-rewrite` hooks place the
+   comments again (§ Anchoring, "Refresh hooks").
 3. A pre-commit hook that runs `sync` and stages the sidecar lands in the same commit,
-   including under `git commit -am`.
+   including under `git commit -am`, as long as the commit changes code too. A
+   comment-only commit needs the sidecar staged first (§ Anchoring, "Comment-only
+   commits").
 4. A global `core.hooksPath` silently disables `.git/hooks`. The installer must resolve
    the effective hooks directory (`git rev-parse --git-path hooks`) and chain rather than
    overwrite.
 5. Git short-circuits on file size: when a working file changes size but still cleans to
-   the identical blob (a comment body edit, an out-of-band expand, `sync` stamping ids),
+   the identical blob (a comment edit, an out-of-band `expand`, `sync` stamping ids),
    `git status` reports ` M` with an empty diff until the entry is re-statted. Any tool
    rewrite must finish with a guarded `git update-index <file>`, run only when the
    cleaned hash equals the index blob so it can never stage real changes.
@@ -101,25 +108,27 @@ Each is pinned by a test in `packages/core/test/` or `packages/cli/test/`.
 
 - **Blocks.** A block is an own-line sigil comment that has text, plus the id-less own-line
   sigil lines directly below it at the same indent. A line with an id, a different indent,
-  a gap, or a trailing comment ends it. A bare marker never absorbs the line below: in a
-  collapsed checkout that would let a neighboring new comment overwrite its stored body.
-- **Terminators.** `clean` replaces one span, from the sigil to the end of the block's last
-  comment, so the last line's terminator survives. `smudge` repeats the marker line's
-  terminator between generated lines, and falls back to the file's dominant terminator
-  only for a marker on an unterminated last line.
-- **Trailing markers** have one line, so a multi-line body shows with its lines joined by
+  a gap, or a trailing comment ends it. An id with no text (only a hand edit leaves one)
+  never absorbs the line below, which could belong to a neighboring new comment.
+- **Terminators.** `stripComments` removes an own-line comment with its line and
+  terminator, and a trailing one with the whitespace before it, so every other line keeps
+  its terminator. A comment on an unterminated last line takes the terminator before it
+  instead, recorded as `eof` so placing it puts that terminator back. `placeComments`
+  gives inserted lines the terminator of the line they go above.
+- **Trailing comments** have one line, so a multi-line body shows with its lines joined by
   a space. `sync` and the id rules compare in that flattened form, so viewing a body that
   way is never read as an edit.
-- **Duplicate ids.** A pasted marker keeps its id while its text matches. Once the copy's
-  text is edited it is re-identified as a new comment, by `clean` and `sync` alike.
-- **Sync before any rewrite.** `expand` and `collapse` run `sync` first, so a rewrite never
-  drops a body that exists only inline and never meets a comment without an id.
+- **Duplicate ids.** A pasted comment keeps its id while its text matches. Once the copy's
+  text is edited it is re-identified as a new comment.
+- **Sync before any rewrite.** `expand` and `collapse` record every file first, so a
+  rewrite never drops a body that exists only inline and never meets a comment without an
+  id.
 - **Sidecar format.** `## <id>`, then an optional `<!-- key=value ... -->` metadata line
-  (values URI-encoded; provenance, see § Hook adapters, and the `anchor` hash, see
-  § Staleness),
-  then the body. Existing entries keep their order and new ones append. A body line that would read back as structure is written
-  with a leading backslash. The tool writes LF, and `init` marks the folder
-  `text eol=lf` so `autocrlf` never has anything to convert.
+  (values URI-encoded; provenance, see § Hook adapters, and the placement keys, see
+  § Anchoring), then the body. Existing entries keep their order and new ones append. A
+  body line that would read back as structure is written with a leading backslash. The
+  tool writes LF, and `init` marks the folder `text eol=lf` so `autocrlf` never has
+  anything to convert.
 - **Hook install.** `init` writes `pre-commit` into the effective hooks directory, renames
   a hook already there to `pre-commit.<brand>-chained`, and runs it after `sync` and
   `check --staged --fix`. The
@@ -127,7 +136,8 @@ Each is pinned by a test in `packages/core/test/` or `packages/cli/test/`.
   `core.hooksPath` directory is shared by every repository on the machine. For the same
   reason `uninstall` leaves a hook in a directory outside the repository's git dir in
   place and says so: removing it once disarmed every other repository still using the
-  tool, which then committed markers with no bodies.
+  tool, which then committed without recording their comments. `init` installs the
+  refresh hooks (§ Anchoring) the same way.
 - **Hook adapters follow the worktrees.** Agents run in linked worktrees, and an
   untracked settings file (Claude Code's `settings.local.json`) never reaches one through a
   checkout. `init --hooks` installs into every existing worktree whose copy is untracked,
@@ -140,21 +150,21 @@ Each is pinned by a test in `packages/core/test/` or `packages/cli/test/`.
 - **`filter.<brand>.required` stays unset.** Git treats a required driver with no smudge
   command as a failure, which would force a smudge process per file onto the owner's
   checkout. A failing `clean` therefore falls back to unfiltered content with git's
-  warning; `check` is what stops an expanded comment from reaching a blob.
+  warning; `check` is what stops a comment from reaching a blob.
 
-One-shot `clean` latency on Windows, Node 24, median of 7 runs: 61 ms for a file with no
-sigil (the grammar is never loaded), 80 ms with one marker, 113 ms for a 1,200-line file
-with 800 markers, against 36 ms for bare `node -e 0`. That is under the 300 ms budget
-for one-shot mode; § Filter process covers the long-running filter.
+One-shot `clean` latency of the CLI bundle on Windows, Node 24, median of 7 runs
+(2026-09-29): 48 ms for a file with no sigil (the grammar is never loaded), 61 ms with one
+comment, 91 ms for a 1,200-line file with 800 comments, against 31 ms for bare
+`node -e 0`. That is under the 300 ms budget for one-shot mode; § Filter process covers
+the long-running filter.
 
 ## Languages
 
-The round trip and marker grammar work in Python, TypeScript, TSX, JavaScript, C#, Java,
-and Kotlin.
+The round trip works in Python, TypeScript, TSX, JavaScript, C#, Java, and Kotlin.
 
-- **One `LanguageSpec` per language.** `clean`/`smudge`/`sync`/`findMarkers` are fully
-  parameterized by `LanguageSpec`; a language is a table entry plus its grammar package,
-  and the same code serves `#~` and a C-family sigil (`//~`).
+- **One `LanguageSpec` per language.** `stripComments`, `placeComments`, `recordComments`,
+  and `findMarkers` are fully parameterized by `LanguageSpec`; a language is a table entry
+  plus its grammar package, and the same code serves `#~` and a C-family sigil (`//~`).
 - **Protection is structural, not a separate node-type list.** `findMarkers` only ever
   matches a comment node whose full text is `^<sigil>(id)?( text)?$`. JSDoc/KDoc-style
   `/** ... */` blocks, `///` doc comments, `#pragma`, `@ts-ignore`, and license headers
@@ -203,8 +213,8 @@ conformance and crash tests in `packages/cli/test/process.test.ts`.
 
 - **Config.** `init` sets `filter.<name>.process = <cli> filter-process` repo-wide, and
   `worktree add` sets `<cli> filter-process --smudge` in the worktree's own config. Only
-  the `--smudge` process advertises smudge, so the owner's checkout stays collapsed as
-  before. `clean` stays configured: git ignores it while `process` is set, and the hook and
+  the `--smudge` process advertises smudge, so the owner's checkout shows only the code.
+  `clean` stays configured: git ignores it while `process` is set, and the hook and
   `configuredCommand` key on it. `init --one-shot` removes `process` for a per-file
   fallback; the round-trip suite runs in both modes.
 - **Delay.** A checkout lets the filter answer `status=delayed`, so the process starts the
@@ -227,72 +237,53 @@ conformance and crash tests in `packages/cli/test/process.test.ts`.
   can the next one. The benchmark measures "warm" status only after a status issued more
   than a second later.
 
-Measured with `npm run bench`: 2,000 files, half Python and half TypeScript, 6 markers
-and a sidecar each, `autocrlf=false`. Checkout is `git reset --hard` into a fresh
-smudging worktree. Medians of 3 runs (one-shot: 1 run).
+Measured with `npm run bench`: 2,000 files, half Python and half TypeScript, 6 comments
+(three functions with an own-line and a trailing comment each) and a sidecar each,
+`autocrlf=false`. Checkout is `git reset --hard` into a fresh smudging worktree. Medians
+of 3 runs (one-shot: 1 run), Windows 11, git 2.55, Node 24, 2026-09-29:
 
-| Platform | Mode | Checkout | vs off | Warm status |
-| --- | --- | --- | --- | --- |
-| Windows 11, git 2.55, Node 24 | off | 947 ms | | 38 ms |
-| | one-shot | 219,797 ms | +23,122% | 38 ms |
-| | process, no delay | 3,037 ms | +201% | 38 ms |
-| | process | 1,788 ms | +89% | 37 ms |
-| WSL Ubuntu, git 2.43, Node 26 | off | 138 ms | | 5 ms |
-| | one-shot | 117,096 ms | +85,017% | 5 ms |
-| | process | 657 ms | +378% | 5 ms |
+| Mode | Checkout | vs off | Warm status |
+| --- | --- | --- | --- |
+| off | 1,078 ms | | 58 ms |
+| one-shot | 214,475 ms | +19,798% | 60 ms |
+| process | 3,182 ms | +195% | 59 ms |
 
 **Budget:** warm `git status` passes (no added cost; with a settled index git runs no
-filter). The +20% checkout budget fails on both platforms; the next steps are in § Known gaps. Where the Windows
-checkout time goes, from a probe on one run of 1,788 ms: ~560 ms for git to write the
-sidecars before the filter starts, 526 ms of git sending requests, and ~650 ms of git
-fetching results and writing files. With parse and smudge deferred, the request phase is
-154 ms (0.077 ms per request). The other ~370 ms is parse and smudge sharing the protocol
-loop's thread. In process, `smudge` is 0.05 ms per file and a sidecar parse 0.007 ms.
+filter). The +20% checkout budget fails; the next steps are in § Known gaps. Placing
+costs more than the marker filter it replaced, which measured +89% on the same machine
+(1,788 ms against 947 ms, 2026-09-22): every smudge now parses the file and hashes its
+declarations to find each comment's node, about 1 ms per file over the filter-off
+checkout. A probe on one marker-filter run showed where the rest goes: ~560 ms for git to
+write the sidecars before the filter starts, 526 ms of git sending requests, and ~650 ms
+of git fetching results and writing files. WSL Ubuntu (git 2.43, Node 26) measured +378%
+on the marker filter; it has not been measured on placement.
 
 ## Overlay rendering
 
-Verified in VS Code 1.138 on Windows with screenshots taken by the e2e suite
-(`docs/images/overlay-*.png`); no CodeLens fallback was needed.
+Verified in VS Code 1.139 on Windows with screenshots taken by the e2e suite
+(`docs/images/overlay-*.png`). A file that shows its comments inline (an agent worktree,
+or the owner's after `expand`) gets no overlay; its sigil comments offer Promote as a
+code action, which runs the CLI.
 
-- **Hiding the token.** A `TextEditorDecorationType` with
-  `textDecoration: "none; display: none"` removes the `#~a1b2` span from the rendered
-  line. The label is an `after` attachment, which VS Code draws as a sibling of the hidden
-  span, so it lands exactly where the token was and the indentation before it survives.
-  This is the same injection the Inline Fold extension relies on; if a VS Code release
-  ever sanitizes it, the fallback is `opacity: 0` with a negative `letterSpacing`.
-- **Cursor line stays raw.** A hidden token cannot be edited by sight, so the marker on any
-  line the selection touches is shown as typed with the label after it.
 - **Comment color is not reachable.** Decoration colors come from `ThemeColor` ids, and no
-  theme id exposes the comment token color. The overlay uses `editorCodeLens.foreground`
-  in italics by default, with a `cairn.overlayColor` CSS override.
-- **Hover is a provider, not a decoration message.** A `display: none` span has no width,
-  so the mouse never rests on it and `hoverMessage` would never fire. The hover provider
-  answers for any position from the sigil to the end of its line and carries an
-  `Edit comment` command link. In practice the mouse cannot reach it on a hidden line
-  either: the `after` label is not document text, so VS Code maps the pointer past the
-  line's end and no hover fires. The hover works only on the cursor's (raw) line.
-- **Hiding marker lines outright (measured 2026-09-24, VS Code 1.139).** The stable API
-  has no hidden-lines call, so the only way to remove a marker line from view is folding
-  it into the line above. Manual ranges (`editor.createFoldingRangeFromSelection` over
-  `[marker - 1, marker]`) hid exactly the marker lines, including one directly under a
-  block opener, left indentation folding working, and `cursorUp` skipped the hidden line.
-  A `FoldingRangeProvider` returning the same ranges replaced Python's indentation
-  folding (a `def` no longer folded), and one that also returned the block ranges lost
-  the marker under the opener (same start line) and hid a code line instead. Costs of the
-  manual route: a marker on line 1 cannot be hidden, the line above shows a chevron, a
-  `···` and the fold background, line numbers skip, and Unfold All reveals the markers.
-- **Own-line comments in a markerless file (chosen 2026-09-26).** With no marker line to
-  draw on, an own-line comment renders as a CodeLens above the code line it describes
+  theme id exposes the comment token color. End-of-line labels use
+  `editorCodeLens.foreground` in italics by default, with a `cairn.overlayColor` CSS
+  override.
+- **Rejected: hiding lines by folding (measured 2026-09-24, VS Code 1.139).** The stable
+  API has no hidden-lines call, so the only way to hide a line is folding it into the line
+  above, which costs a chevron, a `···`, the fold background, and skipped line numbers, and
+  Unfold All reveals it. Keeping comment lines out of the file removed the need.- **Own-line comments (chosen 2026-09-26).** With no line of its own to draw on, an
+  own-line comment renders as a CodeLens above the code line it describes
   (`placeComments` reports each comment's `sites`), picked by eye over two alternatives
-  from the e2e screenshots (`markerless-*.png`). `cairn.ownLineStyle` keeps them:
+  from the e2e screenshots (`overlay-*.png`). `cairn.ownLineStyle` keeps them:
   `thread` draws the comment as an expanded comment thread below the line above, and `eol`
   as a label at the end of the line above. Trailing comments always use the end-of-line
   label, amber and tagged `[stale?]` when stale.
-- **Comment threads (markerless).** Every placed comment is a thread of one comment on its
+- **Comment threads.** Every placed comment is a thread of one comment on its
   code line (`createCommentController`), collapsed until its CodeLens or gutter icon opens
   it; clicking the CodeLens again closes it. The `thread` style starts them expanded. The
-  body is Markdown with each of its line breaks kept as a hard break (`bodyMarkdown`, the
-  hover too), since Markdown joins a paragraph's lines; the edit box shows the stored
+  body is Markdown with each of its line breaks kept as a hard break (`bodyMarkdown`),
+  since Markdown joins a paragraph's lines; the edit box shows the stored
   lines. The author line is the provenance, and the
   buttons are Edit (in place), Confirm (stale comments only), Promote, and Delete. They act
   on the sidecar in process against the open buffer, through `confirmPlaced`,
@@ -302,7 +293,7 @@ Verified in VS Code 1.138 on Windows with screenshots taken by the e2e suite
   and add an empty edit to the source, which puts it in the same undo step without
   dirtying it. With the overlay off there are no threads. VS Code opens its Comments panel the first time a file with threads opens in a
   session (`comments.openView`); the extension leaves that user setting alone.
-- **Live tracking (markerless).** Placement runs on open, on save, and whenever the buffer
+- **Live tracking.** Placement runs on open, on save, and whenever the buffer
   is clean again after an edit (a revert, an undo to the saved text, a reload after a
   change on disk) or a sidecar changes. In between, each change event moves the sites
   (`shiftSites`, `packages/vscode/src/tracking.ts`): an own-line comment moves with its
@@ -320,7 +311,7 @@ Verified in VS Code 1.138 on Windows with screenshots taken by the e2e suite
   `isDirty` still says false on a clean document's first edit (VS Code sends the dirty
   state in a later event), so "clean again" is judged at the next refresh, not in the
   event.
-- **Copy and paste (markerless).** A `DocumentPasteEditProvider` (stable since VS Code
+- **Copy and paste.** A `DocumentPasteEditProvider` (stable since VS Code
   1.97, hence the engine) records, on copy, the comments whose line's first non-blank
   character the copy covers (a trailing one needs its whole line), and on a paste of that
   same text adds them to the target file's sidecar with `carryComments`: new ids, the
@@ -386,8 +377,8 @@ Implemented in `packages/core/src/scan.ts` (grouping, protection, conversion) an
   comment becomes one sigil line per text line at its indent, reusing its first line's
   terminator; a trailing one becomes one sigil comment with its lines joined. Then
   `sync` stamps ids and writes sidecars, and outside an agent worktree (no effective
-  `filter.<driver>.smudge`) `collapse` reduces the file to bare markers, so `git status`
-  shows the marker edits, the sidecars, and the ignore file.
+  `filter.<driver>.smudge`) `collapse` takes the comments out of the file, so `git status`
+  shows the removed comment lines, the sidecars, and the ignore file.
 - **Finding a comment again.** `scan --json` entries carry a fingerprint (the first 8 hex
   characters of a SHA-256 over the whitespace-collapsed text). `--apply` re-parses the
   file and takes the unprotected group with that fingerprint nearest the listed line, so
@@ -467,7 +458,7 @@ parsing and install per harness), and `hook.ts`; the comment diff is `newComment
   state (Claude Code) sees the file changed and re-reads it before its next edit.
 - **Provenance** goes on the metadata line of each entry the run creates or whose body it
   changes: `by` (harness), `model`, `session`, `at` (UTC, to the second), in that order.
-  It names the last writer, so an edit overwrites these keys and keeps any others (such as `anchor`).
+  It names the last writer, so an edit overwrites these keys and keeps any others (such as the placement keys).
   Metadata values stay URI-encoded, except `:`, `/`, `@`, and `,`, so the line reads as
   `<!-- by=claude-code model=claude-haiku-4-5-20251001 session=… at=2026-09-22T20:33:22Z -->`.
 - **Adapters take the file from the payload, never `--changed`.** In a shared checkout,
@@ -500,59 +491,45 @@ not been checked against a live run.
 
 ## Staleness
 
-Implemented in `packages/core/src/anchors.ts` (what a marker anchors to, and the hash) and
-`filter.ts` (`isStale`, `sync`, `smudge`, `confirm`); the CLI adds `check --stale` and
-`confirm`, and the extension badges the overlay. Tests: `packages/core/test/stale.test.ts`,
+The hashes are in `packages/core/src/anchors.ts`; `placeComments` reports stale
+placements and `confirmPlaced` (`packages/core/src/owner.ts`) clears them. The CLI adds
+`check --stale` and `confirm`, and the extension badges the overlay. Tests:
+`packages/core/test/normalization.test.ts`, `placement.test.ts`,
 `packages/cli/test/stale.test.ts`, and the e2e suites.
 
-- **What a comment anchors to.** An own-line marker anchors to the node that starts the
-  first code line below it, skipping blank and comment lines, taking the largest node that
-  starts there without climbing into Python's `block` (which starts at its first
-  statement, so a comment above a block's first statement would otherwise anchor to the
-  whole body). Tree siblings were not usable: tree-sitter-python attaches a comment above
-  a block's first statement to the enclosing `def`, whose next sibling is the whole block.
-  The code line must sit at the marker's indent, so the last comment of a block anchors
-  to nothing. A trailing marker anchors to the tokens before it on its own line.
-- **Declarations track their signature.** When the anchor is a function, method, class,
-  interface, struct, enum, namespace, constructor, record, or C# property (through
-  `export`, decorators, annotations, and a name bound to a function or class, as in
-  `const f = () => {}`), its `body` field (a property's `accessors`) is left out, so an
-  edit deep inside a class does not flag the comment above it. A callback's or loop's
-  body still counts, and so does an arrow function's expression body (`() => a()`),
-  which is all the function says.
-- **Normalization.** The hash covers tokens plus the types of named nodes, so
-  `(a + b) * c` and `a + b * c` differ. It ignores what formatters change: whitespace,
-  comments, `;`, a comma right before a closing bracket, redundant parentheses (a
+- **What stale means.** A comment is placed stale when the function around it changed
+  since its placement was recorded, or when it sits above a declaration whose signature
+  changed (§ Anchoring, "When it is placed"): it may no longer be true.
+- **Declarations track their signature.** A node's hash leaves out the body of a function,
+  method, class, interface, struct, enum, namespace, constructor, record, or C# property
+  (through `export`, decorators, annotations, and a name bound to a function or class, as
+  in `const f = () => {}`), so an edit deep inside a class does not change the hash of the
+  comment above it. A callback's or loop's body still counts, and so does an arrow
+  function's expression body (`() => a()`), which is all the function says.
+- **Normalization.** Hashes cover tokens plus the types of named nodes, so `(a + b) * c`
+  and `a + b * c` differ. They ignore what formatters change: whitespace, comments, `;`, a
+  comma right before a closing bracket, redundant parentheses (a
   `parenthesized_expression` is transparent), parentheses around a lone arrow-function
   parameter, quote style and string-prefix case (`U'q'` equals `"q"`), and number
-  spelling (`0XAB`/`0xab`, `.5`/`0.5`, `1.50`/`1.5`). Sixteen before/after pairs modeled on
-  black, prettier, and dotnet format pin it; neither formatter is installed here, so the
-  pairs are hand-written from their documented rewrites.
-- **Storage and the rule.** The hash is the `anchor` key on the entry's metadata line
-  (8 hex characters of a SHA-256). `sync` writes it with every body it writes, and gives
-  an entry that has none (written before anchors existed) the current hash. It never updates the hash
-  of an unchanged body: that is what leaves a comment stale once its code moves on. Stale
-  means a recorded anchor that differs from the current one while the body is unchanged;
-  an anchor that disappeared counts as changed. An expanded comment whose text differs
-  from the stored body is a pending edit, not stale.
-- **The tag.** `smudge` writes `[stale?]` and a space before a stale body, and on already expanded
-  comments adds or removes the tag in place, so `expand` refreshes it. `findMarkers`
-  strips the tag from any comment with an id, so `clean`, `sync`, and the id rules never
-  see it; a new comment (no id) that starts with it keeps it as text.
-- **Confirm.** `confirm <id>` (or `<file>:<id>`) records the current anchor without
-  touching the body, then re-expands in an agent worktree so the tag goes away. The
-  extension confirms in process against the open document, which may be unsaved.
-- **Cost.** Anchors are only hashed when the sidecar has any. `npm run bench` (Windows,
-  process mode, medians of 5, every entry anchored and stale) measured checkout at
-  1,847 ms against 1,841 ms with `--no-anchors`; warm status unchanged at 51 ms.
-
+  spelling (`0XAB`/`0xab`, `.5`/`0.5`, `1.50`/`1.5`). Seventeen formatter-only pairs
+  modeled on black, prettier, and dotnet format pin it, beside thirteen real changes;
+  neither formatter is installed here, so the pairs are hand-written from their
+  documented rewrites.
+- **The tag.** `placeComments` writes `[stale?]` and a space before a stale body.
+  `findMarkers` strips the tag from any comment with an id, so `stripComments`, `sync`,
+  and the id rules never see it; a new comment (no id) that starts with it keeps it as
+  text. `sync` drops the tag from a comment it re-records (§ Anchoring, "Who saw it").
+- **Confirm.** `confirm <id>` (or `<file>:<id>`) records the current placement without
+  touching the body, then places the file again in an agent worktree so the tag goes
+  away. The extension confirms in process against the open document, which may be
+  unsaved.
 ## Anchoring
 
-Markerless mode, `init --markerless` (v1 A12 for Python, A13 for the other v1 languages). Implemented in `packages/core/src/placement.ts`
-(`stripComments` is the clean filter, `placeComments` the smudge, `recordComments` the
-sync); the CLI switches on `filter.cairn.markerless`. Tests:
+Built in v1 A12 for Python and A13 for the other v1 languages; the only model since A16.
+Implemented in `packages/core/src/placement.ts` (`stripComments` is the clean filter,
+`placeComments` the smudge, `recordComments` the sync). Tests:
 `packages/core/test/placement.test.ts` (including a round-trip property) and
-`packages/cli/test/markerless.test.ts` (both `autocrlf`, process and one-shot).
+`packages/cli/test/roundtrip.test.ts` (both `autocrlf`, process and one-shot).
 
 - **What is committed.** A blob is the working file with every sigil comment removed:
   own-line comments with their lines and terminators, trailing ones with the whitespace
@@ -625,7 +602,7 @@ sync); the CLI switches on `filter.cairn.markerless`. Tests:
   `collapse`. Absence alone was the first design and was rejected: a cherry-pick, `reset`,
   or `restore` can add entries to a sidecar without rewriting the source, and those
   entries would have read as deleted.
-- **Refresh hooks.** For the same reason, `init --markerless` installs `post-checkout`,
+- **Refresh hooks.** For the same reason, `init` installs `post-checkout`,
   `post-merge`, `post-commit` (which cherry-pick and rebase run), and `post-rewrite`
   hooks that run `refresh` in smudging worktrees: every file with a sidecar or a leftover
   sigil is placed again from the sidecar it now has. A comment whose id that sidecar lacks
@@ -635,8 +612,8 @@ sync); the CLI switches on `filter.cairn.markerless`. Tests:
   The sidecar must be staged first: the hook adapters' `sync` writes it after every agent
   edit, then `git add` (or `commit -a` once the sidecar is tracked) carries it. The
   pre-commit hook's `sync --staged` also covers every file that still holds a sigil.
-- **Check.** `check` in markerless mode reports sigil comments that reached a blob.
-  `check --stale` places each file's sidecar against the working file and lists the
+- **Check.** `check` reports sigil comments that reached a blob and sidecars whose source
+  is gone (§ Check). `check --stale` places each file's sidecar against the working file and lists the
   stale comments, by the comment's line in an agent worktree and by the code line in the
   owner's checkout. `check --orphans` places each sidecar against the index blob of its
   source and lists the entries that do not place, with their last `scope`; `--fix` never
@@ -671,28 +648,28 @@ sync); the CLI switches on `filter.cairn.markerless`. Tests:
 
 ## Promote and demote
 
-Implemented in `packages/core/src/filter.ts` (`promote`) and `scan.ts` (`demoteTarget`);
-the CLI adds `promote <id|file:id>...` and `demote <file:line>...`, and the extension offers
-both as code actions. Tests: `packages/core/test/promote.test.ts`,
-`packages/cli/test/promote.test.ts`, and the review e2e suite.
+Implemented in `packages/core/src/owner.ts` (`promotePlaced`) and `scan.ts`
+(`demoteTarget`); the CLI adds `promote <id|file:id>...` and `demote <file:line>...`, and
+the extension offers both from a comment's thread and as code actions. Tests:
+`packages/core/test/promote.test.ts`, `packages/cli/test/promote.test.ts`, and the e2e
+suites.
 
-- **Promote** replaces the marker with its body under the language's plain line prefix
-  (the sigil minus `~`: `#`, `//`), one comment line per body line at the marker's indent
-  (a blank body line becomes a bare `#`), or one line for a trailing marker. The sidecar
-  entry goes with it, anchor and provenance included; an emptied sidecar file is deleted.
+- **Promote** writes the body where the comment places, under the language's plain line
+  prefix (the sigil minus `~`: `#`, `//`): one comment line per body line at the
+  comment's indent (a blank body line becomes a bare `#`), or one line for a trailing
+  comment. The sidecar entry goes with it, placement and provenance included; an emptied
+  sidecar file is deleted. A comment that does not place has nowhere to go and is refused.
   Promoting hands the comment to a person, so a later demote records no provenance: an
   ordinary comment has nowhere to keep it, and the old harness and session no longer
-  describe who owns the text.
-  An expanded marker's own text wins over the stored body, so an unsynced edit is what
-  gets promoted. Outside an agent worktree the rest of the file is collapsed, as `collapse`
-  would.
+  describe who owns the text. The CLI syncs the file first, so in an agent worktree a
+  comment's text as shown wins over the stored body, and places the other comments again
+  there; elsewhere the file keeps only the code, as `collapse` would leave it.
 - **Demote** is the explicit, single-comment form of `scan --apply`: it converts the
   comment group covering the line (the same grouping scan uses), syncs, and collapses
   outside an agent worktree. It overrides the scan-only protections (ticketed TODO,
   commented-out code) but refuses doc, pragma, license, and unconvertible comments, whose
   meaning depends on staying in the code. Every target is checked before any file is
-  written.
-- **Python strings used as comments** (`packages/core/src/literals.ts`). Demote also takes
+  written.- **Python strings used as comments** (`packages/core/src/literals.ts`). Demote also takes
   a bare string statement (a `"""` note between two statements); scan never proposes one.
   It refuses a docstring by PEP 257: the first statement of a module, class, or function,
   and an attribute docstring, right after an assignment at module or class level or in
@@ -710,15 +687,15 @@ both as code actions. Tests: `packages/core/test/promote.test.ts`,
   A block comment comes back as line comments, and `#text` without the space comes back
   as `# text`.
 - **The extension runs the CLI** for demote and a review's apply, after saving the
-  documents, rather than editing in process as confirm does: they change which lines are
-  markers, and only the CLI knows whether this checkout collapses them. It runs them with
+  documents, rather than editing in process as confirm does: they turn ordinary comments
+  into AI ones, and only the CLI knows whether this checkout collapses them. It runs them with
   `--print`, which writes nothing and prints `{report, files}` (each file's new contents,
   null to delete); the extension applies that as one `WorkspaceEdit` and saves
   (`packages/vscode/src/edits.ts`). A rewrite written to disk reached an open editor as a
   reload, which Ctrl+Z undid in that file alone: the comment text came back while the
   sidecar kept its entry. Now Ctrl+Z reverts the source and its sidecar together, after
-  VS Code asks to undo across files. Markerless promote runs in process (`promotePlaced`)
-  through the same single edit. These rewrites always change a source's clean output
+  VS Code asks to undo across files. Promote from a thread runs in process
+  (`promotePlaced`) through the same single edit. These rewrites always change a source's clean output
   (a comment leaves or joins the code), so skipping the CLI's re-stat cannot leave git
   with a modified-but-empty diff (§ Git behavior, item 5).
 
@@ -731,23 +708,23 @@ Implemented in `packages/cli/src/check.ts`; tests in `packages/cli/test/check.te
   `init` is needed there, because `.gitattributes` already says which files are managed.
   `--staged` narrows the check to staged sources, their sidecars, staged sidecar changes,
   and the sidecars of staged deletions.
-- **Three problems.** A sigil comment with text in a blob (a clone without the filter, or
-  a `clean` that failed and fell back to unfiltered content, § Filter process); a marker
-  whose id has no body in its sidecar (a rename, or `#~todo` read as an id); a body whose
-  id no marker in its source carries. When `.agents/comments/` is ignored by pattern
-  (zero-trace mode, § Decisions), only the first is checked.
-- **`--fix` works from the orphaned body.** An orphan moves to the one file whose index
-  marker has its id and whose sidecar lacks it; that covers renames and moves between files
-  even when the new file is outside the checked scope (a `git grep --cached` finds it). An
-  orphan whose id is a marker nowhere in the index, or only in files that already hold the
-  body, is removed. An orphan whose id appears only in the working tree (a move with half of
-  it unstaged) is kept and reported, because removing it would strand the marker once the
-  other half is committed. `--fix` edits the working sidecars and stages them, as
-  `sync --add` does.
-- **The pre-commit hook runs `sync --staged --add`, then `check --staged --fix`.** A deleted
-  comment's body goes in the same commit, a `git mv` carries its sidecar along, and a commit
-  that would leave committed text or a stranded marker fails. `sync` still keeps orphans;
-  pruning happens only at commit time, where a whole change is visible.
+- **Two problems, and orphans on request.** A sigil comment in a blob (a clone without
+  the filter, or a `clean` that failed and fell back to unfiltered content, § Filter
+  process), with its text or not; and a sidecar whose source is not in the index (a
+  rename or a deletion). `--orphans` adds the entries that no longer place in their
+  source (§ Anchoring). When `.agents/comments/` is ignored by pattern (§ Decisions),
+  there are no sidecars in the index to check.
+- **`--fix` follows a source that is gone.** Its sidecar moves to the one file where any
+  of its comments anchored to code places: a staged addition under `--staged` (a
+  `git mv`), otherwise any managed file without a sidecar. A comment kept by line number
+  alone (`pos=row`) places anywhere, so it does not count. With no such file the source
+  was deleted, and its sidecar goes too; with more than one, `check` reports them and
+  moves nothing. Unplaced entries are removed only with `--fix --prune`. `--fix` edits the
+  working sidecars and stages them, as `sync --add` does.
+- **The pre-commit hook runs `sync --staged --add`, then `check --staged --fix`.** A
+  `git mv` carries its sidecar along, a deleted file's comments go in the same commit, and
+  a commit that would leave comment text in the code fails. `sync` keeps entries that no
+  longer place; only the owner's `--prune` deletes them.
 - **`--stale` is a separate mode.** It reads working files (§ Staleness), and its JSON
   shape is what the extension's stale list consumes, so it did not merge into the
   integrity report.
@@ -765,7 +742,9 @@ heading and the second branch's `<!-- ... -->` metadata line read back as body t
   `.agents/comments/**` carries `merge=<brand>`; `init` replaces the earlier union line.
   `mergeSidecars` (`packages/core/src/merge.ts`) merges by entry id: ours keeps its order,
   theirs' new entries append, a one-sided edit wins with its own metadata (provenance and
-  anchor describe the body they came with), metadata-only changes merge per key, and a
+  placement describe the body they came with), metadata-only changes merge per key
+  except the placement keys, which come whole from one side (theirs when ours kept the
+  base's, else ours) so a comment never mixes two recordings of where it goes, and a
   deletion wins over an unchanged entry but not over an edit. A body both sides changed
   differently gets `<<<<<<< ours` / `=======` / `>>>>>>> theirs` inside it and the driver
   exits 1, so git reports the conflict at that file.
@@ -784,9 +763,10 @@ heading and the second branch's `<!-- ... -->` metadata line read back as body t
   dependencies, so the grammar packages' native install scripts never run for users.
 - **Sizes.** The npm tarball is 0.88 MB (9.52 MB unpacked, 11 files; the C# grammar alone is
   5.1 MB). The `.vsix` is 910 KB.
-- **The bundle is also faster.** One-shot `clean` on Windows, Node 24, median of 9: 47 ms for
-  a file with no sigil and 62 ms with one marker, against 60 ms and 75 ms from the `tsc`
-  output, which loads each module separately.
+- **The bundle is also faster.** One-shot `clean` on Windows, Node 24, median of 9
+  (2026-09-23, on the marker filter of that time): 47 ms for a file with no sigil and
+  62 ms with one comment, against 60 ms and 75 ms from the `tsc` output, which loads each
+  module separately.
 - **Tests run what ships.** The integration harness and the e2e runner use the CLI bundle;
   `packages/cli/test/package.test.ts` packs the CLI, installs the tarball offline into an
   empty project, and runs the quickstart with it. The e2e suite also passes against an
@@ -821,27 +801,23 @@ heading and the second branch's `<!-- ... -->` metadata line read back as body t
   `refund` and the original `refund@1`: the original's comments then place on the copy
   (same body hash) until it is edited, and the copy's recorded `refund@1` places on the
   original. Pasting below, the usual case, is exact.
-- **The stale tag only changes on smudge, `expand`, and `confirm`.** A hook-driven `sync`
-  records the old anchor but does not rewrite the working file, so an agent that just
-  changed the code under a comment sees no tag until the next checkout or `expand`.
-  Deleting the tag by hand is not a confirm either: the next smudge puts it back.
-- **Pasted duplicates share one anchor.** Two markers with one id (a pasted line whose
-  text still matches) are judged against the first copy's anchor, so the copy reads stale.
+
+
 - **Kotlin's grammar errors on one-line class bodies.** `companion object { fun make() = 1 }`,
   `object B { val x = 1 }`, and `abstract class S { abstract fun a(): Int }` each parse
   with a `MISSING _class_member_semi` before the closing brace; the multi-line forms parse
   cleanly. Alone the tree stays intact, but in a larger file error recovery can wrap an
-  enclosing class in an `ERROR` node. Markers inside still parse, since comments are
-  extras (`markers.test.ts` pins this). In markerless mode a lost class drops out of its
-  comments' scope paths and hashes. The fix belongs upstream in
+  enclosing class in an `ERROR` node. Sigil comments inside still parse, since comments are
+  extras (`markers.test.ts` pins this), but a lost class drops out of its comments' scope
+  paths and hashes. The fix belongs upstream in
   `tree-sitter-grammars/tree-sitter-kotlin`.
 
 - **Live runs for the Codex and Cursor adapters.** See § Hook adapters, Evidence.
 - **A converted comment directly below an expanded sigil block joins it.** Inside an agent
   worktree, a scanned or hook-tagged comment at the same indent right under `#~ab12 text`
   becomes that block's continuation line, so its text merges into the existing body (and,
-  from a hook, takes over its provenance). A bare marker never absorbs lines, so this
-  cannot happen in the owner's checkout.
+  from a hook, takes over its provenance). The owner's checkout shows no comments, so
+  this cannot happen there.
 - **Scan precision on real repositories.** The corpus gate (§ Scan detectors) is synthetic.
   First real data, 2026-09-24: default `scan` found 0 hits in two agent-written
   repositories (173 and 216 source files). With `--all`, the first drew 17 hits, all false
@@ -856,39 +832,35 @@ heading and the second branch's `<!-- ... -->` metadata line read back as body t
   set by two pipe round trips per delayed file), or a native filter binary (Rust or Go
   with a tree-sitter C binding) speaking the same protocol, which removes Node's
   per-request event-loop cost but not git's own writes. Neither blocks v1: the overhead is
-  per marked file, only in agent worktrees, and warm `git status` is unaffected.
+  per commented file, only in agent worktrees, and warm `git status` is unaffected.
 - **The GitHub Action is untested.** `action.yml` runs `npx cairn-comments@<version> check`, so it
   can only run once the CLI is on npm; the README's plain `npx` step is the same command.
-- **A lone sigil line below a bare marker (not fixed).** In `#~zz99\n#~`, the
-  bare `#~` stays put under `clean`. Once `zz99` expands, though, that `#~` reads as the
-  block's empty continuation line, so `clean(smudge(x))` returns `#~zz99` and the line is
-  lost. The `clean undoes smudge` property in `packages/core/test/filter.test.ts` catches
-  it on some seeds, so `npm test` fails intermittently until the grammar resolves the
-  ambiguity (for example, `clean` normalizing a text-less id-less sigil line).
-- **Markerless: a file of nothing but AI comments.** It strips to an empty blob, which
+
+- **A file of nothing but AI comments.** It strips to an empty blob, which
   keeps no terminator, so placing it back uses LF. Any code line in the file avoids it.
-- **Markerless: comments on lines a formatter joins.** A comment anchored to a node that
+- **Comments on lines a formatter joins.** A comment anchored to a node that
   starts its own line inside an expression (an argument on its own line) does not place
   once a formatter joins that line into the statement; the entry is kept. A14's
   fallbacks cover it.
-- **Markerless: comments in module-level callbacks orphan on any edit to the callback.**
+- **Comments in module-level callbacks orphan on any edit to the callback.**
   A test's `it("...", () => { ... })` is not a scope, so a comment inside it anchors at
   module level to a node inside the call, and the call's hash covers the whole callback
   (a callback's body counts, § Staleness). One edit anywhere in that test orphans it:
   most of the 16.5% orphans measured on this repository ("Measured"). Scoping a callback
   by its call's first string argument would fix test files; not done.
-- **Markerless: unnamed declarations anchor at module level.** A default-exported
+- **Unnamed declarations anchor at module level.** A default-exported
   anonymous function or class (`export default function () {}`) has no name to put in a
   scope path, so its comments anchor at module level with no `body` hash: an edit inside
   it does not hide them. Naming it `default` was not done, since two such exports in one
   file's history would share the path.
-- **Markerless: the refresh hooks visit every file with a sidecar.** Cost grows with the
+- **The refresh hooks visit every file with a sidecar.** Cost grows with the
   number of commented files per checkout or commit; narrowing to the sidecars the
   operation changed (from the hook's old and new revisions) is the fix if it shows up.
-- **Marker ambiguity.** A new comment written without the space and exactly four
-  alphanumerics (`#~todo`) parses as an id. Hook tagging does not fix it (the comment is
-  already a sigil comment, so `tag` never sees it); the AGENTS.md snippet warns against
-  it, and `check` reports it as a marker without a body, which fails the commit.
+- **A sigil straight before four letters or digits.** A new comment written without the
+  space and exactly four alphanumerics (`#~todo`) parses as an id with no text: `clean`
+  strips it and `sync` records nothing, so it leaves the commit without reaching a
+  sidecar. Hook tagging does not help (the comment is already a sigil comment, so `tag`
+  never sees it); the AGENTS.md snippet warns against it.
 
 ## Prior art
 

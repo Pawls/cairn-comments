@@ -1,11 +1,9 @@
 /**
- * Filter overhead benchmark (design.md § Filter process): a generated repo of marked source files, timed for
+ * Filter overhead benchmark (design.md § Filter process): a generated repo of commented source files, timed for
  * a full checkout into a smudging worktree and for `git status`, with the filter off,
  * one-shot, and as a long-running process. Run through `npm run bench`, which builds first.
  *
- *   node scripts/bench.ts [--files 2000] [--runs 3] [--one-shot-runs 1] [--autocrlf] [--no-anchors] [--keep]
- *
- * `--no-anchors` writes sidecars without staleness anchors, which skips anchor hashing.
+ *   node scripts/bench.ts [--files 2000] [--runs 3] [--one-shot-runs 1] [--autocrlf] [--keep]
  */
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -13,6 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { recordComments, serializeSidecar, stripComments } from "../packages/core/dist/index.js";
 
 const { values: args } = parseArgs({
   options: {
@@ -21,14 +20,12 @@ const { values: args } = parseArgs({
     "one-shot-runs": { type: "string", default: "1" },
     autocrlf: { type: "boolean", default: false },
     keep: { type: "boolean", default: false },
-    anchors: { type: "boolean", default: true },
   },
-  allowNegative: true,
 });
 const FILES = Number(args.files);
 const RUNS = Number(args.runs);
 const ONE_SHOT_RUNS = Number(args["one-shot-runs"]);
-const MARKERS_PER_FILE = 6;
+const COMMENTS_PER_FILE = 6;
 
 const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../packages/cli/bundle/main.js");
 const dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "cairn-bench-")));
@@ -59,32 +56,28 @@ function timed(fn: () => void): number {
 
 const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
 
-/** Collapsed sources plus sidecars, as they sit in blobs; half Python, half TypeScript. */
-function generate(root: string): void {
-  let serial = 0;
+/** Sources without their comments plus the sidecars `sync` records, as they sit in blobs; half Python, half TypeScript. */
+async function generate(root: string): Promise<void> {
   for (let i = 0; i < FILES; i++) {
     const python = i % 2 === 0;
     const sigil = python ? "#~" : "//~";
     const file = `src/m${Math.floor(i / 100)}/f${i}.${python ? "py" : "ts"}`;
     const lines: string[] = [];
-    const bodies: string[] = [];
-    for (let j = 0; j < MARKERS_PER_FILE / 2; j++) {
-      const own = (serial++).toString(36).padStart(4, "0");
-      const trailing = (serial++).toString(36).padStart(4, "0");
-      // A recorded anchor makes smudge hash every marker's code; none matches, so each is tagged stale.
-      const meta = args.anchors ? "<!-- anchor=0000abcd -->\n" : "";
-      bodies.push(`## ${own}\n${meta}why step ${j} of file ${i} runs before the next one\nand what breaks if it does not\n`);
-      bodies.push(`## ${trailing}\n${meta}the value ${j} is load-bearing\n`);
+    for (let j = 0; j < COMMENTS_PER_FILE / 2; j++) {
+      const why = `${sigil} why step ${j} of file ${i} runs before the next one`;
+      const more = `${sigil} and what breaks if it does not`;
+      const trailing = `${sigil} the value ${j} is load-bearing`;
       if (python) {
-        lines.push(`def step_${j}(x):`, `    ${sigil}${own}`, `    y = x + ${j}`, `    return y  ${sigil}${trailing}`, "", "");
+        lines.push(`def step_${j}(x):`, `    ${why}`, `    ${more}`, `    y = x + ${j}`, `    return y  ${trailing}`, "", "");
       } else {
-        lines.push(`export function step${j}(x: number): number {`, `  ${sigil}${own}`, `  const y = x + ${j};`, `  return y; ${sigil}${trailing}`, "}", "");
+        lines.push(`export function step${j}(x: number): number {`, `  ${why}`, `  ${more}`, `  const y = x + ${j};`, `  return y; ${trailing}`, "}", "");
       }
     }
+    const recorded = await recordComments(file, lines.join("\n"), { preamble: "", entries: [] });
     mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
-    writeFileSync(path.join(root, file), lines.join("\n"));
+    writeFileSync(path.join(root, file), await stripComments(file, recorded.source));
     mkdirSync(path.dirname(path.join(root, ".agents/comments", file)), { recursive: true });
-    writeFileSync(path.join(root, ".agents/comments", `${file}.md`), bodies.join("\n"));
+    writeFileSync(path.join(root, ".agents/comments", `${file}.md`), serializeSidecar(recorded.sidecar));
   }
 }
 
@@ -115,7 +108,7 @@ function checkout(repo: string, mode: Mode, name: string): { wt: string; ms: num
 const repo = path.join(dir, "repo");
 mkdirSync(repo);
 git(repo, "init", "-q");
-generate(repo);
+await generate(repo);
 cli(repo, "init");
 git(repo, "add", "-A");
 git(repo, "commit", "-qm", "generated");
@@ -146,11 +139,11 @@ for (const mode of ["off", "process", "one-shot"] as const) {
     git(repo, "worktree", "remove", "--force", wt);
   }
 }
-if (!expanded.endsWith(":3")) throw new Error(`process mode did not expand markers (grep: ${JSON.stringify(expanded)})`);
+if (!expanded.endsWith(":3")) throw new Error(`process mode did not place the comments (grep: ${JSON.stringify(expanded)})`);
 
 const fmt = (ms: number) => `${Math.round(ms)} ms`;
 const off = { checkout: median(results.off.checkout), warm: median(results.off.warmStatus) };
-console.log(`\n${FILES} files, ${MARKERS_PER_FILE} markers each, autocrlf=${args.autocrlf}, ${os.platform()} ${os.release()}, git ${git(repo, "--version").trim().split(" ")[2]}, node ${process.version}`);
+console.log(`\n${FILES} files, ${COMMENTS_PER_FILE} comments each, autocrlf=${args.autocrlf}, ${os.platform()} ${os.release()}, git ${git(repo, "--version").trim().split(" ")[2]}, node ${process.version}`);
 console.log("medians; runs: off/process " + RUNS + ", one-shot " + ONE_SHOT_RUNS + "\n");
 console.log("| mode | checkout | vs off | first status | warm status | warm vs off |");
 console.log("| --- | --- | --- | --- | --- | --- |");

@@ -3,7 +3,7 @@ import type { Node } from "web-tree-sitter";
 import type { LanguageSpec } from "./languages.js";
 
 // Hashes of the code a comment describes, blind to what formatters change (design.md
-// § Anchoring, "Normalization").
+// § Staleness, "Normalization").
 
 function digest(text: string): string {
   return createHash("sha256").update(text).digest("hex").slice(0, 8);

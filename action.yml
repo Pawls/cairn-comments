@@ -1,5 +1,5 @@
 name: Cairn Comments check
-description: Fail when AI comments were committed with their text, or when a marker and its stored body have come apart.
+description: Fail when AI comments were committed in the code, or when a comment sidecar's source file is gone.
 author: Pawls
 branding:
   icon: check-square

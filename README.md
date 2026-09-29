@@ -5,16 +5,18 @@ code without deleting them, and detects them so you do not have to mark each one
 
 Coding agents write a lot of comments. A few carry context the next reader needs; most are
 noise to the person who owns the code. Deleting them throws the context away, and keeping
-them clutters every file. Cairn Comments moves the text of each AI comment into a tracked
-markdown file and leaves a short marker in the code. Agents still read and write the full
-comments inline, at no extra token cost. Your own checkout stays clean, and a VS Code
-extension shows the comments as an overlay when you want them.
+them clutters every file. Cairn Comments moves each AI comment into a tracked markdown file,
+along with a record of the code it belongs to, and leaves no trace in the committed code.
+Agents still read and write the full comments inline, at no extra token cost. Your own
+checkout is the plain code, and a VS Code extension shows the comments as an overlay when
+you want them.
 
-Overlay off: each marker collapses to a dim `~`.
+Overlay off: the editor shows the plain code.
 
 ![Overlay off](docs/images/overlay-off.png)
 
-Overlay on: the comments render in place.
+Overlay on: each comment shows above the line it describes, and trailing ones at the end
+of their line.
 
 ![Overlay on](docs/images/overlay-on.png)
 
@@ -26,44 +28,34 @@ C#, Java, and Kotlin. A git filter handles the rest.
 ```text
 What is committed, and your checkout       An agent worktree
   def settle(order):                         def settle(order):
-      #~a1b2                                     #~a1b2 retries are safe: ledger write is idempotent
-      ledger.write(order.id)  #~c3d4             ledger.write(order.id)  #~c3d4 keyed on order.id
+                                                 #~a1b2 retries are safe: ledger write is idempotent
+      ledger.write(order.id)                     ledger.write(order.id)  #~c3d4 keyed on order.id
 
 .agents/comments/src/settle.py.md
   ## a1b2
+  <!-- pos=before scope=settle body=… node=… -->
   retries are safe: ledger write is idempotent
   ## c3d4
+  <!-- pos=trail scope=settle body=… node=… -->
   keyed on order.id
 ```
 
-- **On commit** the filter reduces each sigil comment to `#~` plus a four-character id. The
-  pre-commit hook writes the text to `.agents/comments/<path>.md` and stages it.
-- **In an agent worktree** (made with `cairn worktree add`) the filter expands the
-  markers back into full comments on checkout, so agents read, grep, and edit real text on
-  disk. `git diff` there still shows only markers.
-- **In your checkout** the files hold bare markers. The VS Code extension draws the text
-  over them, and the hover shows the full comment and who wrote it.
+- **On commit** the filter removes every sigil comment from the code. The text goes to
+  `.agents/comments/<path>.md`, with where it sits: the function or class around it, a
+  hash of that function, and the statement it describes.
+- **In an agent worktree** (made with `cairn worktree add`) the filter puts the comments
+  back on checkout, so agents read, grep, and edit real text on disk. `git diff` there
+  shows only code changes.
+- **In your checkout** the files hold only the code. The VS Code extension draws each
+  comment above its line; click one to open it as a comment thread with the full text,
+  who wrote it, and buttons to edit, confirm, promote, or delete it. Comments follow your
+  edits and travel with a function you copy and paste.
 
-Nothing is deleted at any point: every comment body is in a tracked, human-readable file.
-
-### Without markers
-
-`cairn init --markerless` leaves no trace of AI comments in committed code. The sidecar
-records the declaration each comment belongs to and where it sits in it, and your
-checkout is the plain code.
-
-With the overlay off, the editor shows plain code.
-
-![Markerless, overlay off](docs/images/markerless-off.png)
-
-With the overlay on, each comment shows above the line it describes, and trailing ones
-at the end of their line. Click one to open it as a comment thread: the full text, who
-wrote it, and buttons to edit, confirm, promote, or delete it. Comments follow your edits
-and travel with a function you copy and paste. The **AI Comments** Activity Bar view lists
-comments that may be stale and ones whose code is gone.
-
-![Markerless, overlay on](docs/images/markerless-on.png)
-
+Moving a function, editing another one, or reformatting the file keeps every comment
+where it was. When the function around a comment changes, the comment still shows, marked
+possibly stale (see [Stale comments](#stale-comments)). Nothing is deleted at any point:
+every comment body is in a tracked, human-readable file, and one whose code is gone is
+kept and listed until you remove it.
 ## Quickstart
 
 Needs git and Node 22 or later.
@@ -71,19 +63,21 @@ Needs git and Node 22 or later.
 ```sh
 npm install -g cairn-comments
 cd your-repo
-cairn init                          # filter, merge driver, .gitattributes, pre-commit hook
+cairn init                          # filter, merge driver, .gitattributes, git hooks
 git add .gitattributes && git commit -m "Set up Cairn Comments"
 cairn worktree add ../agent -b agent  # a checkout for agents, with full comments
 ```
 
 `init` prints every change it makes; `cairn init --dry-run` shows the list first and
-changes nothing. Git config and the hook are local to your clone. Everyone who clones the
-repository runs `cairn init` once. Clones without it still work: they see bare
-markers, and [`check`](#keeping-the-repository-consistent) catches anything they commit
-wrong.
+changes nothing. Git config and the hooks are local to your clone. Everyone who clones the
+repository runs `cairn init` once. Clones without it still work: they see the plain code,
+and [`check`](#keeping-the-repository-consistent) catches anything they commit wrong.
 
-Point your agent at `../agent`. The comments it writes as `#~ like this` commit as bare
-markers, with the text in `.agents/comments/`.
+Point your agent at `../agent`. The comments it writes as `#~ like this` stay out of the
+committed code, with the text in `.agents/comments/`. A commit that only adds or edits
+comments changes no code, so git has nothing to commit until the sidecar is staged: the
+[agent hooks](#agent-setup) record it after every edit, and otherwise `cairn sync` then
+`git add .agents` does.
 
 Then install **Cairn Comments: Hide AI Comments** from the VS Code Marketplace. Toggle the
 overlay with the `AI comments` status bar item or `Ctrl+Alt+`` ` (`Cmd+Alt+`` ` on macOS).
@@ -128,10 +122,11 @@ or with the code actions on a comment.
 
 ## Stale comments
 
-Each sidecar entry records a hash of the code its comment sits on. When that code changes
-and the comment does not, the comment is flagged as possibly stale. Reformatting does not
-count. Agents see `#~ab12 [stale?] ...` in their worktree, and the overlay marks the comment
-in the warning color.
+Each sidecar entry records a hash of the function its comment sits in. When someone who
+could not see the comment changes that function, the comment still shows on its
+statement, flagged as possibly stale. Reformatting does not count, and an agent that edits
+the function with the comment in view clears the flag. Agents see `#~ab12 [stale?] ...` in
+their worktree, and the overlay marks the comment in the warning color.
 
 ```sh
 cairn check --stale      # list flagged comments; exits 1 when there are any
@@ -140,15 +135,17 @@ cairn confirm ab12       # the comment is still right: clear the flag
 
 ## Keeping the repository consistent
 
-`cairn check` reads what is committed (the index) and fails on three problems:
+`cairn check` reads what is committed (the index) and fails on two problems:
 
-- a sigil comment committed with its text, from a clone without the filter;
-- a marker whose body is missing, usually after a file was renamed or moved;
-- a body whose marker is gone.
+- a sigil comment committed in the code, from a clone without the filter;
+- a sidecar whose source file is gone, after a rename or a deletion.
 
-`cairn check --fix` moves a body to the file its marker moved to and drops bodies no
-marker references, then stages the result. The pre-commit hook runs exactly that, so in a
-clone with `init` you rarely see these problems at all.
+`cairn check --fix` moves a renamed file's sidecar to the file its comments now place in,
+drops a deleted file's, and stages the result. The pre-commit hook runs exactly that, so
+in a clone with `init` you rarely see these problems at all.
+
+`cairn check --orphans` lists comments whose code is gone, with the function they were
+last in; `cairn check --fix --prune` removes them. Nothing else ever deletes one.
 
 In CI, run it on every push:
 
@@ -171,24 +168,23 @@ cairn promote --all      # optional: turn every AI comment back into an ordinary
 cairn uninstall          # undo init: config, hook, .gitattributes lines, harness hooks, AGENTS.md section
 ```
 
-`uninstall --dry-run` lists the changes first. Uninstalling leaves `.agents/comments/` and
-the markers alone; they are your data. Without `promote --all`, the markers stay in the
-code as short, harmless comments.
+`uninstall --dry-run` lists the changes first. Uninstalling leaves `.agents/comments/`
+alone; it is your data. Without `promote --all`, the comments stay there and out of the
+code.
 
 ## FAQ
 
 **Does this cost agents tokens?** Not in an agent worktree: the comments are ordinary text
 on disk, so reading one costs what the comment always cost, and no agent needs to open a
-sidecar. An agent working in a collapsed checkout sees only the markers (about seven
-characters each) and would have to open `.agents/comments/` to read a body. Give agents
-their own worktree.
+sidecar. An agent working in your checkout sees only the code and would have to open
+`.agents/comments/` to read a comment. Give agents their own worktree.
 
-**What stays in the repository?** The markers in the code, the sidecars under
-`.agents/comments/`, `.agents/scan-ignore` if you have used `scan`, and a few lines in
-`.gitattributes`. The filter, merge driver, and pre-commit hook live in your local git
-config and hooks directory, and harness hooks in the harness's settings file.
+**What stays in the repository?** The code, with no trace of AI comments; the sidecars
+under `.agents/comments/`; `.agents/scan-ignore` if you have used `scan`; and a few lines in
+`.gitattributes`. The filter, merge driver, and git hooks live in your local git config
+and hooks directory, and harness hooks in the harness's settings file.
 
-**What if a teammate does not install it?** Their checkout shows bare markers, and their
+**What if a teammate does not install it?** Their checkout shows the plain code, and their
 commits skip the filter. A comment they write with the sigil, or a file they rename, is
 caught by `check` in CI; running `cairn init` in their clone fixes it for good.
 
@@ -196,8 +192,9 @@ caught by `check` in CI; running `cairn init` in their clone fixes it for good.
 for the sidecars: entries merge by id, and a body both branches changed gets conflict
 markers inside that body. A clone without `init` falls back to git's ordinary text merge.
 
-**Can I keep the bodies out of the repository entirely?** Add `.agents/comments/` to
-`.gitignore`. The markers then dangle by design, and `check` stops asking for bodies.
+**Can I keep the comments out of the repository entirely?** Add `.agents/comments/` to
+`.gitignore`. The comments then stay on your machine, and the committed code is the same
+as before.
 
 **Which languages?** Python, TypeScript (including TSX), JavaScript, C#, Java, and Kotlin.
 A repository initialized before Kotlin support needs `cairn init` again to put `.kt` and

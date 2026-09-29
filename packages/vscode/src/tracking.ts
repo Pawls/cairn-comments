@@ -1,4 +1,4 @@
-// Where markerless comments sit while the owner edits: no `vscode` import, so vitest covers
+// Where placed comments sit while the owner edits: no `vscode` import, so vitest covers
 // it (test/tracking.test.ts). Rows are 0-based lines of the open document.
 import type { CommentSite } from "@cairn-comments/core";
 

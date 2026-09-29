@@ -1,7 +1,7 @@
 {
   "name": "cairn-comments-vscode",
   "displayName": "Cairn Comments: Hide AI Comments",
-  "description": "Stash the slop, keep the context. Keeps AI-written comments out of your code without losing them, and shows them as a toggleable overlay over the bare markers left in committed code.",
+  "description": "Stash the slop, keep the context. Keeps AI-written comments out of your committed code without losing them: agents still read them inline, and you see them as a toggleable overlay.",
   "version": "0.1.0",
   "publisher": "cairn-comments",
   "license": "MIT",
@@ -339,7 +339,7 @@
             "eol"
           ],
           "default": "codelens",
-          "markdownDescription": "How a comment on its own line renders in a file without markers: a CodeLens above the code line, an expanded comment thread, or a label at the end of the line above."
+          "markdownDescription": "How a comment on its own line renders: a CodeLens above the code line, an expanded comment thread, or a label at the end of the line above."
         }
       }
     },

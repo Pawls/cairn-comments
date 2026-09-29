@@ -8,7 +8,7 @@ import { commentsIn, parseWith } from "./parser.js";
 import { normalizeBody, type Sidecar, type SidecarEntry } from "./sidecar.js";
 
 /**
- * Markerless mode (design.md § Anchoring): committed code holds no trace of AI comments.
+ * Anchoring (design.md § Anchoring): committed code holds no trace of AI comments.
  * `stripComments` is the clean filter, `placeComments` the smudge, and `recordComments`
  * writes each comment's position into its sidecar entry as these metadata keys.
  */
@@ -794,7 +794,7 @@ function setPlacement(entry: SidecarEntry, placement: Placement): boolean {
 }
 
 /**
- * The markerless `sync`: stamps ids onto new comments, moves bodies into the sidecar, and
+ * What `sync` does to one file: stamps ids onto new comments, moves bodies into the sidecar, and
  * records where every comment in the file sits. A comment on disk has been seen by whoever
  * edited the file, so its placement is always re-recorded. Entries not on disk are kept,
  * except deletions (see `RecordOptions`).

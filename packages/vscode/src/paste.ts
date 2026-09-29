@@ -1,4 +1,4 @@
-// Copy and paste carry markerless comments (design.md § Overlay rendering, "Copy and paste"):
+// Copy and paste carry placed comments (design.md § Overlay rendering, "Copy and paste"):
 // a copy records the comments it covers, and a paste of that same text adds them to the
 // target file's sidecar, anchored where they landed. A comment whose original no longer
 // places by then was cut, so it moves instead of being copied. A copy of whole lines,
@@ -12,7 +12,7 @@ import { copiedSites, shapeOf } from "./tracking.js";
 const MIME = `application/vnd.${BRAND}.comments+json`;
 export const PASTE_KIND = vscode.DocumentDropOrPasteEditKind.Text.append(BRAND);
 
-/** A markerless file the extension can read comments from or add them to. */
+/** A file whose comments live in its sidecar, which the extension can read comments from or add them to. */
 export interface PasteTarget {
   /** The repository (sidecar) root, absolute. */
   root: string;
@@ -25,9 +25,9 @@ export interface PasteTarget {
 }
 
 export interface PasteDeps {
-  /** The document as a markerless file, or undefined when it holds markers or is not a source file. */
+  /** The document as a paste target, or undefined when it shows its comments inline or is not a source file. */
   target(document: vscode.TextDocument): Promise<PasteTarget | undefined>;
-  /** Current comment sites of a markerless document. */
+  /** Current comment sites of a document that shows none inline. */
   sites(document: vscode.TextDocument): Promise<readonly CommentSite[]>;
   /** The text and sites before the latest edit, when that edit was a cut of `range` (`PlacedView.beforeCut`). */
   beforeCut(document: vscode.TextDocument, range: vscode.Range): { text: string; sites: readonly CommentSite[] } | undefined;
@@ -154,7 +154,7 @@ export class CommentPaste implements vscode.DocumentPasteEditProvider {
     // editor since the copy.
     if (!sameText(text, payload.text) && !sameText(text, `${payload.text}\n`)) return undefined;
     const target = await this.deps.target(document);
-    // A file with no placed comments yet is markerless only if the copy came from the same repository.
+    // A file with no placed comments yet may sit outside any set-up repository; take it only when the copy came from the same one.
     if (!target || (!target.placed && target.root !== payload.root)) return undefined;
 
     const range = ranges[0]!;
@@ -198,7 +198,7 @@ export class CommentPaste implements vscode.DocumentPasteEditProvider {
     return [edit];
   }
 
-  /** The copied file's sidecar and the ids that still place in it, or undefined when it is not markerless. */
+  /** The copied file's sidecar and the ids that still place in it, or undefined when it shows its comments inline. */
   private async source(file: string): Promise<{ target: PasteTarget; placed: ReadonlySet<string> } | undefined> {
     const document = await vscode.workspace.openTextDocument(file).then(
       (d) => d,
