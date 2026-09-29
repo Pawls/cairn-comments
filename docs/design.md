@@ -332,7 +332,10 @@ Verified in VS Code 1.138 on Windows with screenshots taken by the e2e suite
   copy request, whose range still describes the text before the cut: when the latest
   edit deleted exactly that range (or that line with its break) within a second, the copy
   reads the text and sites from before it (`PlacedView.beforeCut`). The sidecar edits
-  ride on the paste as its `additionalEdit` and are saved when they land. VS Code
+  ride on the paste as its `additionalEdit` and are saved when they land. The view adds
+  the carried comments' sites when the paste's text lands (`PlacedView.expectPaste`)
+  rather than waiting for the sidecar change to place them: a function moved whole within
+  its file records the entries it already had, so its sidecar may not change. VS Code
   applies one provider's edit, the newest registration's unless
   `editor.pasteAs.preferences` names a kind: Pylance offers a plain paste whenever a copy
   starts after indentation, and registering after the extension, won every such paste

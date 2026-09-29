@@ -34,6 +34,8 @@ export interface PasteDeps {
   entries(target: PasteTarget): ReadonlyMap<string, SidecarEntry>;
   /** Called with a sidecar a paste edit is about to change, so it can be saved once it has. */
   willChange(sidecarPath: string): void;
+  /** Called with the text a paste edit will leave in `document` and the sites of the comments it carries there. */
+  willPaste(document: vscode.TextDocument, text: string, sites: readonly CommentSite[]): void;
 }
 
 interface Payload {
@@ -177,6 +179,11 @@ export class CommentPaste implements vscode.DocumentPasteEditProvider {
     }));
     const result = await carryComments(target.file, code, sameSidecar ? withoutMoved(target.sidecar) : target.sidecar, carried);
     if (!result.ids.some(Boolean)) return undefined;
+    this.deps.willPaste(
+      document,
+      code,
+      carried.flatMap((c, i) => (result.ids[i] ? [{ id: result.ids[i]!, row: c.row, kind: c.kind }] : [])),
+    );
 
     const edit = new vscode.DocumentPasteEdit(onNewLine ? "" : text, "Paste with AI comments", PASTE_KIND);
     edit.additionalEdit = new vscode.WorkspaceEdit();

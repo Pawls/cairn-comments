@@ -241,6 +241,7 @@ export function activate(context: vscode.ExtensionContext): TestApi {
       return placedView.sites(document);
     },
     beforeCut: (document, range) => placedView.beforeCut(document, range),
+    willPaste: (document, text, sites) => placedView.expectPaste(document, text, sites),
     entries: (target) => store.entries(target.sidecarPath),
     willChange: (file) => {
       clearTimeout(pasteSaves.get(file));

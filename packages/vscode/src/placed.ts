@@ -60,6 +60,8 @@ interface DocState {
   tracked: boolean;
   /** The text and sites before the latest edit, which a cut needs (see `beforeCut`). */
   previous?: { text: string; sites: CommentSite[]; changes: readonly vscode.TextDocumentContentChangeEvent[]; at: number };
+  /** The sites a paste edit carries, added if the next edit leaves `text` (see `expectPaste`). */
+  pasted?: { text: string; sites: readonly CommentSite[] };
 }
 
 /** How long after a deletion a copy request may still be the cut that made it. */
@@ -134,6 +136,22 @@ export class PlacedView implements vscode.CodeLensProvider, vscode.Disposable {
     state.text = event.document.getText();
     state.version = event.document.version;
     state.tracked = true;
+    const pasted = state.pasted;
+    state.pasted = undefined;
+    if (pasted?.text === state.text) {
+      const ids = new Set(pasted.sites.map((s) => s.id));
+      state.sites = [...state.sites.filter((s) => !ids.has(s.id)), ...pasted.sites];
+    }
+  }
+
+  /**
+   * Adds `sites` when the next edit leaves `document` holding `text`, as the paste edit that
+   * carries those comments does. A function moved whole within its file records the entries
+   * it already had, so no sidecar change comes to place them again.
+   */
+  expectPaste(document: vscode.TextDocument, text: string, sites: readonly CommentSite[]): void {
+    const state = this.states.get(document.uri.toString());
+    if (state) state.pasted = { text, sites };
   }
 
   /**
