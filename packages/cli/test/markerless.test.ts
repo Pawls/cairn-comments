@@ -30,7 +30,7 @@ function withIds(text: string): RegExp {
 
 const MODES = [true, false].flatMap((autocrlf) => [false, true].map((oneShot) => ({ autocrlf, oneShot })));
 describe.each(MODES)("markerless round trip through git (autocrlf=$autocrlf, oneShot=$oneShot)", ({ autocrlf, oneShot }) => {
-  const initArgs = ["init", "--markerless", ...(oneShot ? ["--one-shot"] : [])];
+  const initArgs = ["init", ...(oneShot ? ["--one-shot"] : [])];
   let box: Sandbox;
   let main: string;
   let wt1: string;
@@ -54,14 +54,11 @@ describe.each(MODES)("markerless round trip through git (autocrlf=$autocrlf, one
   const workingEol = (cwd: string) => box.git(cwd, "ls-files", "--eol", SOURCE).split(/\s+/)[1];
   const blob = (cwd: string, rev: string) => box.git(cwd, "show", `${rev}:${SOURCE}`);
 
-  it("init turns markerless mode on, installs the refresh hooks, and is idempotent", () => {
-    expect(box.git(main, "config", "--get", "filter.cairn.markerless").trim()).toBe("true");
+  it("init installs the pre-commit and refresh hooks and is idempotent", () => {
     for (const hook of ["pre-commit", "post-checkout", "post-merge", "post-commit", "post-rewrite"]) {
       expect(existsSync(box.path("main", ".git", "hooks", hook))).toBe(true);
     }
     expect(box.cli(main, ...initArgs).trim()).toBe("nothing to change");
-    // A later plain `init` never turns markerless mode off.
-    expect(box.cli(main, ...initArgs.filter((a) => a !== "--markerless")).trim()).toBe("nothing to change");
     expect(box.status(main)).toBe("");
   });
 

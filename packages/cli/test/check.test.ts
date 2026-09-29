@@ -21,7 +21,7 @@ describe.each([true, false])("check (autocrlf=%s)", (autocrlf) => {
     box.git(main, "commit", "-qm", "base");
     // Collapsed like an owner's checkout, so a rename carries no inline text for sync to recover.
     box.cli(main, "collapse");
-    id = /#~([0-9a-z]{4})/.exec(box.read(box.path("main", "a.py")))![1]!;
+    id = /^## ([0-9a-z]{4})$/m.exec(box.read(box.path("main", sidecar("a.py"))))![1]!;
   });
   afterAll(() => box.dispose());
 
@@ -29,10 +29,11 @@ describe.each([true, false])("check (autocrlf=%s)", (autocrlf) => {
   const commit = (cwd: string, message: string, ...args: string[]) => box.gitResult(cwd, "commit", "-qm", message, ...args);
 
   it("passes on a repository the filter kept consistent", () => {
+    expect(box.read(box.path("main", "a.py"))).toBe("def settle(order):\n    ledger.write(order.id)\n");
     expect(check(main)).toMatchObject({ status: 0, stdout: "" });
   });
 
-  it("the pre-commit hook moves the body along with a renamed file", () => {
+  it("the pre-commit hook moves the sidecar along with a renamed file", () => {
     box.git(main, "mv", "a.py", "b.py");
     const result = commit(main, "rename");
     // Git sends hook output to stderr.
@@ -46,51 +47,29 @@ describe.each([true, false])("check (autocrlf=%s)", (autocrlf) => {
     expect(check(main).status).toBe(0);
   });
 
-  it("without the hook, check names both halves of a rename and --fix repairs it", () => {
+  it("without the hook, check names the sidecar whose source is gone and --fix moves it", () => {
     box.git(main, "mv", "b.py", "c.py");
     commit(main, "rename, hook skipped", "--no-verify");
     const found = check(main);
     expect(found.status).toBe(1);
-    expect(found.stdout).toBe(
-      `${sidecar("b.py")}: body ${id} has no marker in b.py (\`cairn check --fix\` moves it to ${sidecar("c.py")})\n` +
-        `c.py:2: marker ${id} has no body in ${sidecar("c.py")}\n`,
-    );
-    expect(JSON.parse(check(main, "--json").stdout).problems.map((p: { kind: string }) => p.kind)).toEqual(["orphan-body", "missing-body"]);
+    expect(found.stdout).toBe(`${sidecar("b.py")}: ${id} has no source; b.py is gone (\`cairn check --fix\` moves it to ${sidecar("c.py")})\n`);
+    expect(JSON.parse(check(main, "--json").stdout).problems.map((p: { kind: string }) => p.kind)).toEqual(["missing-source"]);
     expect(check(main, "--fix")).toMatchObject({ status: 0, stdout: `relocated ${id}: ${sidecar("b.py")} -> ${sidecar("c.py")}\n` });
     expect(box.status(main)).toBe(`R  ${sidecar("b.py")} -> ${sidecar("c.py")}\n`);
     commit(main, "fix");
     expect(check(main)).toMatchObject({ status: 0, stdout: "" });
   });
 
-  it("deleting a comment drops its body in the same commit", () => {
-    const file = box.path("main", "c.py");
-    box.write(file, box.read(file).replace(`    #~${id}\n`, ""));
-    const result = commit(main, "drop the comment", "-a");
+  it("deleting a file drops its comments in the same commit", () => {
+    box.git(main, "rm", "-q", "c.py");
+    const result = commit(main, "drop the file");
     expect(result.status).toBe(0);
-    expect(result.stderr).toContain(`removed ${id} from ${sidecar("c.py")}: its marker is gone from c.py\n`);
+    expect(result.stderr).toContain(`removed ${id} from ${sidecar("c.py")}: c.py is gone\n`);
     expect(box.git(main, "ls-files", ".agents")).toBe("");
     expect(box.status(main)).toBe("");
   });
 
-  it("refuses a commit that would strand a moved marker in an unstaged file", () => {
-    box.write(box.path("main", "d.py"), "def a():\n    #~ keep me\n    pass\n");
-    box.git(main, "add", "d.py");
-    commit(main, "d");
-    const moved = /#~([0-9a-z]{4})/.exec(box.read(box.path("main", "d.py")))![1]!;
-    box.write(box.path("main", "d.py"), "def a():\n    pass\n");
-    box.write(box.path("main", "e.py"), `def b():\n    #~${moved}\n    pass\n`);
-    box.git(main, "add", "d.py");
-    const result = commit(main, "half a move");
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain(`${sidecar("d.py")}: body ${moved} has no marker in d.py (referenced in the working tree by e.py; stage it)`);
-    box.git(main, "add", "e.py");
-    const whole = commit(main, "the whole move");
-    expect(whole.status).toBe(0);
-    expect(whole.stderr).toContain(`relocated ${moved}: ${sidecar("d.py")} -> ${sidecar("e.py")}\n`);
-    expect(box.git(main, "show", `HEAD:${sidecar("e.py")}`)).toContain("keep me");
-  });
-
-  it("CI in a clone without the filter catches committed comment text and dangling ids", () => {
+  it("CI in a clone without the filter catches sigil comments committed in the code", () => {
     const clone = box.path("clone");
     box.git(box.dir, "clone", "-q", "main", "clone");
     box.write(box.path("clone", "f.py"), "x = 1  #~ an agent wrote this\ny = 2  #~todo\n");
@@ -100,17 +79,7 @@ describe.each([true, false])("check (autocrlf=%s)", (autocrlf) => {
     expect(result.status).toBe(1);
     expect(result.stdout).toBe(
       "f.py:1: comment committed with its text: an agent wrote this\n" +
-        `f.py:2: marker todo has no body in ${sidecar("f.py")}\n` +
-        "hint: this clone commits without the filter; run `cairn init`, then `cairn collapse` and commit the result\n",
-    );
-    expect(check(clone, "e.py").status).toBe(0);
-  });
-
-  it("ignored sidecars mean dangling markers by choice", () => {
-    const clone = box.path("clone");
-    box.write(box.path("clone", ".gitignore"), ".agents/comments/\n");
-    expect(check(clone).stdout).toBe(
-      "f.py:1: comment committed with its text: an agent wrote this\n" +
+        "f.py:2: sigil comment committed (todo)\n" +
         "hint: this clone commits without the filter; run `cairn init`, then `cairn collapse` and commit the result\n",
     );
   });
@@ -120,7 +89,7 @@ describe.each([true, false])("sidecar merge driver (autocrlf=%s)", (autocrlf) =>
   let box: Sandbox;
   let main: string;
   const file = () => box.path("main", sidecar("a.py"));
-  const BASE = "## ab12\n<!-- anchor=11111111 -->\nretries are safe\n";
+  const BASE = "## ab12\n<!-- pos=before scope=settle node=11111111 -->\nretries are safe\n";
 
   beforeAll(() => {
     box = new Sandbox({ autocrlf });
@@ -157,7 +126,7 @@ describe.each([true, false])("sidecar merge driver (autocrlf=%s)", (autocrlf) =>
     expect(result.status).toBe(1);
     expect(result.stderr + result.stdout).toContain("both sides changed ab12");
     expect(readFileSync(file(), "utf8")).toContain(
-      "## ab12\n<!-- anchor=11111111 -->\n<<<<<<< ours\nretries are safe; the ledger dedupes\n=======\nretries are safe because writes are idempotent\n>>>>>>> theirs\n\n## cd34\n",
+      "## ab12\n<!-- pos=before scope=settle node=11111111 -->\n<<<<<<< ours\nretries are safe; the ledger dedupes\n=======\nretries are safe because writes are idempotent\n>>>>>>> theirs\n\n## cd34\n",
     );
     box.git(main, "merge", "--abort");
   });

@@ -6,22 +6,31 @@ const merge = (base: string, ours: string, theirs: string) => {
   return { text: serializeSidecar(result.sidecar), conflicts: result.conflicts };
 };
 
-const BASE = "## ab12\n<!-- anchor=11111111 -->\nretries are safe\n\n## cd34\n<!-- anchor=22222222 -->\nkeyed on order id\n";
+const BASE = "## ab12\n<!-- pos=before scope=settle node=11111111 -->\nretries are safe\n\n## cd34\n<!-- pos=trail scope=settle node=22222222 -->\nkeyed on order id\n";
 
 describe("sidecar merge", () => {
   it("appends theirs' new entries after ours and keeps a one-sided edit with its metadata", () => {
     const ours = BASE.replace("keyed on order id", "keyed on order.id") + "\n## gh78\nours new\n";
-    const theirs = BASE.replace("<!-- anchor=11111111 -->", "<!-- anchor=33333333 -->") + "\n## ef56\ntheirs new\n";
+    const theirs = BASE.replace("node=11111111", "node=33333333") + "\n## ef56\ntheirs new\n";
     expect(merge(BASE, ours, theirs)).toEqual({
-      text: "## ab12\n<!-- anchor=33333333 -->\nretries are safe\n\n## cd34\n<!-- anchor=22222222 -->\nkeyed on order.id\n\n## gh78\nours new\n\n## ef56\ntheirs new\n",
+      text:
+        "## ab12\n<!-- pos=before scope=settle node=33333333 -->\nretries are safe\n\n## cd34\n<!-- pos=trail scope=settle node=22222222 -->\nkeyed on order.id\n\n" +
+        "## gh78\nours new\n\n## ef56\ntheirs new\n",
       conflicts: [],
     });
   });
 
   it("takes the metadata that goes with the body that changed", () => {
-    const ours = BASE.replace("<!-- anchor=11111111 -->\nretries are safe", "<!-- anchor=11111111 at=2026-09-02T00:00:00Z -->\nretries are safe; dedupes");
-    const theirs = BASE.replace("<!-- anchor=11111111 -->", "<!-- anchor=55555555 -->");
-    expect(merge(BASE, ours, theirs).text).toContain("## ab12\n<!-- anchor=11111111 at=2026-09-02T00:00:00Z -->\nretries are safe; dedupes\n");
+    const ours = BASE.replace("node=11111111 -->\nretries are safe", "node=11111111 at=2026-09-02T00:00:00Z -->\nretries are safe; dedupes");
+    const theirs = BASE.replace("node=11111111", "node=55555555");
+    expect(merge(BASE, ours, theirs).text).toContain("## ab12\n<!-- pos=before scope=settle node=11111111 at=2026-09-02T00:00:00Z -->\nretries are safe; dedupes\n");
+  });
+
+  it("merges a placement as one unit, so a comment never mixes two recordings of where it goes", () => {
+    const ours = BASE.replace("pos=before scope=settle node=11111111", "pos=before scope=settle node=44444444 nth=1");
+    const theirs = BASE.replace("pos=before scope=settle node=11111111", "pos=after scope=refund node=11111111 by=codex");
+    expect(merge(BASE, ours, theirs).text).toContain("## ab12\n<!-- pos=before scope=settle node=44444444 nth=1 by=codex -->\nretries are safe\n");
+    expect(merge(BASE, BASE, theirs).text).toContain("## ab12\n<!-- pos=after scope=refund node=11111111 by=codex -->\n");
   });
 
   it("writes conflict markers into a body both sides changed differently", () => {
@@ -30,7 +39,7 @@ describe("sidecar merge", () => {
     const { text, conflicts } = merge(BASE, ours, theirs);
     expect(conflicts).toEqual(["ab12"]);
     expect(text).toContain(
-      "## ab12\n<!-- anchor=11111111 -->\n<<<<<<< ours\nretries are safe; the ledger dedupes\n=======\nretries are safe because writes are idempotent\n>>>>>>> theirs\n",
+      "## ab12\n<!-- pos=before scope=settle node=11111111 -->\n<<<<<<< ours\nretries are safe; the ledger dedupes\n=======\nretries are safe because writes are idempotent\n>>>>>>> theirs\n",
     );
     // What union merges did instead: the second metadata line and both bodies became one body.
     expect(parseSidecar(text).entries.map((e) => e.id)).toEqual(["ab12", "cd34"]);
@@ -42,11 +51,11 @@ describe("sidecar merge", () => {
   });
 
   it("a deletion wins over an unchanged entry and loses to an edit", () => {
-    const withoutAb12 = "## cd34\n<!-- anchor=22222222 -->\nkeyed on order id\n";
+    const withoutAb12 = "## cd34\n<!-- pos=trail scope=settle node=22222222 -->\nkeyed on order id\n";
     expect(merge(BASE, withoutAb12, BASE).text).toBe(withoutAb12);
     expect(merge(BASE, BASE, withoutAb12).text).toBe(withoutAb12);
     const edited = BASE.replace("retries are safe", "retries are safe now");
-    expect(merge(BASE, withoutAb12, edited).text).toBe(withoutAb12 + "\n## ab12\n<!-- anchor=11111111 -->\nretries are safe now\n");
+    expect(merge(BASE, withoutAb12, edited).text).toBe(withoutAb12 + "\n## ab12\n<!-- pos=before scope=settle node=11111111 -->\nretries are safe now\n");
     expect(merge(BASE, edited, withoutAb12).text).toBe(edited);
   });
 
