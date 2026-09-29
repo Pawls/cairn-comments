@@ -3,6 +3,7 @@
 // CAIRN_SCREENSHOTS=<dir> to also capture the overlay states (Windows only) for the
 // README. Set CAIRN_E2E_EXTENSION=<dir> to test an unpacked .vsix (its `extension/`
 // folder) instead of this package.
+import { spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +17,17 @@ const fixture = path.join(packageRoot, "e2e/fixture");
 // Terminals inside VS Code export this; inherited, it makes the test build of VS Code
 // run as plain Node and try to execute the fixture path as a script.
 delete process.env.ELECTRON_RUN_AS_NODE;
+
+// On Linux, rerun this script on a virtual X display so the test windows never reach the
+// desktop (WSLg included); dropping WAYLAND_DISPLAY keeps Electron on X11. Set
+// CAIRN_E2E_VISIBLE=1 to watch them instead.
+if (process.platform === "linux" && !process.env.CAIRN_E2E_VISIBLE && !process.env.CAIRN_E2E_XVFB) {
+  const env: NodeJS.ProcessEnv = { ...process.env, CAIRN_E2E_XVFB: "1" };
+  delete env.WAYLAND_DISPLAY;
+  const xvfb = spawnSync("xvfb-run", ["-a", process.execPath, ...process.argv.slice(1)], { stdio: "inherit", env });
+  if (xvfb.error) console.error(`xvfb-run failed (${xvfb.error.message}); install xvfb or set CAIRN_E2E_VISIBLE=1`);
+  process.exit(xvfb.status ?? 1);
+}
 
 const REVIEW_FILES: Record<string, string> = {
   "src/app.py": [
