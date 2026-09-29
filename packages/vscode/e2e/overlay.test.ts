@@ -46,6 +46,15 @@ async function waitFor(what: string, condition: () => boolean | Promise<boolean>
   }
 }
 
+/** Waits until the sidecar on disk passes `test` and holds all of its buffer: a read during a save can come back short. */
+async function sidecarSaved(what: string, test: (text: string) => boolean): Promise<void> {
+  await waitFor(what, () => {
+    const text = sidecarText();
+    const buffer = vscode.workspace.textDocuments.find((d) => d.uri.toString() === vscode.Uri.file(sidecarPath()).toString());
+    return test(text) && (!buffer || buffer.getText() === text);
+  });
+}
+
 async function open(): Promise<{ api: TestApi; editor: vscode.TextEditor }> {
   const editor = await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(samplePath()));
   const extension = vscode.extensions.getExtension<TestApi>(EXTENSION_ID);
@@ -82,12 +91,18 @@ function comment(api: TestApi, editor: vscode.TextEditor, id: string): PlacedCom
 async function reset(): Promise<void> {
   for (const document of vscode.workspace.textDocuments) {
     if (!document.isDirty || document.uri.scheme !== "file") continue;
-    // A buffer with no editor (a sidecar) is shown only to revert it: a sidecar left in a
-    // tab is the user's to save, so a later test's undo would not save it.
-    const shown = vscode.window.visibleTextEditors.some((e) => e.document === document);
     await vscode.window.showTextDocument(document);
-    await vscode.commands.executeCommand(shown ? "workbench.action.files.revert" : "workbench.action.revertAndCloseActiveEditor");
+    await vscode.commands.executeCommand("workbench.action.files.revert");
   }
+  // Reverting a sidecar opens it in a tab, which makes it the user's to save: a later
+  // test's undo would then leave it unsaved (design.md § Promote and demote, "Undo").
+  const sidecarTabs = () =>
+    vscode.window.tabGroups.all.flatMap((g) => g.tabs).filter((t) => t.input instanceof vscode.TabInputText && t.input.uri.fsPath.includes(".agents"));
+  for (const tab of sidecarTabs()) {
+    await vscode.window.showTextDocument((tab.input as vscode.TabInputText).uri);
+    await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor");
+  }
+  assert.deepEqual(sidecarTabs(), [], "a sidecar tab is still open");
   execFileSync("git", ["checkout", "--", "."], { cwd: repo() });
   // Every buffer, the sidecar's included, must reload before the next test edits it: VS Code
   // refuses an edit or save to a buffer older than its file ("has changed in the meantime").
@@ -311,11 +326,11 @@ suite("overlay", () => {
     edit.insert(editor.document.uri, at.start, pasted.insertText as string);
     for (const [uri, edits] of pasted.additionalEdit!.entries()) for (const e of edits) edit.replace(uri, e.range, e.newText);
     assert.ok(await vscode.workspace.applyEdit(edit));
-    await waitFor("the pasted comment in the sidecar", () => /copied-from=ewiw/.test(sidecarText()));
+    await sidecarSaved("the pasted comment in the sidecar", (s) => /copied-from=ewiw/.test(s));
 
     await vscode.window.showTextDocument(editor.document);
     await vscode.commands.executeCommand("undo");
-    await waitFor("the pasted comment gone from the sidecar", () => !/copied-from=ewiw/.test(sidecarText()));
+    await sidecarSaved("the pasted comment gone from the sidecar", (s) => !/copied-from=ewiw/.test(s));
     await settle(500); // a save of the source would follow the sidecar's
     assert.equal(readFileSync(samplePath(), "utf8"), committed, "the edit made before the paste was saved");
     assert.equal(editor.document.isDirty, true);
@@ -373,7 +388,7 @@ suite("overlay", () => {
     assert.ok(await vscode.workspace.applyEdit(edit));
     assert.ok(await vscode.workspace.applyEdit(edits![0]!.additionalEdit!));
 
-    await waitFor("the pasted comment in the sidecar", () => /copied-from=ewiw/.test(sidecarText()));
+    await sidecarSaved("the pasted comment in the sidecar", (s) => /copied-from=ewiw/.test(s));
     const sidecar = sidecarText();
     const id = /## ([0-9a-z]{4})\n<!-- by=claude-code [^\n]*copied-from=ewiw[^\n]*scope=refund@1 /.exec(sidecar)?.[1];
     assert.ok(id, `no copied entry anchored to the second refund in:\n${sidecar}`);
@@ -435,7 +450,7 @@ suite("overlay", () => {
     assert.ok(await vscode.workspace.applyEdit(edit));
     assert.ok(await vscode.workspace.applyEdit(edits![0]!.additionalEdit!));
 
-    await waitFor("the moved comment's new anchor in the sidecar", () => sidecarText() !== before);
+    await sidecarSaved("the moved comment's new anchor in the sidecar", (s) => s !== before);
     const sidecar = sidecarText();
     assert.doesNotMatch(sidecar, /copied-from/);
     assert.equal(sidecar.match(/a closed order was already refunded by support by hand/g)?.length, 1);
@@ -472,7 +487,7 @@ suite("overlay", () => {
     // The fixture's anchors are hand-written, so the first move records them afresh.
     const committed = sidecarText();
     await moveRefund("last line");
-    await waitFor("the first move's anchors in the sidecar", () => sidecarText() !== committed);
+    await sidecarSaved("the first move's anchors in the sidecar", (s) => s !== committed);
     await document.save();
     await waitFor("refund's comment on the pasted function", refundLens(16));
     // A late file watcher event for that sidecar change would place the comments again.
@@ -516,7 +531,7 @@ suite("overlay", () => {
     const before = sidecarText();
     assert.ok(await vscode.workspace.applyEdit(edits![0]!.additionalEdit!));
     assert.equal(document.lineAt(5).text, "    ledger.write(order.id)");
-    await waitFor("the moved comments' new anchors in the sidecar", () => sidecarText() !== before);
+    await sidecarSaved("the moved comments' new anchors in the sidecar", (s) => s !== before);
     assert.doesNotMatch(sidecarText(), /copied-from/);
     await document.save();
     await waitFor("the moved comments on the pasted line", async () => {
@@ -554,7 +569,7 @@ suite("overlay", () => {
     const before = sidecarText();
     assert.ok(await vscode.workspace.applyEdit(edits![0]!.additionalEdit!));
     assert.equal(document.lineAt(18).text, "    ledger.write(order.id)");
-    await waitFor("the moved comments' new anchors in the sidecar", () => sidecarText() !== before);
+    await sidecarSaved("the moved comments' new anchors in the sidecar", (s) => s !== before);
     assert.doesNotMatch(sidecarText(), /copied-from/);
     assert.equal(sidecarText().match(/keyed on order\.id/g)?.length, 1, "the trailing comment moved rather than being copied");
     await document.save();
@@ -583,7 +598,7 @@ suite("overlay", () => {
       [16, 17, 18, 19].map((l) => document.lineAt(l).text),
       ["    ledger.write(order.id)", "    notify(order)", "    return order", "    return ledger.balance(order.account, strict=True)"],
     );
-    await waitFor("the moved comments' new anchors in the sidecar", () => sidecarText() !== before);
+    await sidecarSaved("the moved comments' new anchors in the sidecar", (s) => s !== before);
     const sidecar = sidecarText();
     assert.doesNotMatch(sidecar, /copied-from/);
     for (const id of ["1kjy", "f7eo", "ip6u"]) assert.equal(sidecar.match(new RegExp(`## ${id}\\n`, "g"))?.length, 1, `one entry for ${id}`);
