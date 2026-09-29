@@ -714,13 +714,17 @@ Implemented in `packages/cli/src/check.ts`; tests in `packages/cli/test/check.te
   rename or a deletion). `--orphans` adds the entries that no longer place in their
   source (§ Anchoring). When `.agents/comments/` is ignored by pattern (§ Decisions),
   there are no sidecars in the index to check.
-- **`--fix` follows a source that is gone.** Its sidecar moves to the one file where any
-  of its comments anchored to code places: a staged addition under `--staged` (a
-  `git mv`), otherwise any managed file without a sidecar. A comment kept by line number
-  alone (`pos=row`) places anywhere, so it does not count. With no such file the source
-  was deleted, and its sidecar goes too; with more than one, `check` reports them and
-  moves nothing. Unplaced entries are removed only with `--fix --prune`. `--fix` edits the
-  working sidecars and stages them, as `sync --add` does.
+- **`--fix` follows a source that is gone.** Under `--staged` (the pre-commit hook), its
+  sidecar moves to the file git's own rename detection pairs it with (`git mv`, or a
+  delete and add similar enough), and nowhere else: a new file where one of its comments
+  happens to place is not a rename, and taking it for one carried a deleted file's
+  comments into unrelated code. Outside a commit the rename is already history, so the
+  sidecar moves to the one managed file without a sidecar where most of its comments
+  anchored to code place; a comment kept by line number alone (`pos=row`) places
+  anywhere, so it does not count. With no such file the source was deleted, and its
+  sidecar goes too; with more than one, `check` reports them and moves nothing. Unplaced
+  entries are removed only with `--fix --prune`. `--fix` edits the working sidecars and
+  stages them, as `sync --add` does.
 - **The pre-commit hook runs `sync --staged --add`, then `check --staged --fix`.** A
   `git mv` carries its sidecar along, a deleted file's comments go in the same commit, and
   a commit that would leave comment text in the code fails. `sync` keeps entries that no

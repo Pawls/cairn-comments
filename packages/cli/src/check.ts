@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { BRAND, SIDECAR_ROOT, findMarkers, languageForPath, parseSidecar, placeComments, sidecarPathFor, type Sidecar, type SidecarEntry } from "@cairn-comments/core";
 import { decodeExact, readSidecar, writeSidecar } from "./files.js";
-import { indexBlobs, managedFiles, stage, stagedFiles, toRepoPath, trackedFiles } from "./git.js";
+import { indexBlobs, managedFiles, stage, stagedFiles, stagedRenames, toRepoPath, trackedFiles } from "./git.js";
 
 export type Problem =
   /** A sigil comment that reached the index: a clone without the filter, or a failed `clean`. */
@@ -57,55 +57,20 @@ export async function check(root: string, options: CheckOptions): Promise<CheckR
     for (const f of stagedFiles(root, "ACMD")) if (isSidecarPath(f)) sidecars.add(f);
     for (const f of managedFiles(root, stagedFiles(root, "D"))) sidecars.add(sidecarPathFor(f));
   }
+  const index = new Index(root, [...sources, ...sidecars, ...[...sidecars].map(sourceOf)]);
 
-  const blobs = indexBlobs(root, [...sources, ...sidecars, ...[...sidecars].map(sourceOf)]);
-  const textOf = (file: string) => {
-    const bytes = blobs.get(file);
-    return bytes && decodeExact(bytes);
-  };
-  const sidecarIn = (file: string): Sidecar => parseSidecar(blobs.get(file)?.toString("utf8") ?? "");
-
-  const problems: Problem[] = [];
-  for (const file of sources) {
-    const spec = languageForPath(file);
-    const text = textOf(file);
-    if (!spec || text === undefined) continue;
-    for (const m of await findMarkers(spec, text)) {
-      problems.push({ kind: "expanded", file, line: lineAt(text, m.start), id: m.id, text: (m.text ?? "").split("\n")[0]! });
-    }
-  }
-
+  const problems: Problem[] = await leaks(index, sources);
   const fixes: Fix[] = [];
-  const gone = [...sidecars].filter((s) => blobs.has(s) && !blobs.has(sourceOf(s)));
+  const gone = [...sidecars].filter((s) => index.has(s) && !index.has(sourceOf(s)));
   if (gone.length) {
-    // A staged rename's new half is a staged addition; outside a commit, any file without a sidecar.
-    const indexed = new Set(tracked);
-    const candidates = managedFiles(root, options.staged ? stagedFiles(root, "A") : tracked).filter((f) => !indexed.has(sidecarPathFor(f)));
-    for (const [f, b] of indexBlobs(root, candidates.filter((f) => !blobs.has(f)))) blobs.set(f, b);
-    const claimed = new Set<string>();
-    for (const sidecar of gone) {
-      const entries = sidecarIn(sidecar).entries;
-      const targets = await placesIn(sourceOf(sidecar), entries, candidates, textOf);
-      const target = targets.length === 1 && !claimed.has(targets[0]!) ? targets[0] : undefined;
-      if (target) claimed.add(target);
-      for (const { id } of entries) {
-        if (target) fixes.push({ kind: "relocated", id, from: sidecar, to: sidecarPathFor(target) });
-        else if (!targets.length) fixes.push({ kind: "pruned", id, from: sidecar });
-        else problems.push({ kind: "missing-source", file: sidecar, id, source: sourceOf(sidecar), hint: `its comments place in more than one file: ${targets.join(", ")}` });
-      }
-    }
+    const found = await followGoneSources(root, index, gone, tracked, options.staged);
+    problems.push(...found.problems);
+    fixes.push(...found.fixes);
   }
-
   if (options.orphans || options.prune) {
-    for (const sidecar of sidecars) {
-      const text = textOf(sourceOf(sidecar));
-      if (!blobs.has(sidecar) || text === undefined) continue;
-      const entries = sidecarIn(sidecar).entries;
-      for (const id of (await placeComments(sourceOf(sidecar), text, { preamble: "", entries })).unplaced) {
-        const entry = entries.find((e) => e.id === id)!;
-        if (options.fix && options.prune) fixes.push({ kind: "pruned-unplaced", id, from: sidecar });
-        else problems.push({ kind: "unplaced", file: sidecar, id, source: sourceOf(sidecar), scope: entry.meta.get("scope"), text: entry.body.split("\n")[0]! });
-      }
+    for (const orphan of await unplacedEntries(index, sidecars)) {
+      if (options.fix && options.prune) fixes.push({ kind: "pruned-unplaced", id: orphan.id, from: orphan.file });
+      else problems.push(orphan);
     }
   }
 
@@ -117,23 +82,110 @@ export async function check(root: string, options: CheckOptions): Promise<CheckR
     }
     return { problems: sortProblems(problems), fixes: [] };
   }
-  await applyFixes(root, fixes, sidecarIn);
+  await applyFixes(root, fixes, (sidecar) => index.sidecar(sidecar));
   return { problems: sortProblems(problems), fixes };
 }
 
+/** Index blobs by path, loaded in batches as the check needs them. */
+class Index {
+  private readonly blobs: Map<string, Buffer>;
+
+  constructor(
+    private readonly root: string,
+    files: string[],
+  ) {
+    this.blobs = indexBlobs(root, files);
+  }
+
+  load(files: string[]): void {
+    for (const [f, b] of indexBlobs(this.root, files.filter((f) => !this.blobs.has(f)))) this.blobs.set(f, b);
+  }
+
+  has(file: string): boolean {
+    return this.blobs.has(file);
+  }
+
+  text(file: string): string | undefined {
+    const bytes = this.blobs.get(file);
+    return bytes && decodeExact(bytes);
+  }
+
+  sidecar(file: string): Sidecar {
+    return parseSidecar(this.blobs.get(file)?.toString("utf8") ?? "");
+  }
+}
+
+/** Sigil comments in the blobs of `sources`, with their text or not. */
+async function leaks(index: Index, sources: string[]): Promise<Problem[]> {
+  const found: Problem[] = [];
+  for (const file of sources) {
+    const spec = languageForPath(file);
+    const text = index.text(file);
+    if (!spec || text === undefined) continue;
+    for (const m of await findMarkers(spec, text)) {
+      found.push({ kind: "expanded", file, line: lineAt(text, m.start), id: m.id, text: (m.text ?? "").split("\n")[0]! });
+    }
+  }
+  return found;
+}
+
 /**
- * The candidates in `source`'s language where any of `entries` anchored to code places:
+ * Where each sidecar whose source left the index goes: to the file its source was renamed
+ * to, or nowhere when the source was deleted. In a commit, git's rename detection says
+ * where a source went; outside one, placement does.
+ */
+async function followGoneSources(root: string, index: Index, gone: string[], tracked: string[], staged: boolean): Promise<CheckReport> {
+  const renames = staged ? stagedRenames(root) : undefined;
+  const indexed = new Set(tracked);
+  const candidates = managedFiles(root, renames ? [...renames.values()] : tracked).filter((f) => !indexed.has(sidecarPathFor(f)));
+  index.load(candidates);
+  const report: CheckReport = { problems: [], fixes: [] };
+  const claimed = new Set<string>();
+  for (const sidecar of gone) {
+    const source = sourceOf(sidecar);
+    const entries = index.sidecar(sidecar).entries;
+    const targets = renames ? candidates.filter((c) => c === renames.get(source)) : await placesIn(source, entries, candidates, index);
+    const target = targets.length === 1 && !claimed.has(targets[0]!) ? targets[0] : undefined;
+    if (target) claimed.add(target);
+    for (const { id } of entries) {
+      if (target) report.fixes.push({ kind: "relocated", id, from: sidecar, to: sidecarPathFor(target) });
+      else if (!targets.length) report.fixes.push({ kind: "pruned", id, from: sidecar });
+      else report.problems.push({ kind: "missing-source", file: sidecar, id, source, hint: `its comments place in more than one file: ${targets.join(", ")}` });
+    }
+  }
+  return report;
+}
+
+/** Entries of `sidecars` that no longer place in their source's blob. */
+async function unplacedEntries(index: Index, sidecars: Iterable<string>): Promise<Extract<Problem, { kind: "unplaced" }>[]> {
+  const found: Extract<Problem, { kind: "unplaced" }>[] = [];
+  for (const sidecar of sidecars) {
+    const source = sourceOf(sidecar);
+    const text = index.text(source);
+    if (!index.has(sidecar) || text === undefined) continue;
+    const entries = index.sidecar(sidecar).entries;
+    for (const id of (await placeComments(source, text, { preamble: "", entries })).unplaced) {
+      const entry = entries.find((e) => e.id === id)!;
+      found.push({ kind: "unplaced", file: sidecar, id, source, scope: entry.meta.get("scope"), text: entry.body.split("\n")[0]! });
+    }
+  }
+  return found;
+}
+
+/**
+ * The candidates in `source`'s language where most of `entries` anchored to code place:
  * where a renamed source went. A comment kept by line number alone (`pos=row`) places in
  * any file, so it says nothing.
  */
-async function placesIn(source: string, entries: SidecarEntry[], candidates: string[], textOf: (file: string) => string | undefined): Promise<string[]> {
+async function placesIn(source: string, entries: SidecarEntry[], candidates: string[], index: Index): Promise<string[]> {
   const anchored = entries.filter((e) => e.meta.has("pos") && e.meta.get("pos") !== "row");
   if (!anchored.length) return [];
   const found: string[] = [];
   for (const candidate of candidates) {
-    const text = textOf(candidate);
+    const text = index.text(candidate);
     if (text === undefined || languageForPath(candidate) !== languageForPath(source)) continue;
-    if ((await placeComments(candidate, text, { preamble: "", entries: anchored })).placed.length) found.push(candidate);
+    const placed = (await placeComments(candidate, text, { preamble: "", entries: anchored })).placed.length;
+    if (placed * 2 > anchored.length) found.push(candidate);
   }
   return found;
 }

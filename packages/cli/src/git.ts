@@ -63,6 +63,14 @@ export function stagedFiles(root: string, filter = "ACM"): string[] {
   return nulSeparated(git(["diff", "--cached", "--name-only", "--no-renames", `--diff-filter=${filter}`, "-z"], { cwd: root }));
 }
 
+/** Staged renames as old path → new path, by git's own rename detection. */
+export function stagedRenames(root: string): Map<string, string> {
+  const fields = nulSeparated(git(["diff", "--cached", "--name-status", "-M", "--diff-filter=R", "-z"], { cwd: root }));
+  const renames = new Map<string, string>();
+  for (let i = 0; i + 2 < fields.length; i += 3) renames.set(fields[i + 1]!, fields[i + 2]!);
+  return renames;
+}
+
 /**
  * Blobs by path, read in one `git cat-file --batch`: staged ones, or those of `rev`. Paths
  * the index or `rev` lacks are absent.
