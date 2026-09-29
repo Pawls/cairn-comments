@@ -59,9 +59,9 @@ suite("scan review", () => {
     assert.deepEqual(listing(a), [["src/util.ts", [[2, null]]]], "a new scan brings the skipped comment back");
     assert.equal(await a.review.apply("keep"), "ignored 1 comment(s) in .agents/scan-ignore\n");
 
-    assert.match(read("src/app.py"), /^def load\(path\):\n {4}#~[0-9a-z]{4}\n {4}with open/);
+    assert.match(read("src/app.py"), /^def load\(path\):\n {4}with open/);
     assert.match(read("src/app.py"), /return data {2}# Updated to return the raw text\n/);
-    assert.match(read(".agents/comments/src/app.py.md"), /^## [0-9a-z]{4}\n<!-- anchor=[0-9a-f]{8} -->\nStep 1: Read the file contents\n$/);
+    assert.match(read(".agents/comments/src/app.py.md"), /^## [0-9a-z]{4}\n<!-- pos=before scope=load [^\n]*-->\nStep 1: Read the file contents\n$/);
     const ignore = read(".agents/scan-ignore");
     assert.match(ignore, /\nsrc\/app\.py\t[0-9a-f]{8}\tUpdated to return the raw text\n/);
     assert.match(ignore, /\nsrc\/util\.ts\t[0-9a-f]{8}\t🚀 Add the numbers\n/);
@@ -72,7 +72,7 @@ suite("scan review", () => {
     assert.equal(a.review.message(), "No likely AI comments found.");
   });
 
-  test("code actions demote an ordinary comment and promote it back to the same bytes", async () => {
+  test("a code action demotes an ordinary comment, and promote puts it back as the same bytes", async () => {
     await api();
     const uri = vscode.Uri.file(path.join(repo(), "src/app.py"));
     const document = await vscode.workspace.openTextDocument(uri);
@@ -91,16 +91,16 @@ suite("scan review", () => {
     const source = read("src/app.py");
     const sidecar = read(".agents/comments/src/app.py.md");
     assert.deepEqual(await titles(0), []);
-    assert.deepEqual(await titles(1), ["Promote AI comment to an ordinary comment"]);
-    assert.deepEqual(await titles(4), ["Demote comment to an AI comment (move it to the sidecar)"]);
+    assert.deepEqual(await titles(3), ["Demote comment to an AI comment (move it to the sidecar)"]);
 
-    assert.equal(await run((await actions(4))[0]!), "demoted 1 comment(s) in 1 file(s)\n");
+    assert.equal(await run((await actions(3))[0]!), "demoted 1 comment(s) in 1 file(s)\n");
     const demoted = read("src/app.py");
-    assert.match(demoted, /\n {4}#~[0-9a-z]{4}\n {4}return data/);
+    assert.match(demoted, /\n {8}data = f\.read\(\)\n {4}return data/);
     assert.match(read(".agents/comments/src/app.py.md"), /\nretry once; the proxy drops the first connection after idle\n$/);
     await settled(demoted);
 
-    assert.match(await run((await actions(4))[0]!), /^promoted [0-9a-z]{4} in src\/app\.py\n$/);
+    const id = [...read(".agents/comments/src/app.py.md").matchAll(/^## ([0-9a-z]{4})$/gm)].at(-1)![1]!;
+    assert.equal(await vscode.commands.executeCommand("cairn.promoteComment", { file: uri.fsPath, id }), `promoted ${id} in src/app.py\n`);
     assert.equal(read("src/app.py"), source);
     assert.equal(read(".agents/comments/src/app.py.md"), sidecar);
     await settled(source);
@@ -112,7 +112,8 @@ suite("scan review", () => {
     const file = path.join(repo(), "src/app.py");
     const original = readFileSync(file, "utf8");
     try {
-      writeFileSync(file, original.replace("with open(path) as f:", "with open(path, 'rb') as f:"));
+      // A change elsewhere in `load` leaves the comment on its statement, flagged.
+      writeFileSync(file, original.replace("return data  #", "return data.strip()  #"));
       const found = await a.staleComments();
       assert.ok(Array.isArray(found));
       assert.deepEqual(found.map((c) => [path.relative(repo(), c.file).split(path.sep).join("/"), c.line, c.text]), [
