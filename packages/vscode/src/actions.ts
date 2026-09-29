@@ -81,7 +81,7 @@ export class MarkerlessActions {
   }
 
   startEdit(comment: PlacedComment): void {
-    this.deps.view.setEditing(comment, true);
+    this.deps.view.setEditing(comment, true, this.entryOf(comment)?.body);
   }
 
   cancelEdit(comment: PlacedComment): void {

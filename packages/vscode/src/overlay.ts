@@ -84,10 +84,19 @@ export function provenanceLine(meta: ReadonlyMap<string, string>): string | unde
 export const STALE_NOTICE = "$(warning) **Possibly stale**: the code this comment describes changed after it was written.";
 
 /** Hover markdown: a stale notice when `stale`, the body, then the entry's provenance when it has any. */
+/**
+ * A comment body as Markdown that keeps its lines: Markdown joins a paragraph's lines with
+ * spaces, so each line followed by another ends in a hard break (two spaces).
+ */
+export function bodyMarkdown(body: string): string {
+  const lines = body.split("\n");
+  return lines.map((line, i) => (line && lines[i + 1] ? `${line}  ` : line)).join("\n");
+}
+
 export function hoverMarkdown(id: string, entry: SidecarEntry | undefined, sidecarPath: string, stale = false): string {
   const parts: string[] = [];
   if (stale) parts.push(STALE_NOTICE);
-  if (entry?.body) parts.push(entry.body);
+  if (entry?.body) parts.push(bodyMarkdown(entry.body));
   else parts.push(`$(warning) **${MISSING_LABEL}** for \`${id}\` in \`${sidecarPath}\``);
   const provenance = entry && provenanceLine(entry.meta);
   if (provenance) parts.push(`*${provenance}*`);

@@ -290,7 +290,10 @@ Verified in VS Code 1.138 on Windows with screenshots taken by the e2e suite
   label, amber and tagged `[stale?]` when stale.
 - **Comment threads (markerless).** Every placed comment is a thread of one comment on its
   code line (`createCommentController`), collapsed until its CodeLens or gutter icon opens
-  it; clicking the CodeLens again closes it. The `thread` style starts them expanded. The author line is the provenance, and the
+  it; clicking the CodeLens again closes it. The `thread` style starts them expanded. The
+  body is Markdown with each of its line breaks kept as a hard break (`bodyMarkdown`, the
+  hover too), since Markdown joins a paragraph's lines; the edit box shows the stored
+  lines. The author line is the provenance, and the
   buttons are Edit (in place), Confirm (stale comments only), Promote, and Delete. They act
   on the sidecar in process against the open buffer, through `confirmPlaced`,
   `promotePlaced` (`packages/core/src/owner.ts`), and a plain entry removal; Promote then

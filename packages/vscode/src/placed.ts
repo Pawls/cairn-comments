@@ -3,7 +3,7 @@
 // owner's edits until the next save or external change places them from anchors again.
 import * as vscode from "vscode";
 import { BRAND, STALE_TAG, placeComments, type CommentSite, type Sidecar, type SidecarEntry } from "@cairn-comments/core";
-import { labelFor, provenanceLine } from "./overlay.js";
+import { bodyMarkdown, labelFor, provenanceLine } from "./overlay.js";
 import { shiftSites } from "./tracking.js";
 
 /**
@@ -43,7 +43,7 @@ export class PlacedComment implements vscode.Comment {
     stale: boolean,
     readonly thread: () => vscode.CommentThread | undefined,
   ) {
-    this.body = new vscode.MarkdownString(entry.body);
+    this.body = new vscode.MarkdownString(bodyMarkdown(entry.body));
     this.author = { name: provenanceLine(entry.meta) ?? "AI comment" };
     this.label = stale ? "possibly stale" : undefined;
     this.contextValue = stale ? "stale" : "current";
@@ -311,12 +311,15 @@ export class PlacedView implements vscode.CodeLensProvider, vscode.Disposable {
     }
   }
 
-  /** Switches a thread comment between reading and editing, keeping the stored body to cancel back to. */
+  /**
+   * Switches a thread comment between reading and editing. `body`, the stored text, is what
+   * the edit box starts from, or what reading shows with its lines kept.
+   */
   setEditing(comment: PlacedComment, editing: boolean, body?: string): void {
     const thread = comment.thread();
     if (!thread) return;
     comment.mode = editing ? vscode.CommentMode.Editing : vscode.CommentMode.Preview;
-    if (body !== undefined) comment.body = new vscode.MarkdownString(body);
+    if (body !== undefined) comment.body = new vscode.MarkdownString(editing ? body : bodyMarkdown(body));
     thread.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
     thread.comments = [comment];
   }
