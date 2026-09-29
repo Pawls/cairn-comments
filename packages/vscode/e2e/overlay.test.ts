@@ -263,6 +263,28 @@ suite("overlay", () => {
     await waitFor("the lens to go", async () => (await api.refresh(editor)).placed!.lenses.length === 4);
   });
 
+  // Closing the source without saving once put the ordinary comment back on disk while the
+  // unseen sidecar buffer kept the entry: the comment showed twice.
+  test("Ctrl+Z after Promote makes it an AI comment again, saved in the source and its sidecar", async () => {
+    const { api, editor } = await shown("codelens");
+    const committed = { source: readFileSync(samplePath(), "utf8"), sidecar: sidecarText() };
+    await vscode.commands.executeCommand("cairn.promoteComment", comment(api, editor, "ewiw"));
+    await vscode.window.showTextDocument(editor.document);
+    await vscode.commands.executeCommand("undo");
+    await waitFor("the undo saved in both files", () => readFileSync(samplePath(), "utf8") === committed.source && sidecarText() === committed.sidecar);
+    assert.equal(editor.document.isDirty, false);
+    await waitFor("the comment back in the overlay", async () => (await api.refresh(editor)).placed!.lenses.length === 5);
+  });
+
+  test("Ctrl+Z after Delete saves the entry back into the sidecar", async () => {
+    const { api, editor } = await shown("codelens");
+    const committed = sidecarText();
+    await vscode.commands.executeCommand("cairn.deleteComment", comment(api, editor, "ewiw"));
+    await vscode.window.showTextDocument(editor.document);
+    await vscode.commands.executeCommand("undo");
+    await waitFor("the entry saved back", () => sidecarText() === committed);
+  });
+
   test("a string that is not a docstring demotes, and Promote writes it back as the same string", async () => {
     const { api } = await open();
     await setMode(api, "on");
