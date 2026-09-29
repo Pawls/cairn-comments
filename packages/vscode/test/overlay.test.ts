@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { findMarkers, languageForPath, parseSidecar, sync, type SidecarEntry } from "@cairn-comments/core";
-import { STALE_NOTICE, findSidecarRoot, hoverMarkdown, labelFor, planOverlay } from "../src/overlay.js";
+import { STALE_NOTICE, bodyMarkdown, findSidecarRoot, hoverMarkdown, labelFor, planOverlay } from "../src/overlay.js";
 
 const python = languageForPath("x.py")!;
 const entriesOf = (text: string) => new Map(parseSidecar(text).entries.map((e) => [e.id, e]));
@@ -89,6 +89,22 @@ describe("hoverMarkdown", () => {
 
   it("says where the missing body should live", () => {
     expect(hoverMarkdown("a1b2", undefined, ".agents/comments/x.py.md")).toContain("`.agents/comments/x.py.md`");
+  });
+
+  it("keeps each line of the body on its own line", () => {
+    const entry: SidecarEntry = { id: "a1b2", meta: new Map(), body: "First\nSecond" };
+    expect(hoverMarkdown("a1b2", entry, ".agents/comments/x.py.md")).toBe("First  \nSecond");
+  });
+});
+
+describe("bodyMarkdown", () => {
+  it("ends each line followed by another with a hard break, since Markdown would join them with a space", () => {
+    expect(bodyMarkdown("First\nSecond\nThird")).toBe("First  \nSecond  \nThird");
+  });
+
+  it("leaves paragraph breaks and a one-line body alone", () => {
+    expect(bodyMarkdown("one\n\ntwo\nthree")).toBe("one\n\ntwo  \nthree");
+    expect(bodyMarkdown("just one")).toBe("just one");
   });
 });
 

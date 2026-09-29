@@ -220,6 +220,26 @@ suite("markerless", () => {
     await waitFor("the lens to update", async () => (await api.refresh(editor)).placed!.lenses[3]!.title === "support refunds a closed order by hand");
   });
 
+  test("a thread shows each line of a body on its own line, and edits the lines stored", async () => {
+    const { api, editor } = await shown("codelens");
+    const lines = "support refunds a closed order by hand\nso there is nothing to reverse";
+    const edited = comment(api, editor, "ewiw");
+    await vscode.commands.executeCommand("cairn.editComment", edited);
+    edited.body = lines;
+    await vscode.commands.executeCommand("cairn.saveComment", edited);
+    assert.match(sidecarText(), /## ewiw\n<!--[^\n]*-->\nsupport refunds a closed order by hand\nso there is nothing to reverse\n/);
+    const rendered = () => (comment(api, editor, "ewiw").body as vscode.MarkdownString).value;
+    await waitFor("the thread to show both lines", async () => {
+      await api.refresh(editor);
+      return rendered() === "support refunds a closed order by hand  \nso there is nothing to reverse";
+    });
+
+    const refund = comment(api, editor, "ewiw");
+    await vscode.commands.executeCommand("cairn.editComment", refund);
+    assert.equal((refund.body as vscode.MarkdownString).value, lines, "the edit box holds the stored lines");
+    await vscode.commands.executeCommand("cairn.cancelCommentEdit", refund);
+  });
+
   test("Confirm clears a stale comment", async () => {
     const { api, editor } = await shown("codelens");
     await vscode.commands.executeCommand("cairn.confirmComment", comment(api, editor, "p7c3"));
