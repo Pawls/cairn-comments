@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { CLI_HOME_ENV } from "@cairn-comments/core";
 
 /** The published bundle, so every integration scenario runs what npm ships. */
 export const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../bundle/main.js");
@@ -22,12 +23,15 @@ export interface SandboxOptions {
 export class Sandbox {
   readonly dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "cairn-it-")));
   readonly eol: string;
+  /** Where `init` installs the CLI; never the developer's real one. */
+  readonly home: string;
   private readonly cliPath: string;
   private readonly env: NodeJS.ProcessEnv;
 
   constructor(options: SandboxOptions) {
     this.eol = options.autocrlf ? "\r\n" : "\n";
     this.cliPath = options.cli ?? CLI;
+    this.home = path.join(this.dir, "cli-home");
     const config = path.join(this.dir, "gitconfig");
     writeFileSync(
       config,
@@ -42,7 +46,7 @@ export class Sandbox {
     );
     const inherited = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("GIT_")));
     // XDG_CONFIG_HOME: git also reads $XDG_CONFIG_HOME/git/ignore, which GIT_CONFIG_GLOBAL does not cover.
-    this.env = { ...inherited, GIT_CONFIG_GLOBAL: config, GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0", XDG_CONFIG_HOME: this.dir };
+    this.env = { ...inherited, GIT_CONFIG_GLOBAL: config, GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0", XDG_CONFIG_HOME: this.dir, [CLI_HOME_ENV]: this.home };
   }
 
   path(...parts: string[]): string {
@@ -60,7 +64,12 @@ export class Sandbox {
   }
 
   cli(cwd: string, ...args: string[]): string {
-    return execFileSync(process.execPath, [this.cliPath, ...args], { cwd, env: this.env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    return this.cliFrom(this.cliPath, cwd, ...args);
+  }
+
+  /** Runs another copy of the CLI, such as an older bundle, in this sandbox. */
+  cliFrom(entry: string, cwd: string, ...args: string[]): string {
+    return execFileSync(process.execPath, [entry, ...args], { cwd, env: this.env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   }
 
   /** Runs the CLI without throwing, for commands whose exit code is the result. */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ReviewModel, cliFromCleanConfig, orphansOf, type ReviewComment } from "../src/review.js";
+import { ReviewModel, cliFromCleanConfig, orphansOf, recordedMain, type ReviewComment } from "../src/review.js";
 
 const comment = (file: string, line: number): ReviewComment => ({
   file,
@@ -96,6 +96,12 @@ describe("ReviewModel", () => {
 it("recovers the CLI invocation from the clean filter config", () => {
   expect(cliFromCleanConfig('node "C:/x/main.js" clean %f\n')).toBe('node "C:/x/main.js"');
   expect(cliFromCleanConfig("something else")).toBeUndefined();
+});
+
+it("recordedMain reads the script out of a recorded node command, and nothing else", () => {
+  expect(recordedMain('node "C:/x/main.js"')).toBe("C:/x/main.js");
+  expect(recordedMain("node /x/main.js")).toBe("/x/main.js");
+  expect(recordedMain("cairn")).toBeUndefined();
 });
 
 describe("orphansOf", () => {
