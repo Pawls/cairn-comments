@@ -1,0 +1,6 @@
+# Review PRs into main; the default-branch lookup has skipped PRs elsewhere.
+reviews:
+  auto_review:
+    enabled: true
+    base_branches:
+      - "main"

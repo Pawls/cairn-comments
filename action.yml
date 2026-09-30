@@ -1,0 +1,29 @@
+name: Cairn Comments check
+description: Fail when AI comments were committed in the code, or when a comment sidecar's source file is gone.
+author: Pawls
+branding:
+  icon: check-square
+  color: gray-dark
+inputs:
+  version:
+    description: npm version or range of the cairn CLI to run.
+    default: "0.1"
+  args:
+    description: Extra arguments for `cairn check`, such as `--stale` or file paths.
+    default: ""
+  node-version:
+    description: Node.js version to run the CLI with (22 or later).
+    default: "22"
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+    # check reads the index, which actions/checkout fills; no `cairn init` is needed.
+    - shell: bash
+      run: npx --yes "cairn-comments@${CAIRN_VERSION}" check ${CAIRN_ARGS}
+      env:
+        CAIRN_VERSION: ${{ inputs.version }}
+        CAIRN_ARGS: ${{ inputs.args }}
+        npm_config_ignore_scripts: "true"

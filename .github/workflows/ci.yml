@@ -1,0 +1,35 @@
+name: CI
+
+# Pull requests only: a push to a branch does not spend runner minutes, and the full
+# suite runs locally before each push. Windows is kept because the filter scenarios
+# depend on autocrlf; macOS and the packaging job run locally (AGENTS.md § Commands).
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # The grammars ship prebuilt WASM, so no install script is needed.
+      - run: npm ci --ignore-scripts
+      - run: npm run lint
+      # Builds, bundles, and runs every suite; the git scenarios cover autocrlf both ways.
+      - run: npm test

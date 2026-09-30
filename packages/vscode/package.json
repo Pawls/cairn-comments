@@ -1,0 +1,384 @@
+{
+  "name": "cairn-comments-vscode",
+  "displayName": "Cairn Comments: Hide AI Comments",
+  "description": "Stash the slop, keep the context. Keeps AI-written comments out of your committed code without losing them: agents still read them inline, and you see them as a toggleable overlay.",
+  "version": "0.1.0",
+  "publisher": "cairn-comments",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Pawls/cairn-comments.git",
+    "directory": "packages/vscode"
+  },
+  "type": "module",
+  "main": "./dist/extension.cjs",
+  "engines": {
+    "vscode": "^1.97.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "ai comments",
+    "hide ai comments",
+    "remove ai comments",
+    "ai slop",
+    "remove ai slop",
+    "deslop",
+    "hide comments",
+    "comments",
+    "comment overlay",
+    "agent",
+    "coding agent",
+    "claude code",
+    "codex",
+    "cursor",
+    "copilot",
+    "sidecar",
+    "git filter",
+    "clean code"
+  ],
+  "activationEvents": [
+    "workspaceContains:.agents/comments",
+    "onLanguage:python",
+    "onLanguage:typescript",
+    "onLanguage:typescriptreact",
+    "onLanguage:javascript",
+    "onLanguage:javascriptreact",
+    "onLanguage:csharp",
+    "onLanguage:java",
+    "onLanguage:kotlin"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "kotlin",
+        "aliases": [
+          "Kotlin"
+        ],
+        "extensions": [
+          ".kt",
+          ".kts"
+        ]
+      }
+    ],
+    "commands": [
+      {
+        "command": "cairn.toggleOverlay",
+        "title": "Toggle AI Comment Overlay",
+        "category": "Cairn Comments"
+      },
+      {
+        "command": "cairn.editComment",
+        "title": "Edit AI Comment",
+        "category": "Cairn Comments",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "cairn.confirmComment",
+        "title": "Confirm AI Comment Is Still Accurate",
+        "category": "Cairn Comments",
+        "icon": "$(check)"
+      },
+      {
+        "command": "cairn.promoteComment",
+        "title": "Promote AI Comment to an Ordinary Comment",
+        "category": "Cairn Comments",
+        "icon": "$(arrow-up)"
+      },
+      {
+        "command": "cairn.demoteComment",
+        "title": "Demote Comment to an AI Comment",
+        "category": "Cairn Comments"
+      },
+      {
+        "command": "cairn.deleteComment",
+        "title": "Delete AI Comment",
+        "category": "Cairn Comments",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "cairn.saveComment",
+        "title": "Save AI Comment",
+        "category": "Cairn Comments"
+      },
+      {
+        "command": "cairn.cancelCommentEdit",
+        "title": "Cancel",
+        "category": "Cairn Comments"
+      },
+      {
+        "command": "cairn.showComment",
+        "title": "Open or Close AI Comment Thread",
+        "category": "Cairn Comments"
+      },
+      {
+        "command": "cairn.refreshLists",
+        "title": "Refresh AI Comment Lists",
+        "category": "Cairn Comments",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "cairn.reviewStale",
+        "title": "Review Stale AI Comments",
+        "category": "Cairn Comments"
+      },
+      {
+        "command": "cairn.scan",
+        "title": "Scan for AI Comments",
+        "category": "Cairn Comments",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "cairn.applyReview",
+        "title": "Apply Review Decisions",
+        "category": "Cairn Comments",
+        "icon": "$(check)",
+        "enablement": "cairn.reviewHasDecisions"
+      },
+      {
+        "command": "cairn.markRestAsAi",
+        "title": "Apply, Marking Undecided Ones as AI Comments",
+        "category": "Cairn Comments",
+        "icon": "$(eye-closed)",
+        "enablement": "cairn.reviewHasComments"
+      },
+      {
+        "command": "cairn.keepRestAsOrdinary",
+        "title": "Apply, Keeping Undecided Ones as Ordinary Comments",
+        "category": "Cairn Comments",
+        "icon": "$(comment)",
+        "enablement": "cairn.reviewHasComments"
+      },
+      {
+        "command": "cairn.review.markAi",
+        "title": "Mark as AI Comment",
+        "category": "Cairn Comments",
+        "icon": "$(eye-closed)"
+      },
+      {
+        "command": "cairn.review.keep",
+        "title": "Keep as Ordinary Comment",
+        "category": "Cairn Comments",
+        "icon": "$(comment)"
+      },
+      {
+        "command": "cairn.review.skip",
+        "title": "Skip Until the Next Scan",
+        "category": "Cairn Comments",
+        "icon": "$(close)"
+      },
+      {
+        "command": "cairn.setup",
+        "title": "Set Up in This Repository",
+        "category": "Cairn Comments"
+      }
+    ],
+    "views": {
+      "cairn": [
+        {
+          "id": "cairn.review",
+          "name": "Review"
+        },
+        {
+          "id": "cairn.stale",
+          "name": "Possibly Stale"
+        },
+        {
+          "id": "cairn.orphans",
+          "name": "Orphaned"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "cairn.toggleOverlay",
+        "key": "ctrl+alt+`",
+        "mac": "cmd+alt+`"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "cairn.scan",
+          "when": "view == cairn.review",
+          "group": "navigation@1"
+        },
+        {
+          "command": "cairn.applyReview",
+          "when": "view == cairn.review",
+          "group": "navigation@2"
+        },
+        {
+          "command": "cairn.markRestAsAi",
+          "when": "view == cairn.review",
+          "group": "navigation@3"
+        },
+        {
+          "command": "cairn.keepRestAsOrdinary",
+          "when": "view == cairn.review",
+          "group": "navigation@4"
+        },
+        {
+          "command": "cairn.refreshLists",
+          "when": "view == cairn.stale || view == cairn.orphans",
+          "group": "navigation@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "cairn.editComment",
+          "when": "editorLangId == python || editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact || editorLangId == csharp || editorLangId == java || editorLangId == kotlin"
+        },
+        {
+          "command": "cairn.confirmComment",
+          "when": "editorLangId == python || editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact || editorLangId == csharp || editorLangId == java || editorLangId == kotlin"
+        },
+        {
+          "command": "cairn.promoteComment",
+          "when": "editorLangId == python || editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact || editorLangId == csharp || editorLangId == java || editorLangId == kotlin"
+        },
+        {
+          "command": "cairn.demoteComment",
+          "when": "editorLangId == python || editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact || editorLangId == csharp || editorLangId == java || editorLangId == kotlin"
+        },
+        {
+          "command": "cairn.deleteComment",
+          "when": "editorLangId == python || editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact || editorLangId == csharp || editorLangId == java || editorLangId == kotlin"
+        },
+        {
+          "command": "cairn.saveComment",
+          "when": "false"
+        },
+        {
+          "command": "cairn.cancelCommentEdit",
+          "when": "false"
+        },
+        {
+          "command": "cairn.showComment",
+          "when": "false"
+        },
+        {
+          "command": "cairn.review.markAi",
+          "when": "false"
+        },
+        {
+          "command": "cairn.review.keep",
+          "when": "false"
+        },
+        {
+          "command": "cairn.review.skip",
+          "when": "false"
+        }
+      ],
+      "comments/comment/title": [
+        {
+          "command": "cairn.editComment",
+          "when": "commentController == cairn.comments",
+          "group": "inline@1"
+        },
+        {
+          "command": "cairn.confirmComment",
+          "when": "commentController == cairn.comments && comment == stale",
+          "group": "inline@2"
+        },
+        {
+          "command": "cairn.promoteComment",
+          "when": "commentController == cairn.comments",
+          "group": "inline@3"
+        },
+        {
+          "command": "cairn.deleteComment",
+          "when": "commentController == cairn.comments",
+          "group": "inline@4"
+        }
+      ],
+      "comments/comment/context": [
+        {
+          "command": "cairn.saveComment",
+          "when": "commentController == cairn.comments",
+          "group": "inline@1"
+        },
+        {
+          "command": "cairn.cancelCommentEdit",
+          "when": "commentController == cairn.comments",
+          "group": "inline@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "cairn.review.markAi",
+          "when": "view == cairn.review",
+          "group": "inline@1"
+        },
+        {
+          "command": "cairn.review.keep",
+          "when": "view == cairn.review",
+          "group": "inline@2"
+        },
+        {
+          "command": "cairn.review.skip",
+          "when": "view == cairn.review",
+          "group": "inline@3"
+        }
+      ]
+    },
+    "configurationDefaults": {
+      "editor.pasteAs.preferences": [
+        "text.cairn"
+      ]
+    },
+    "configuration": {
+      "title": "Cairn Comments",
+      "properties": {
+        "cairn.overlayColor": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "CSS color for overlay text. Empty uses the theme's `editorCodeLens.foreground`; no theme color exposes the comment token color to decorations."
+        },
+        "cairn.ownLineStyle": {
+          "type": "string",
+          "enum": [
+            "codelens",
+            "thread",
+            "eol"
+          ],
+          "default": "codelens",
+          "markdownDescription": "How a comment on its own line renders: a CodeLens above the code line, an expanded comment thread, or a label at the end of the line above."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "cairn",
+          "title": "AI Comments",
+          "icon": "media/cairn.svg"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "cairn.review",
+        "when": "cairn.setupNeeded",
+        "contents": "This repository is not set up for Cairn Comments yet. Setup adds a git filter, git hooks, and lines in .gitattributes, and shows you the full list before it changes anything.\n[Set Up Cairn Comments in This Repository](command:cairn.setup)"
+      }
+    ]
+  },
+  "scripts": {
+    "bundle": "node esbuild.mjs",
+    "e2e": "node out/e2e/run.js",
+    "native": "node out/native/run.js",
+    "package": "node -e \"require('fs').copyFileSync('../../LICENSE', 'LICENSE')\" && vsce package --no-dependencies -o cairn-comments.vsix"
+  },
+  "devDependencies": {
+    "@cairn-comments/core": "0.0.0",
+    "@types/mocha": "^10.0.10",
+    "@types/vscode": "1.97.0",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^4.0.0",
+    "esbuild": "^0.28.2",
+    "mocha": "^12.0.2",
+    "playwright": "^1.63.0"
+  }
+}

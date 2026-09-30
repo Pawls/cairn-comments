@@ -1,0 +1,17 @@
+{
+  "session_id": "019a6f2c-7d1e-7b30-9c4a-3f5d2e8b1a60",
+  "transcript_path": null,
+  "cwd": "{{root}}",
+  "hook_event_name": "PostToolUse",
+  "model": "gpt-5.5-codex",
+  "permission_mode": "workspace-write",
+  "turn_id": "019a6f2c-9e02-7c11-8d4b-6a2e1f0c3b75",
+  "tool_name": "apply_patch",
+  "tool_use_id": "call_Qm3vK8pX2tN7",
+  "tool_input": {
+    "command": "*** Begin Patch\n*** Update File: src/app.py\n@@\n def total(items):\n+    # Prices are already tax-inclusive\n     return sum(i.price for i in items)\n*** End Patch\n"
+  },
+  "tool_response": {
+    "output": "Success. Updated the following files:\nM src/app.py\n"
+  }
+}

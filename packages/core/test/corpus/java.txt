@@ -1,0 +1,125 @@
+Labeled scan corpus for Java; format in python.txt.
+
+=== ai
+public void run() {
+    // Step 3: Persist the results to the database
+    repository.saveAll(results);
+}
+
+=== ai
+public List<String> names() {
+    // Create a new list to store the names
+    List<String> names = new ArrayList<>();
+    return names;
+}
+
+=== ai
+public void close() {
+    // Close the connection
+    connection.close();
+}
+
+=== ai
+public void send(Message m) {
+    // Updated to use the new Kafka producer API
+    producer.send(new ProducerRecord<>(topic, m));
+}
+
+=== ai
+public void handle(Event e) {
+    // ⚡ Fast path for cached events
+    if (cache.contains(e)) return;
+}
+
+=== ai
+public int parse(String s) {
+    // This method parses the string and returns an integer
+    return Integer.parseInt(s);
+}
+
+=== ai
+public void init() {
+    // You might need to adjust the pool size depending on your workload
+    executor = Executors.newFixedThreadPool(4);
+}
+
+=== ai
+public void start() {
+    // Let's start by initializing the scheduler
+    scheduler.start();
+}
+
+=== human
+public void write(byte[] b) {
+    // FileChannel.force is expensive; the WAL fsyncs in batches instead
+    channel.write(ByteBuffer.wrap(b));
+}
+
+=== human
+public int size() {
+    // not synchronized: callers only use this for metrics
+    return count;
+}
+
+=== human
+public void register(Listener l) {
+    // weak refs so listeners don't pin activities in memory (Android)
+    listeners.add(new WeakReference<>(l));
+}
+
+=== human
+public String key(String s) {
+    // Locale.ROOT, or Turkish users get a dotless i
+    return s.toLowerCase(Locale.ROOT);
+}
+
+=== human
+public void await() throws InterruptedException {
+    // spurious wakeups are allowed by the JLS, hence the loop
+    while (!ready) lock.wait();
+}
+
+=== protected doc
+/**
+ * Returns the number of elements.
+ */
+public int size() { return n; }
+
+=== protected pragma
+@SuppressWarnings("unchecked") // CHECKSTYLE:OFF
+public void f() {}
+
+=== protected pragma
+//noinspection ResultOfMethodCallIgnored
+file.delete();
+
+=== protected license
+/*
+ * Copyright (C) 2019 The Example Project Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ */
+package com.example;
+
+=== protected ticketed-todo
+public void migrate() {
+    // TODO JIRA-1234: This is a placeholder until the new API ships
+}
+
+=== protected commented-out-code
+public void run() {
+    // System.out.println("x = " + x);
+    go();
+}
+
+=== human
+public void load() {
+    // Load the properties file
+    props.load(new FileInputStream(file));
+}
+
+=== human
+public void merge(Node other) {
+    // Note that this does not copy the children, only the attributes
+    attributes.putAll(other.attributes);
+}

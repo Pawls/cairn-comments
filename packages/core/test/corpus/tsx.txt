@@ -1,0 +1,42 @@
+Labeled scan corpus for TSX; format in python.txt.
+
+=== ai
+export function List({ items }: Props) {
+  // Map over the items and render a list item for each one
+  return <ul>{items.map((i) => <li key={i.id}>{i.name}</li>)}</ul>;
+}
+
+=== ai
+export function Button() {
+  // 🎨 Styled button component
+  return <button className="btn" />;
+}
+
+=== ai
+export function Form() {
+  // Now we handle the form submission
+  const onSubmit = (e: FormEvent) => e.preventDefault();
+  return <form onSubmit={onSubmit} />;
+}
+
+=== human
+export function Wrapper({ children }: Props) {
+  // hack: the modal library portals into body and loses our theme
+  return <ThemeProvider theme={theme}>{children}</ThemeProvider>;
+}
+
+=== human
+export function Avatar({ src }: Props) {
+  // alt is empty on purpose: the name is right next to it
+  return <img src={src} alt="" />;
+}
+
+=== protected unconvertible
+export function Page() {
+  return (
+    <main>
+      {/* Render the header component */}
+      <Header />
+    </main>
+  );
+}

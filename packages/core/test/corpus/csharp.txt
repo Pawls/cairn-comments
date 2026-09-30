@@ -1,0 +1,147 @@
+Labeled scan corpus for C#; format in python.txt.
+
+=== ai
+public void Run()
+{
+    // Step 1: Load the configuration from appsettings.json
+    var config = LoadConfig();
+}
+
+=== ai
+public int Count()
+{
+    // Return the count
+    return _items.Count;
+}
+
+=== ai
+public void Save(Order order)
+{
+    // Updated to use the async repository method
+    _repo.SaveAsync(order).Wait();
+}
+
+=== ai
+public void Log(string msg)
+{
+    // 📝 Write the message to the log
+    _logger.LogInformation(msg);
+}
+
+=== ai
+public void Process(IEnumerable<Item> items)
+{
+    // Now we loop through each item and process it
+    foreach (var item in items) Handle(item);
+}
+
+=== ai
+public User Get(int id)
+{
+    // This method retrieves the user by their ID
+    return _db.Users.Find(id);
+}
+
+=== ai
+public void Connect()
+{
+    // In a real-world scenario, you would read this from a secure vault
+    var password = "secret";
+}
+
+=== ai
+public void Validate(Request r)
+{
+    // Check if the request is null
+    if (r == null) throw new ArgumentNullException(nameof(r));
+}
+
+=== ai
+public void Start()
+{
+    // Fixed the bug where the timer started twice
+    if (_timer.Enabled) return;
+    _timer.Start();
+}
+
+=== human
+public void Flush()
+{
+    // The stream is owned by the caller; don't dispose it here.
+    _writer.Flush();
+}
+
+=== human
+public int Hash(string s)
+{
+    // string.GetHashCode is randomized per process, so it can't be persisted
+    return StableHash(s);
+}
+
+=== human
+public void Wait()
+{
+    // ConfigureAwait(false) matters here: this is called from the UI thread in the WPF host
+    WaitAsync().ConfigureAwait(false).GetAwaiter().GetResult();
+}
+
+=== human
+public void Dispose()
+{
+    // GC.SuppressFinalize is safe even though we have no finalizer; the analyzer wants it
+    GC.SuppressFinalize(this);
+}
+
+=== human
+public string Key(User u)
+{
+    // for now, tenant ids are unique across regions; revisit if we shard by region
+    return u.TenantId + ":" + u.Id;
+}
+
+=== human
+public void Update()
+{
+    // Unity calls this every frame; avoid allocations
+    _velocity += _gravity * Time.deltaTime;
+}
+
+=== protected doc
+/// <summary>
+/// Returns the order total including tax.
+/// </summary>
+public decimal Total() => 0;
+
+=== protected pragma
+// ReSharper disable once InconsistentNaming
+public int m_count;
+
+=== protected pragma
+[SuppressMessage("Style", "IDE0060")] // NOSONAR
+public void F(int unused) {}
+
+=== protected license
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+namespace Foo;
+
+=== protected commented-out-code
+public void Run()
+{
+    // Console.WriteLine($"debug {value}");
+    Go();
+}
+
+=== human
+public void Close()
+{
+    // Make sure we flush before the handle goes away; the OS won't do it for us.
+    _stream.Flush();
+}
+
+=== human
+public void Parse(string s)
+{
+    // Handle case where the header has no value, just a name
+    if (!s.Contains(':')) { _name = s; return; }
+}

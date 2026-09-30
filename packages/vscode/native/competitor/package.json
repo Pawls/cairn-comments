@@ -1,0 +1,18 @@
+{
+  "name": "paste-competitor",
+  "displayName": "Paste competitor (native tests)",
+  "description": "Registers a Python paste provider after Cairn Comments, as Pylance's Paste and Reindent does.",
+  "version": "0.0.0",
+  "publisher": "cairn-comments-tests",
+  "private": true,
+  "main": "./extension.cjs",
+  "engines": {
+    "vscode": "^1.97.0"
+  },
+  "activationEvents": [
+    "onLanguage:python"
+  ],
+  "extensionDependencies": [
+    "cairn-comments.cairn-comments-vscode"
+  ]
+}

@@ -1,0 +1,338 @@
+Labeled scan corpus for TypeScript; format in python.txt.
+
+=== ai
+export async function load(id: string) {
+  // Step 2: Fetch the user from the database
+  const user = await db.users.find(id);
+  return user;
+}
+
+=== ai
+export function useCount() {
+  // Initialize state for the counter
+  const [count, setCount] = useState(0);
+}
+
+=== ai
+export function sum(values: number[]) {
+  // Loop through each value and add it to the total
+  let total = 0;
+  for (const v of values) total += v;
+  return total;
+}
+
+=== ai
+export function parse(input: string) {
+  // Updated to handle the new response format
+  return JSON.parse(input).data;
+}
+
+=== ai
+export function save(item: Item) {
+  // ✨ Persist the item
+  store.put(item);
+}
+
+=== ai
+export function mount(el: HTMLElement) {
+  // This ensures the listener is only attached once
+  if (!el.dataset.bound) el.addEventListener("click", onClick);
+}
+
+=== ai
+export function login(user: User) {
+  // In a real app, you would validate the token on the server
+  return { token: "fake-token", user };
+}
+
+=== ai
+export function render(items: Item[]) {
+  // Now we map over the items and render each one
+  return items.map(renderItem);
+}
+
+=== ai
+export function init() {
+  // Let's set up the event listeners
+  window.addEventListener("resize", onResize);
+}
+
+=== ai
+export class Cache {
+  // NEW: Added TTL support
+  private ttl = 60_000;
+}
+
+=== ai
+export function request(url: string) {
+  // Fixed: now correctly handles 404 responses
+  return fetch(url).then(checkStatus);
+}
+
+=== ai
+export function format(date: Date) {
+  // Note that this uses the user's local timezone
+  return date.toLocaleDateString();
+}
+
+=== ai
+export function retry<T>(fn: () => Promise<T>) {
+  // You might want to adjust the retry count based on your needs
+  const maxRetries = 3;
+}
+
+=== ai
+export function getConfig() {
+  // Return the config object
+  return config;
+}
+
+=== ai
+export function validate(form: Form) {
+  // Check if the email is valid
+  if (!isEmail(form.email)) return false;
+  return true;
+}
+
+=== ai
+export function connect() {
+  // 🔥 Hot path: open the socket
+  socket.open();
+}
+
+=== ai
+export function handle(err: unknown) {
+  // Handle the case where the error is not an Error instance
+  if (!(err instanceof Error)) return String(err);
+  return err.message;
+}
+
+=== ai
+export function build(opts: Options) {
+  // This function builds the query string from the options object
+  return new URLSearchParams(opts).toString();
+}
+
+=== ai
+export function start() {
+  // Placeholder for the actual implementation
+  throw new Error("not implemented");
+}
+
+=== ai
+export function debounce(fn: () => void, ms: number) {
+  // First, we clear any existing timer
+  clearTimeout(timer);
+  timer = setTimeout(fn, ms);
+}
+
+=== ai
+export function upsert(row: Row) {
+  // Changed from insert to upsert so duplicates no longer throw
+  return db.upsert(row);
+}
+
+=== ai
+export function total(cart: Cart) {
+  // Calculate the total price
+  const totalPrice = cart.items.reduce((s, i) => s + i.price, 0);
+  return totalPrice;
+}
+
+=== ai
+export function setup() {
+  // IMPORTANT: This must be called before any other function
+  registerGlobals();
+}
+
+=== ai
+export function flatten(tree: Node[]) {
+  // For simplicity, we assume the tree is not too deep for recursion
+  return tree.flatMap((n) => [n, ...flatten(n.children)]);
+}
+
+=== ai
+export function save(data: Data) {
+  const json = JSON.stringify(data); // Convert data to JSON string
+  localStorage.setItem(KEY, json);
+}
+
+=== human
+export function parseRange(header: string) {
+  // RFC 7233 allows multiple ranges; browsers only ever send one
+  const [unit, range] = header.split("=");
+}
+
+=== human
+export function hash(s: string) {
+  // FNV-1a; good enough for bucketing, not for anything adversarial
+  let h = 0x811c9dc5;
+}
+
+=== human
+export function track(event: string) {
+  // Note: the analytics SDK batches on its own, don't await this
+  sdk.track(event);
+}
+
+=== human
+export function toPx(n: number) {
+  // Safari rounds subpixel widths differently, so floor explicitly
+  return `${Math.floor(n)}px`;
+}
+
+=== human
+export function readFlags() {
+  // for now flags come from the URL; the settings page lands in Q3
+  return new URLSearchParams(location.search);
+}
+
+=== human
+export function id() {
+  // Monotonic within a tab; collisions across tabs are fine for our use
+  return ++counter;
+}
+
+=== human
+export function retry(fn: () => Promise<void>) {
+  // Two attempts only: the upstream is idempotent but rate limited
+  return fn().catch(() => fn());
+}
+
+=== human
+export function compare(a: string, b: string) {
+  // localeCompare is 10x slower and we only sort ASCII keys
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+=== human
+const MAX_SIZE = 1 << 20; // fixed-size ring buffer, 1 MiB
+
+=== human
+export function wire(app: App) {
+  // Order matters: auth must run before the rate limiter reads the user id.
+  app.use(auth);
+  app.use(rateLimit);
+}
+
+=== human
+export function dispose() {
+  // Called twice in dev because of StrictMode; must be idempotent
+  if (!this.handle) return;
+}
+
+=== human
+export function measure(el: Element) {
+  // getBoundingClientRect forces layout; batch reads before writes
+  const r = el.getBoundingClientRect();
+}
+
+=== human
+export function normalize(path: string) {
+  // Windows gives us backslashes from the file picker
+  return path.replaceAll("\\", "/");
+}
+
+=== human
+export function legacy() {
+  // Deprecated since v4, removed in v5. Kept until the mobile app migrates.
+  return oldApi();
+}
+
+=== human
+export function pick(list: string[]) {
+  // Then the last one wins, which is what the CLI flag parser does too
+  return list[list.length - 1];
+}
+
+=== human
+export function encode(s: string) {
+  // encodeURIComponent leaves !'()* alone; the signing spec needs them escaped
+  return encodeURIComponent(s).replace(/[!'()*]/g, escapeChar);
+}
+
+=== human
+export function timeout() {
+  // matches the nginx proxy_read_timeout, keep them in sync
+  return 60_000;
+}
+
+=== human
+export function key(user: User) {
+  // lowercase because the old accounts table stored mixed-case emails
+  return user.email.toLowerCase();
+}
+
+=== human
+export function poll() {
+  // setInterval drifts under load; setTimeout chains don't stack up
+  setTimeout(tick, INTERVAL);
+}
+
+=== protected pragma
+// @ts-expect-error the upstream types are wrong about this overload
+const x = legacyCall(1, 2);
+
+=== protected pragma
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function f(x: any) {}
+
+=== protected pragma
+/// <reference types="vite/client" />
+export {};
+
+=== protected pragma
+// prettier-ignore
+const matrix = [1, 0, 0, 1];
+
+=== protected doc
+/**
+ * Returns the user's display name, falling back to their email.
+ */
+export function displayName(user: User) {}
+
+=== protected license
+// Copyright 2023 Example Inc. All rights reserved.
+// Use of this source code is governed by an MIT license.
+export const VERSION = "1.0.0";
+
+=== protected ticketed-todo
+export function migrate() {
+  // TODO(#482): Step 1 of the migration, remove after the backfill
+}
+
+=== protected commented-out-code
+export function main() {
+  // console.log("state", state);
+  run();
+}
+
+=== protected commented-out-code
+export function main() {
+  // const cache = new Map<string, number>();
+  run();
+}
+
+=== human
+export function traverse(selectors: Selector[]) {
+  // sort all selectors by specificity for prioritizing call order
+  selectors.sort(compareSpecificity);
+}
+
+=== human
+export function applyDirectives(problems: Problem[]) {
+  // Calculate where it starts in the source code text
+  const start = sourceCode.getIndexFromLoc(loc);
+}
+
+=== human
+export function normalize(options: Options) {
+  // Normalize language options if necessary
+  if (options.language) normalizeLanguageOptions(options);
+}
+
+=== human
+export function scan(tokens: Token[]) {
+  // Note that the tokenizer already merged adjacent template spans
+  for (const t of tokens) visit(t);
+}

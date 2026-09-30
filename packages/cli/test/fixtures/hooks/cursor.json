@@ -1,0 +1,18 @@
+{
+  "conversation_id": "5c1d9a4e-2b7f-4e61-a3d8-0f9e6b2c7a14",
+  "generation_id": "b8e2f0a1-6c3d-4f95-9e7a-1d4c8b2f6e03",
+  "model": "claude-sonnet-5",
+  "model_id": "claude-sonnet-5",
+  "hook_event_name": "afterFileEdit",
+  "cursor_version": "2.4.0",
+  "workspace_roots": ["{{root}}"],
+  "user_email": null,
+  "transcript_path": null,
+  "file_path": "{{root}}/src/app.py",
+  "edits": [
+    {
+      "old_string": "def total(items):\n    return sum(i.price for i in items)",
+      "new_string": "def total(items):\n    # Prices are already tax-inclusive\n    return sum(i.price for i in items)"
+    }
+  ]
+}
