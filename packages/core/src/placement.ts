@@ -643,10 +643,10 @@ function resolve(layout: Layout, entries: readonly SidecarEntry[]): Resolved {
 
   // A line holds one trailing comment: any other, or one after a comment already there, goes above it.
   for (const [row, items] of trailing) {
-    if (row >= lines.length) continue;
-    const keep = layout.endsWithComment(row) ? [] : items.slice(0, 1);
+    const pastEnd = row >= lines.length;
+    const keep = pastEnd || layout.endsWithComment(row) ? [] : items.slice(0, 1);
     for (const extra of items.slice(keep.length)) {
-      const indent = rows[row]!.indent;
+      const indent = rows[row]?.indent ?? "";
       const text = extra.text.trimStart();
       own.push({ id: extra.id, row, seq: Number.MAX_SAFE_INTEGER, order: own.length, lines: [indent + text] });
     }
@@ -878,7 +878,9 @@ export async function recordComments(path: string, source: string, sidecar: Side
     if (setPlacement(entry, placement)) sidecarChanged = true;
     if (m.staleTag) {
       const tagStart = m.start + spec.lineSigil.length + id.length + 1;
-      splices.push({ start: tagStart, end: tagStart + STALE_TAG.length + 1, text: "" });
+      const tagEnd = tagStart + STALE_TAG.length;
+      const spaceAfter = source[tagEnd] === " ";
+      splices.push({ start: spaceAfter ? tagStart : tagStart - 1, end: spaceAfter ? tagEnd + 1 : tagEnd, text: "" });
     }
   });
 
