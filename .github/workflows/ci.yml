@@ -1,55 +1,29 @@
 name: CI
 
+# Pull requests only: a push to a branch does not spend runner minutes, and the full
+# suite runs locally before each push. Windows is kept because the filter scenarios
+# depend on autocrlf; macOS and the packaging job run locally (AGENTS.md § Commands).
 on:
-  push:
   pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        node: [22, 24]
+        os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node }}
+          node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run lint
       # Builds, bundles, and runs every suite; the git scenarios cover autocrlf both ways.
       - run: npm test
-
-  vscode:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      # The e2e runner starts its own xvfb-run on Linux.
-      - run: npm run test:vscode
-
-  package:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run build
-      - run: npm pack --pack-destination . -w packages/cli
-      - run: npm run package -w packages/vscode
-      - uses: actions/upload-artifact@v4
-        with:
-          name: packages
-          path: |
-            cairn-comments-*.tgz
-            packages/vscode/cairn-comments.vsix

@@ -787,7 +787,7 @@ heading and the second branch's `<!-- ... -->` metadata line read back as body t
   `packages/cli/test/package.test.ts` packs the CLI, installs the tarball offline into an
   empty project, and runs the quickstart with it. The e2e suite also passes against an
   unpacked `.vsix` (`CAIRN_E2E_EXTENSION`), which holds no `node_modules`.
-- **Node 22 or later.** Node 20 left maintenance in April 2026; CI tests 22 and 24.
+- **Node 22 or later.** Node 20 left maintenance in April 2026; CI tests 22 on Linux and Windows; 24 is checked locally.
 - **The recorded CLI lives in a home the tool owns** (decided 2026-09-26, built in v1 A17).
   `init` writes an absolute `node "<path>/main.js"` into the filter, merge driver, and
   hooks, and git runs it in every initialized repository whether or not an editor is
