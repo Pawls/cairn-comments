@@ -242,3 +242,32 @@ describe("a rename in a smudged agent worktree", () => {
     expect(result.stderr).not.toContain("removed");
   });
 });
+
+describe("deleting the last comment of a file in an agent worktree", () => {
+  let box: Sandbox;
+  let agent: string;
+
+  beforeAll(() => {
+    box = new Sandbox({ autocrlf: false });
+    const main = box.path("main");
+    box.write(box.path("main", "a.py"), SOURCE);
+    box.git(box.dir, "init", "-q", "main");
+    box.cli(main, "init");
+    box.git(main, "add", "-A");
+    box.git(main, "commit", "-qm", "base");
+    agent = box.path("agent");
+    box.cli(main, "worktree", "add", agent, "-b", "agent");
+  });
+  afterAll(() => box.dispose());
+
+  it("commits the sidecar's removal along with it", () => {
+    // The code changes too: without it the stripped file equals HEAD's and there is nothing to commit.
+    box.write(box.path("agent", "a.py"), "def settle(order):\n    ledger.write(order)\n");
+    box.git(agent, "add", "a.py");
+    const result = box.gitResult(agent, "commit", "-qm", "drop the note");
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+    expect(box.gitResult(agent, "cat-file", "-e", `HEAD:${sidecar("a.py")}`).status).not.toBe(0);
+    expect(box.status(agent)).toBe("");
+  });
+});
