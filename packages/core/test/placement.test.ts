@@ -652,3 +652,25 @@ describe("round trip property", () => {
     );
   });
 });
+
+describe("edge cases found in review", () => {
+  it("keeps the line break when a stale tag is all that is left of a comment", async () => {
+    const { recorded, stripped } = await roundTrip("a.py", "def f():\n    #~ note\n    a()\n    b()\n");
+    const placed = await placeComments("a.py", stripped.replace("b()\n", "b()\n    c()\n"), recorded.sidecar);
+    const id = recorded.sidecar.entries[0]!.id;
+    const edited = placed.source.replace(" note", "");
+    expect(edited).toBe(`def f():\n    #~${id} [stale?]\n    a()\n    b()\n    c()\n`);
+    const again = await recordComments("a.py", edited, recorded.sidecar);
+    expect(again.source).toBe(`def f():\n    #~${id}\n    a()\n    b()\n    c()\n`);
+  });
+
+  it("places a trailing comment whose row lies past the end of the file", async () => {
+    const { recorded, stripped } = await roundTrip("a.py", "x = 1\n#~ note\n");
+    const [entry] = recorded.sidecar.entries;
+    for (const [key, value] of Object.entries({ pos: "row", skip: "99", gap: "2s" })) entry!.meta.set(key, value);
+    entry!.meta.delete("eof");
+    const placed = await placeComments("a.py", stripped, recorded.sidecar);
+    expect(placed.unplaced).toEqual([]);
+    expect(placed.source).toContain(`#~${entry!.id} note`);
+  });
+});
