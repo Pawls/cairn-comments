@@ -215,10 +215,17 @@ export function planAdapterInstall(root: string, harness: string, command: strin
   return editSettings(root, harness, (adapter, settings) => adapter.install(settings, command));
 }
 
-/** Removes the harness's hook entry; a settings file left empty is deleted. */
+/**
+ * Removes the harness's hook entry; a settings file left empty is deleted. A file that does
+ * not parse cannot hold our hook, so it is left alone here; only an install reports it.
+ */
 export function planAdapterUninstall(root: string, harness: string): SettingsChange | undefined {
   if (!existsSync(path.join(root, adapterFor(harness).settingsFile))) return undefined;
-  return editSettings(root, harness, (adapter, settings) => adapter.uninstall(settings));
+  try {
+    return editSettings(root, harness, (adapter, settings) => adapter.uninstall(settings));
+  } catch {
+    return undefined;
+  }
 }
 
 export function adapterInstalled(root: string, harness: string): boolean {
