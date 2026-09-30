@@ -20,7 +20,7 @@ import {
   type Sidecar,
 } from "@cairn-comments/core";
 import { capturing, readWorkFile, removeWorkFile, writeWorkFile } from "./workfiles.js";
-import { filesContaining, indexBlobs, managedFiles, restat, smudges, stage, stagedFiles, toRepoPath, trackedFiles, worktreeGitDir } from "./git.js";
+import { filesContaining, indexBlobs, isTracked, managedFiles, restat, smudges, stage, stagedFiles, toRepoPath, trackedFiles, worktreeGitDir } from "./git.js";
 
 /** Text of a buffer, or undefined when it is not UTF-8 that re-encodes to the same bytes. */
 export function decodeExact(bytes: Buffer): string | undefined {
@@ -192,7 +192,8 @@ async function rewriteFiles(
 
 export async function syncFiles(root: string, files: string[], options: SyncOptions & { add: boolean }): Promise<void> {
   const done = await rewriteFiles(root, files, "sync", options);
-  if (options.add) stage(root, done.map((file) => sidecarPathFor(file)).filter((s) => existsSync(path.join(root, s))));
+  // A sidecar emptied by deleting its last comment is gone from disk but still in the index; staging it records the removal.
+  if (options.add) stage(root, done.map((file) => sidecarPathFor(file)).filter((s) => existsSync(path.join(root, s)) || isTracked(root, s)));
 }
 
 /** Places every comment, bringing each `[stale?]` tag up to date. */
