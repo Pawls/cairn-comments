@@ -208,3 +208,37 @@ describe("init --dry-run, uninstall, and promote --all", () => {
     expect(box.cli(main, "uninstall")).toBe("nothing to change\n");
   });
 });
+
+describe("a rename in a smudged agent worktree", () => {
+  let box: Sandbox;
+  let agent: string;
+
+  beforeAll(() => {
+    box = new Sandbox({ autocrlf: false });
+    const main = box.path("main");
+    box.write(box.path("main", "a.py"), SOURCE);
+    box.git(box.dir, "init", "-q", "main");
+    box.cli(main, "init");
+    box.git(main, "add", "-A");
+    box.git(main, "commit", "-qm", "base");
+    // An entry that no longer places anywhere: kept in the sidecar as an orphan.
+    const file = box.path("main", sidecar("a.py"));
+    box.write(file, box.read(file) + "\n## zzzz\n<!-- pos=before scope=gone nth=0 skip=0 node=deadbeef -->\nan orphan nobody placed\n");
+    box.git(main, "add", "-A");
+    box.git(main, "commit", "-qm", "orphan");
+    agent = box.path("agent");
+    box.cli(main, "worktree", "add", agent, "-b", "agent");
+  }, 120_000);
+  afterAll(() => box.dispose());
+
+  it("carries every entry of the old sidecar, placed or not, to the new one", () => {
+    expect(box.read(box.path("agent", "a.py"))).toContain(NOTE);
+    box.git(agent, "mv", "a.py", "b.py");
+    const result = box.gitResult(agent, "commit", "-qm", "rename");
+    expect(result.status).toBe(0);
+    const moved = box.git(agent, "show", `HEAD:${sidecar("b.py")}`);
+    expect(moved).toContain(NOTE);
+    expect(moved).toContain("an orphan nobody placed");
+    expect(result.stderr).not.toContain("removed");
+  });
+});
