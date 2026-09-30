@@ -161,6 +161,18 @@ export function orphansOf(report: { problems: { kind: string }[] }): OrphanComme
 }
 
 /**
+ * One argument for `runCli`'s shell line. POSIX single quotes expand nothing; cmd.exe expands
+ * `%VAR%` even inside double quotes, so a Windows argument holding such a character is refused.
+ */
+export function shellQuote(arg: string, platform: NodeJS.Platform = process.platform): string {
+  if (platform === "win32") {
+    if (/[%"^]/.test(arg)) throw new Error(`${arg} cannot be passed through cmd.exe; rename the file.`);
+    return `"${arg}"`;
+  }
+  return `'${arg.replaceAll("'", `'\\''`)}'`;
+}
+
+/**
  * Runs `<cli> <args>` through the shell, as git and the pre-commit hook do, feeding `input`
  * on stdin. An exit code in `okCodes` resolves with stdout, for commands like `check`
  * whose exit code is part of the answer.

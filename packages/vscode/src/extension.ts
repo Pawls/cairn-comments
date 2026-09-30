@@ -22,7 +22,7 @@ import { findSidecarRoot, type OverlayMode } from "./overlay.js";
 import { applyPrinted } from "./edits.js";
 import { CommentPaste } from "./paste.js";
 import { OWN_LINE_STYLES, PlacedComment, PlacedView, SHOW_COMMENT, type OwnLineStyle, type PlacedRender } from "./placed.js";
-import { findRepo, orphansOf, runCli, type OrphanComment, type StaleComment } from "./review.js";
+import { findRepo, orphansOf, runCli, shellQuote, type OrphanComment, type StaleComment } from "./review.js";
 import { registerReviewTree, type ReviewApi } from "./reviewTree.js";
 import { installBundledCli, offerRepair } from "./setup.js";
 
@@ -487,8 +487,8 @@ async function runOnFile(document: vscode.TextDocument, verb: string, suffix: st
     return undefined;
   }
   const file = path.relative(repo.root, document.fileName).split(path.sep).join("/");
-  const target = JSON.stringify(`${file}:${suffix}`);
   try {
+    const target = shellQuote(`${file}:${suffix}`);
     if (!options.print) return await runCli(repo.cli, `${verb} ${target}`, repo.root);
     // The extension writes the rewrite itself, as one edit Ctrl+Z reverts in every file.
     return await applyPrinted(repo.root, await runCli(repo.cli, `${verb} --print ${target}`, repo.root));

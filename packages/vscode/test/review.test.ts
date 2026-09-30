@@ -125,7 +125,7 @@ describe("shellQuote", () => {
     expect(shellQuote("src/a.py:12", "linux")).toBe("'src/a.py:12'");
     expect(shellQuote("src/$(id).py:1", "linux")).toBe("'src/$(id).py:1'");
     expect(shellQuote("src/`id`.py:1", "darwin")).toBe("'src/`id`.py:1'");
-    expect(shellQuote("it's.py:1", "linux")).toBe(`'it'\''s.py:1'`);
+    expect(shellQuote("it's.py:1", "linux")).toBe(String.raw`'it'\''s.py:1'`);
   });
 
   it("double-quotes a Windows argument and refuses the characters cmd.exe expands inside quotes", () => {
