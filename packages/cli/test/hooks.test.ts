@@ -140,3 +140,28 @@ describe("hook adapters in linked worktrees", () => {
     expect(box.git(main, "config", "--local", "--get", "extensions.worktreeConfig").trim()).toBe("true");
   });
 });
+
+describe("an unparseable harness settings file", () => {
+  let box: Sandbox;
+  let repo: string;
+
+  beforeAll(() => {
+    box = new Sandbox({ autocrlf: false });
+    repo = box.path("repo");
+    box.git(box.dir, "init", "-q", "repo");
+    box.write(box.path("repo", ".claude", "settings.local.json"), '{ "permissions": { "allow": [], }, }\n');
+  });
+  afterAll(() => box.dispose());
+
+  it("does not stop init or uninstall, which only look for a hook it cannot hold", () => {
+    expect(box.cli(repo, "init")).not.toContain("settings.local.json");
+    expect(box.cli(repo, "uninstall")).not.toContain("settings.local.json");
+    expect(readFileSync(box.path("repo", ".claude", "settings.local.json"), "utf8")).toContain('"allow": [], }');
+  });
+
+  it("still reports the file when --hooks asks to install into it", () => {
+    const result = box.cliResult(repo, "init", "--hooks", "claude-code");
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("is not valid JSON");
+  });
+});
