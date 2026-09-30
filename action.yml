@@ -26,3 +26,4 @@ runs:
       env:
         CAIRN_VERSION: ${{ inputs.version }}
         CAIRN_ARGS: ${{ inputs.args }}
+        npm_config_ignore_scripts: "true"

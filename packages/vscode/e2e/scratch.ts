@@ -24,11 +24,18 @@ export function scratchRepo(populate: (repo: string) => void): ScratchRepo {
   const dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "cairn-e2e-")));
   const config = path.join(dir, "gitconfig");
   writeFileSync(config, "[user]\n\tname = e2e\n\temail = e2e@example.com\n[core]\n\tautocrlf = false\n[init]\n\tdefaultBranch = main\n");
-  const env = { GIT_CONFIG_GLOBAL: config, GIT_CONFIG_NOSYSTEM: "1", [CLI_HOME_ENV]: path.join(dir, "cli-home") };
+  const env = {
+    GIT_CONFIG_GLOBAL: config,
+    GIT_CONFIG_NOSYSTEM: "1",
+    XDG_CONFIG_HOME: path.join(dir, "xdg"),
+    [CLI_HOME_ENV]: path.join(dir, "cli-home"),
+  };
   const repo = path.join(dir, "repo");
   mkdirSync(repo);
   populate(repo);
-  const opts = { cwd: repo, env: { ...process.env, ...env }, stdio: "ignore" as const };
+  // GIT_DIR and its kin would send git to whatever repository launched the test.
+  const inherited = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
+  const opts = { cwd: repo, env: { ...inherited, ...env }, stdio: "ignore" as const };
   execFileSync("git", ["init", "-q"], opts);
   execFileSync(process.execPath, [cli, "init"], opts);
   execFileSync("git", ["add", "-A"], opts);

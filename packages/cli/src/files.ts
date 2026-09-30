@@ -192,7 +192,7 @@ async function rewriteFiles(
 
 export async function syncFiles(root: string, files: string[], options: SyncOptions & { add: boolean }): Promise<void> {
   const done = await rewriteFiles(root, files, "sync", options);
-  if (options.add) stage(root, done.map(sidecarPathFor).filter((s) => existsSync(path.join(root, s))));
+  if (options.add) stage(root, done.map((file) => sidecarPathFor(file)).filter((s) => existsSync(path.join(root, s))));
 }
 
 /** Places every comment, bringing each `[stale?]` tag up to date. */

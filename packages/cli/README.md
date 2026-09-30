@@ -1,6 +1,6 @@
 # cairn
 
-Stash the slop, keep the context. A git filter that keeps AI-written comments out of
+Private comments that never ship. A git filter that keeps AI-written comments out of
 committed code without deleting them.
 
 Agents write comments with a sigil (`#~ text`, `//~ text`). On commit each one leaves the

@@ -19,7 +19,8 @@ extension draws the comments back over your plain code.
 - **Stale comments.** A comment whose function changed after it was written is marked
   `[stale?]` in the warning color. Its thread offers **Confirm**, and the **Possibly
   Stale** view in the **AI Comments** sidebar lists every flagged comment in the
-  repository. The **Orphaned** view lists comments whose code is gone.- **Review.** The **Review** view in the **AI Comments** sidebar scans the repository for
+  repository. The **Orphaned** view lists comments whose code is gone.
+- **Review.** The **Review** view in the **AI Comments** sidebar scans the repository for
   comments that read as AI-written. Each row's buttons mark it as an AI comment (stash
   it), keep it as an ordinary comment (stop flagging it), or skip it until the next scan.
   **Apply Review Decisions** applies them in one pass, and the other two title buttons

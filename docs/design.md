@@ -272,7 +272,8 @@ code action, which runs the CLI.
 - **Rejected: hiding lines by folding (measured 2026-09-24, VS Code 1.139).** The stable
   API has no hidden-lines call, so the only way to hide a line is folding it into the line
   above, which costs a chevron, a `···`, the fold background, and skipped line numbers, and
-  Unfold All reveals it. Keeping comment lines out of the file removed the need.- **Own-line comments (chosen 2026-09-26).** With no line of its own to draw on, an
+  Unfold All reveals it. Keeping comment lines out of the file removed the need.
+- **Own-line comments (chosen 2026-09-26).** With no line of its own to draw on, an
   own-line comment renders as a CodeLens above the code line it describes
   (`placeComments` reports each comment's `sites`), picked by eye over two alternatives
   from the e2e screenshots (`overlay-*.png`). `cairn.ownLineStyle` keeps them:

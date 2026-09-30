@@ -98,7 +98,7 @@ comments changes no code, so git has nothing to commit until the sidecar is stag
 `git add .agents` does.
 
 If you set up from a terminal, install **Cairn Comments: Hide AI Comments** from the VS Code
-Marketplace too. Toggle the overlay with the `AI comments` status bar item or `Ctrl+Alt+`` ` (`Cmd+Alt+`` ` on macOS).
+Marketplace too. Toggle the overlay with the `AI comments` status bar item or ``Ctrl+Alt+` `` (``Cmd+Alt+` `` on macOS).
 
 ## Agent setup
 

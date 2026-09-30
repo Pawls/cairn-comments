@@ -228,7 +228,7 @@ describe("a rename in a smudged agent worktree", () => {
     box.git(main, "commit", "-qm", "orphan");
     agent = box.path("agent");
     box.cli(main, "worktree", "add", agent, "-b", "agent");
-  }, 120_000);
+  });
   afterAll(() => box.dispose());
 
   it("carries every entry of the old sidecar, placed or not, to the new one", () => {
