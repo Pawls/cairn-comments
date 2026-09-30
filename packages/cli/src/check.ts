@@ -137,7 +137,9 @@ async function leaks(index: Index, sources: string[]): Promise<Problem[]> {
 async function followGoneSources(root: string, index: Index, gone: string[], tracked: string[], staged: boolean): Promise<CheckReport> {
   const renames = staged ? stagedRenames(root) : undefined;
   const indexed = new Set(tracked);
-  const candidates = managedFiles(root, renames ? [...renames.values()] : tracked).filter((f) => !indexed.has(sidecarPathFor(f)));
+  // A rename target may already have a sidecar, because sync recorded the comments shown in
+  // its file; applying the fix merges the old entries into it.
+  const candidates = renames ? managedFiles(root, [...renames.values()]) : managedFiles(root, tracked).filter((f) => !indexed.has(sidecarPathFor(f)));
   index.load(candidates);
   const report: CheckReport = { problems: [], fixes: [] };
   const claimed = new Set<string>();
