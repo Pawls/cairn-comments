@@ -88,42 +88,50 @@ export async function serveFilterProcess(input: AsyncIterable<Buffer | string>, 
   const offered = new Set(await reader.readList());
   const supported = (options.smudge ? ["clean", "smudge", "delay"] : ["clean"]).filter((c) => offered.has(`capability=${c}`));
   await send(output, [...supported.map((c) => textPacket(`capability=${c}`)), FLUSH]);
-  const delayed = new DelayedSmudges(options);
-  const delayBudget = options.delayBudget ?? DEFAULT_DELAY_BUDGET;
+  const session: Session = { supported, delayed: new DelayedSmudges(options), delayBudget: options.delayBudget ?? DEFAULT_DELAY_BUDGET, options };
 
   for (;;) {
     const headers = await reader.readList();
     if (headers === undefined) return;
     const fields = new Map(headers.map((h) => [h.slice(0, h.indexOf("=")), h.slice(h.indexOf("=") + 1)]));
-    const command = fields.get("command");
-    if (command === "list_available_blobs" && supported.includes("delay")) {
-      const paths = await delayed.list();
+    if (fields.get("command") === "list_available_blobs" && supported.includes("delay")) {
+      const paths = await session.delayed.list();
       await send(output, [...paths.map((p) => textPacket(`pathname=${p}`)), FLUSH, textPacket("status=success"), FLUSH]);
       continue;
     }
     const content = await reader.readContent();
-    const pathname = fields.get("pathname");
-    let result: Buffer;
-    try {
-      if (!pathname || (command !== "clean" && command !== "smudge") || !supported.includes(command)) {
-        throw new Error(`unsupported request ${JSON.stringify(headers)}`);
-      }
-      const earlier = command === "smudge" ? await delayed.take(pathname) : undefined;
-      if (earlier) {
-        result = earlier;
-      } else if (command === "smudge" && fields.get("can-delay") === "1" && delayed.held + content.length <= delayBudget) {
-        delayed.start(pathname, content);
-        await send(output, [textPacket("status=delayed"), FLUSH]);
-        continue;
-      } else {
-        result = await filterContent(command, options.root, pathname, content, options.mode);
-      }
-    } catch (error) {
-      options.log(`${pathname ?? "?"}: ${describe(error)}`);
-      await send(output, [textPacket("status=error"), FLUSH]);
-      continue;
-    }
-    // The trailing empty list keeps status=success.
-    await send(output, [textPacket("status=success"), FLUSH, ...contentPackets(result), FLUSH, FLUSH]);
+    await send(output, await respond(session, headers, fields, content));
   }
 }
+
+interface Session {
+  supported: string[];
+  delayed: DelayedSmudges;
+  delayBudget: number;
+  options: FilterProcessOptions;
+}
+
+/** The packets answering one clean or smudge request: the filtered content, a delay, or an error. */
+async function respond(session: Session, headers: string[], fields: Map<string, string>, content: Buffer): Promise<Buffer[]> {
+  const { supported, delayed, delayBudget, options } = session;
+  const command = fields.get("command");
+  const pathname = fields.get("pathname");
+  try {
+    if (!pathname || (command !== "clean" && command !== "smudge") || !supported.includes(command)) {
+      throw new Error(`unsupported request ${JSON.stringify(headers)}`);
+    }
+    const earlier = command === "smudge" ? await delayed.take(pathname) : undefined;
+    if (earlier) return success(earlier);
+    if (command === "smudge" && fields.get("can-delay") === "1" && delayed.held + content.length <= delayBudget) {
+      delayed.start(pathname, content);
+      return [textPacket("status=delayed"), FLUSH];
+    }
+    return success(await filterContent(command, options.root, pathname, content, options.mode));
+  } catch (error) {
+    options.log(`${pathname ?? "?"}: ${describe(error)}`);
+    return [textPacket("status=error"), FLUSH];
+  }
+}
+
+// The trailing empty list keeps status=success.
+const success = (result: Buffer) => [textPacket("status=success"), FLUSH, ...contentPackets(result), FLUSH, FLUSH];

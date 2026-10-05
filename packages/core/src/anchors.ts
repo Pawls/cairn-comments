@@ -61,7 +61,7 @@ function spineChild(node: Node): Node | null {
   if (next) return next;
   if (WRAPPER.test(node.type) && node.namedChildCount === 1) return node.namedChild(0);
   const value = node.childForFieldName("value") ?? node.childForFieldName("right");
-  const bound = node.type === "variable_declarator" || node.type === "assignment_expression" || /field_definition$/.test(node.type);
+  const bound = node.type === "variable_declarator" || node.type === "assignment_expression" || node.type.endsWith("field_definition");
   return bound && value && /function|class/.test(value.type) ? value : null;
 }
 
@@ -85,6 +85,22 @@ function isCloser(node: Node | null): boolean {
   return !!node && !node.isNamed && (node.type === ")" || node.type === "]" || node.type === "}");
 }
 
+/** `(x) => …` serialized as `x => …` is: the lone identifier parameter, without its parentheses. */
+function loneArrowParameter(node: Node, children: Node[]): string | undefined {
+  if (node.type !== "formal_parameters" || node.parent?.type !== "arrow_function") return undefined;
+  const named = children.filter((c) => c.isNamed);
+  if (named.length !== 1 || !IDENTIFIER.test(named[0]!.text)) return undefined;
+  return `identifier:${named[0]!.text}`;
+}
+
+/** A token formatters add or drop: a parenthesized expression's parentheses, or a trailing comma before a closer. */
+function isFormatterToken(node: Node, children: Node[], i: number): boolean {
+  const child = children[i]!;
+  if (child.isNamed) return false;
+  if (node.type === "parenthesized_expression" && (child.type === "(" || child.type === ")")) return true;
+  return child.type === "," && isCloser(children[i + 1] ?? null);
+}
+
 /**
  * Tokens and structure of the nodes overlapping `range`, blind to whatever a formatter
  * changes: whitespace, comments, semicolons, trailing commas, redundant parentheses, and
@@ -103,14 +119,11 @@ function serialize(spec: LanguageSpec, node: Node, range: { start: number; end: 
     const child = node.child(i)!;
     if (!spec.commentTypes.includes(child.type)) children.push(child);
   }
-  if (node.type === "formal_parameters" && node.parent?.type === "arrow_function") {
-    const named = children.filter((c) => c.isNamed);
-    if (named.length === 1 && IDENTIFIER.test(named[0]!.text)) return `identifier:${named[0]!.text}`;
-  }
+  const parameter = loneArrowParameter(node, children);
+  if (parameter) return parameter;
   const parts: string[] = [];
   children.forEach((child, i) => {
-    if (node.type === "parenthesized_expression" && !child.isNamed && (child.type === "(" || child.type === ")")) return;
-    if (child.type === "," && !child.isNamed && isCloser(children[i + 1] ?? null)) return;
+    if (isFormatterToken(node, children, i)) return;
     const part = serialize(spec, child, range, skipped);
     if (part) parts.push(part);
   });
