@@ -1,8 +1,9 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseSidecar } from "@cairn-comments/core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { agentsSnippet } from "../src/init.js";
 import { Sandbox } from "./harness.js";
 
 const FIXTURES = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "fixtures/hooks");
@@ -125,5 +126,37 @@ describe.each([false, true])("tag and hook adapters (autocrlf=%s)", (autocrlf) =
     writeFileSync(agents, readFileSync(agents, "utf8").replace("## AI comments", "## stale copy") + "More rules.\n");
     box.cli(main, "init", "--agents-md");
     expect(read("main", "AGENTS.md")).toBe(first + "More rules.\n");
+  });
+});
+
+describe("AGENTS.md edits by init --agents-md and uninstall", () => {
+  let box: Sandbox;
+  const snippet = agentsSnippet();
+  const crlfSnippet = snippet.replaceAll("\n", "\r\n");
+
+  beforeAll(() => {
+    box = new Sandbox({ autocrlf: false });
+  });
+  afterAll(() => box.dispose());
+
+  // Each row: AGENTS.md before init (undefined: no file), init's report and result, uninstall's report and result.
+  it.each([
+    ["no file", undefined, "create with the sigil convention", snippet, "delete (only the sigil convention was in it)", undefined],
+    ["no final line break", "# A", "add the sigil convention", `# A\n\n${snippet}`, "remove the sigil convention", "# A\n"],
+    ["one final line break", "# A\n", "add the sigil convention", `# A\n\n${snippet}`, "remove the sigil convention", "# A\n"],
+    ["a blank last line", "# A\n\n", "add the sigil convention", `# A\n\n${snippet}`, "remove the sigil convention", "# A\n"],
+    ["CRLF", "# A\r\n", "add the sigil convention", `# A\r\n\r\n${crlfSnippet}`, "remove the sigil convention", "# A\r\n"],
+    ["text after the snippet", `# A\n\n${snippet}tail\n`, undefined, `# A\n\n${snippet}tail\n`, "remove the sigil convention", "# A\n\ntail\n"],
+  ])("%s", (name, before, initWhat, afterInit, uninstallWhat, afterUninstall) => {
+    const repo = box.path(name.replaceAll(" ", "-"));
+    box.git(box.dir, "init", "-q", repo);
+    const agents = path.join(repo, "AGENTS.md");
+    if (before !== undefined) writeFileSync(agents, before);
+    const initOut = box.cli(repo, "init", "--agents-md");
+    if (initWhat) expect(initOut).toContain(`AGENTS.md: ${initWhat}\n`);
+    else expect(initOut).not.toContain("AGENTS.md");
+    expect(readFileSync(agents, "utf8")).toBe(afterInit);
+    expect(box.cli(repo, "uninstall")).toContain(`AGENTS.md: ${uninstallWhat}\n`);
+    expect(existsSync(agents) ? readFileSync(agents, "utf8") : undefined).toBe(afterUninstall);
   });
 });
