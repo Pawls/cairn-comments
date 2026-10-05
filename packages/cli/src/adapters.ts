@@ -157,9 +157,9 @@ export const ADAPTERS: Record<string, Adapter> = {
     settingsFile: ".cursor/hooks.json",
     parse(p) {
       const file = str(p.file_path);
-      const roots = arr(p.workspace_roots).map(str).filter((r): r is string => !!r);
+      const root = arr(p.workspace_roots).map(str).find((r): r is string => !!r);
       return {
-        cwd: roots[0] ?? process.cwd(),
+        cwd: root ?? process.cwd(),
         files: file ? [file] : [],
         provenance: { by: "cursor", session: str(p.conversation_id), model: str(p.model) },
       };

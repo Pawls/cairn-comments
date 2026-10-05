@@ -60,7 +60,7 @@ function readLiteral(opener: string, content: string, indent: string): { lines: 
   const quoteName = Object.keys(QUOTES).find((k) => QUOTES[k] === quote)!;
   const raw = content.split(/\r?\n/);
   const firstLine = raw.length === 1 || raw[0]!.trim() !== "";
-  const lastLine = raw.length === 1 || raw[raw.length - 1]!.trim() !== "";
+  const lastLine = raw.length === 1 || raw.at(-1)!.trim() !== "";
   const dedent = (line: string) => (line.startsWith(indent) ? line.slice(indent.length) : line.trimStart());
   const lines = [raw[0]!, ...raw.slice(1).map(dedent)];
   if (raw.length > 1) {

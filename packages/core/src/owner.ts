@@ -43,7 +43,7 @@ async function promoteShown(path: string, source: string, sidecar: Sidecar, ids:
     const literal = sidecar.entries.find((e) => e.id === id)?.meta.get(LITERAL_KEY);
     const trailing = m.placement === "trailing";
     const asString = literal !== undefined && !trailing ? writeLiteral(literal, body, m.indent, eol) : undefined;
-    const lines = trailing ? [body.split("\n").join(" ")] : body.split("\n");
+    const lines = trailing ? [body.replaceAll("\n", " ")] : body.split("\n");
     splices.push({ start: m.start, end: m.end, text: asString ?? lines.map(toComment).join(eol + m.indent) });
     promoted.add(id);
   }
@@ -140,7 +140,7 @@ export async function carryComments(path: string, code: string, sidecar: Sidecar
     if (!line || !body) return;
     const sigil = spec.lineSigil + ids[i]!;
     if (c.kind === "trail") {
-      splices.push({ start: line.contentEnd, end: line.contentEnd, text: `  ${sigil} ${body.split("\n").join(" ")}` });
+      splices.push({ start: line.contentEnd, end: line.contentEnd, text: `  ${sigil} ${body.replaceAll("\n", " ")}` });
       return;
     }
     const indent = /^[ \t]*/.exec(code.slice(line.start, line.contentEnd))![0];

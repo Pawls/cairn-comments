@@ -16,11 +16,11 @@ export interface Sidecar {
   entries: SidecarEntry[];
 }
 
-const HEADING = new RegExp(`^## (${ID_PATTERN})\\s*$`);
+const HEADING = new RegExp(String.raw`^## (${ID_PATTERN})\s*$`);
 const META = /^<!--(.*)-->\s*$/;
 // A body line that would read back as structure gets one backslash on write.
-const NEEDS_ESCAPE = new RegExp(`^\\\\*(?:## ${ID_PATTERN}\\s*$|<!--)`);
-const ESCAPED = new RegExp(`^\\\\(\\\\*(?:## ${ID_PATTERN}\\s*$|<!--))`);
+const NEEDS_ESCAPE = new RegExp(String.raw`^\\*(?:## ${ID_PATTERN}\s*$|<!--)`);
+const ESCAPED = new RegExp(String.raw`^\\(\\*(?:## ${ID_PATTERN}\s*$|<!--))`);
 
 /** Repo-relative, forward-slash sidecar path for a repo-relative source path. */
 export function sidecarPathFor(sourcePath: string): string {
@@ -30,7 +30,7 @@ export function sidecarPathFor(sourcePath: string): string {
 export function normalizeBody(text: string): string {
   const lines = text.replace(/\r\n?/g, "\n").split("\n").map((l) => l.trimEnd());
   while (lines.length && !lines[0]) lines.shift();
-  while (lines.length && !lines[lines.length - 1]) lines.pop();
+  while (lines.length && !lines.at(-1)) lines.pop();
   return lines.join("\n");
 }
 

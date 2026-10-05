@@ -49,7 +49,7 @@ export class PacketReader {
     }
     const header = this.take(4).toString("latin1");
     if (!/^[0-9a-fA-F]{4}$/.test(header)) throw new Error(`malformed packet header ${JSON.stringify(header)}`);
-    const size = parseInt(header, 16);
+    const size = Number.parseInt(header, 16);
     if (size === 0) return null;
     if (size < 4) throw new Error(`unexpected special packet ${header}`);
     if (!(await this.fill(size - 4))) throw new Error("input ended inside a packet");

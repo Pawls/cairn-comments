@@ -57,12 +57,10 @@ export function registerReviewTree(context: vscode.ExtensionContext): ReviewApi 
 
   const provider: vscode.TreeDataProvider<Node> = {
     onDidChangeTreeData: changed.event,
-    getChildren: (node) =>
-      node
-        ? node.kind === "file"
-          ? node.group.comments.map((comment) => ({ kind: "comment", group: node.group, comment }))
-          : []
-        : model.files().map((group) => ({ kind: "file", group })),
+    getChildren: (node) => {
+      if (!node) return model.files().map((group) => ({ kind: "file", group }));
+      return node.kind === "file" ? node.group.comments.map((comment) => ({ kind: "comment", group: node.group, comment })) : [];
+    },
     getTreeItem: (node) => {
       if (node.kind === "file") {
         const item = new vscode.TreeItem(node.group.file, vscode.TreeItemCollapsibleState.Expanded);

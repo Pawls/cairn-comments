@@ -164,7 +164,7 @@ export function parseReview(text: string): Review {
   }
   for (const c of review.comments) {
     if (typeof c.file !== "string" || typeof c.fingerprint !== "string" || typeof c.line !== "number") {
-      throw new Error(`review entry needs file, line, and fingerprint: ${JSON.stringify(c)}`);
+      throw new TypeError(`review entry needs file, line, and fingerprint: ${JSON.stringify(c)}`);
     }
     if (path.isAbsolute(c.file) || path.posix.normalize(c.file.replaceAll("\\", "/")).startsWith("../")) {
       throw new Error(`review entry points outside the repository: ${c.file}`);
