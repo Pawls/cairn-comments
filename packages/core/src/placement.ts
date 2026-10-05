@@ -59,13 +59,17 @@ function encodeWhitespace(ws: string): string {
 }
 
 function decodeWhitespace(value: string | undefined): string | undefined {
-  if (value === undefined) return undefined;
+  if (!value) return undefined;
   if (value === "0") return "";
-  // Sticky: each run starts where the last one ended, so the runs cover `value` only when it is nothing but runs.
-  const runs = [...value.matchAll(/(\d+)([st])/gy)];
-  const covered = runs.reduce((length, run) => length + run[0].length, 0);
-  if (!runs.length || covered !== value.length) return undefined;
-  return runs.map((run) => (run[2] === "s" ? " " : "\t").repeat(Number(run[1]))).join("");
+  // Sticky: each run must start where the last one ended, so anything but runs fails.
+  const run = /(\d+)([st])/y;
+  let decoded = "";
+  while (run.lastIndex < value.length) {
+    const m = run.exec(value);
+    if (!m) return undefined;
+    decoded += (m[2] === "s" ? " " : "\t").repeat(Number(m[1]));
+  }
+  return decoded;
 }
 
 const EOF_BY_NAME = new Map([
