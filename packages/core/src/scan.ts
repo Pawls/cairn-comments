@@ -107,7 +107,7 @@ const PRAGMA_ANYWHERE =
 const LICENSE = /\bSPDX-License-Identifier\b|\bcopyright\b|\blicen[cs]ed?\b|\(c\)\s*\d{4}|©|all rights reserved/i;
 // Below the first line of code, a license mention protects a comment only with one of these.
 const EXPLICIT_LICENSE = /SPDX-License-Identifier|copyright/i;
-const TICKETED_TODO = /^(?:TODO|FIXME|XXX|HACK|BUG)\b\s*(?:\([^)]*\)|[:-]?\s*(?:[A-Z][A-Z0-9]+-\d+|#\d+|https?:\/\/|@\w))/i;
+const TICKETED_TODO = /^(?:TODO|FIXME|XXX|HACK|BUG)\b\s*(?:\([^)]*\)|(?:[:-]\s*)?(?:[A-Z][A-Z0-9]+-\d+|#\d+|https?:\/\/|@\w))/i;
 // Only lines with code punctuation or a leading keyword go to the parser.
 const CODE_SHAPED = /[;{}()[\]=]|^(?:import|from|return|def|class|const|let|var|function|if|for|while|print|await|async|public|private|protected|static|using|namespace|package|throw|raise|try|new|val|fun|override)\b/;
 

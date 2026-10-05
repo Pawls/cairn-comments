@@ -69,7 +69,10 @@ export function patchedFiles(input: unknown): string[] {
   walk(input);
   const files = new Set<string>();
   for (const text of texts) {
-    for (const m of text.matchAll(/^\*\*\* (?:Add File|Update File|Move to): (.+?)\s*$/gm)) files.add(m[1]!);
+    for (const m of text.matchAll(/^\*\*\* (?:Add File|Update File|Move to): (.+)$/gm)) {
+      const file = m[1]!.trimEnd();
+      if (file) files.add(file);
+    }
   }
   return [...files];
 }

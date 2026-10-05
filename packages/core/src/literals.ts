@@ -2,7 +2,7 @@
 // and promote writes it back as the same string (design.md § Promote and demote).
 import type { Node } from "web-tree-sitter";
 import type { LanguageSpec } from "./languages.js";
-import { lineIndexAt, splitLines } from "./lines.js";
+import { lineIndexAt, splitLines, trailingRunStart } from "./lines.js";
 import { parseWith } from "./parser.js";
 
 /** Sidecar metadata key holding a demoted string's quotes and layout. */
@@ -55,7 +55,7 @@ function isDocstring(statement: Node, siblings: Node[]): boolean {
 
 /** A string's text lines and `literal` value, from its opening quote (with prefix) and what lies between the quotes. */
 function readLiteral(opener: string, content: string, indent: string): { lines: string[]; literal: string } {
-  const prefix = opener.replace(/["']+$/, "");
+  const prefix = opener.slice(0, trailingRunStart(opener, `"'`));
   const quote = opener.slice(prefix.length);
   const quoteName = Object.keys(QUOTES).find((k) => QUOTES[k] === quote)!;
   const raw = content.split(/\r?\n/);

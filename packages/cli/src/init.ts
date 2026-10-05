@@ -199,6 +199,13 @@ export function agentsSnippet(): string {
   ].join("\n");
 }
 
+/** `text` without the LF and CRLF line breaks that end it. A loop, because `/(\r?\n)+$/` retries every inner run. */
+function withoutTrailingLineBreaks(text: string): string {
+  let end = text.length;
+  while (text.endsWith("\n", end)) end -= text.endsWith("\r\n", end) ? 2 : 1;
+  return text.slice(0, end);
+}
+
 /** Adds the snippet to AGENTS.md, replaces the copy between its markers, or (`remove`) takes it out. */
 function agentsMdChange(root: string, remove: boolean): Change | undefined {
   const file = path.join(root, "AGENTS.md");
@@ -213,7 +220,7 @@ function agentsMdChange(root: string, remove: boolean): Change | undefined {
   if (found) {
     const after = existing.slice(end + SNIPPET_END.length).replace(/^\r?\n/, "");
     const before = existing.slice(0, begin);
-    next = remove ? (after ? before + after : before.replace(/(\r?\n)+$/, "") + (before.trim() ? eol : "")) : before + snippet + after;
+    next = remove ? (after ? before + after : withoutTrailingLineBreaks(before) + (before.trim() ? eol : "")) : before + snippet + after;
   } else {
     const gap = !existing ? "" : existing.endsWith(eol + eol) ? "" : existing.endsWith(eol) ? eol : eol + eol;
     next = existing + gap + snippet;

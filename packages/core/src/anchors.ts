@@ -67,7 +67,7 @@ function spineChild(node: Node): Node | null {
 
 const QUOTE = /^[A-Za-z]*(?:'''|"""|'|")$/;
 const NUMBER_TYPE = /integer|float|number|decimal|hex|octal|binary|real_literal/;
-const PLAIN_DECIMAL = /^(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/;
+const PLAIN_DECIMAL = /^(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/;
 const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
 
 /** One token as a formatter could not have changed it: quote style, string prefix case, number spelling. */

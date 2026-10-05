@@ -35,6 +35,16 @@ export function lineIndexAt(lines: Line[], offset: number): number {
   return lo;
 }
 
+/**
+ * Offset where the run of `chars` that ends `text` begins (`text.length` when there is none).
+ * A scan from the end, because an unanchored `/[ \t]*$/` retries every position of an inner run.
+ */
+export function trailingRunStart(text: string, chars: string): number {
+  let start = text.length;
+  while (start > 0 && chars.includes(text[start - 1]!)) start--;
+  return start;
+}
+
 /** The terminator most lines use; LF when the text has none. */
 export function dominantEol(source: string): "\n" | "\r\n" {
   let crlf = 0;

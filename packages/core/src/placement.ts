@@ -2,7 +2,7 @@ import type { Node } from "web-tree-sitter";
 import { bodyHash, bodyOf, nodeHash } from "./anchors.js";
 import { resolveIds } from "./ids.js";
 import { languageForPath, type LanguageSpec } from "./languages.js";
-import { applySplices, dominantEol, lineIndexAt, splitLines, type Line, type Splice } from "./lines.js";
+import { applySplices, dominantEol, lineIndexAt, splitLines, trailingRunStart, type Line, type Splice } from "./lines.js";
 import { STALE_TAG, markersFrom, type Marker } from "./markers.js";
 import { commentsIn, parseWith } from "./parser.js";
 import { normalizeBody, type Sidecar, type SidecarEntry } from "./sidecar.js";
@@ -59,9 +59,13 @@ function encodeWhitespace(ws: string): string {
 }
 
 function decodeWhitespace(value: string | undefined): string | undefined {
-  if (value === undefined || !/^(?:0|(?:\d+[st])+)$/.test(value)) return undefined;
+  if (value === undefined) return undefined;
   if (value === "0") return "";
-  return [...value.matchAll(/(\d+)([st])/g)].map((run) => (run[2] === "s" ? " " : "\t").repeat(Number(run[1]))).join("");
+  // Sticky: each run starts where the last one ended, so the runs cover `value` only when it is nothing but runs.
+  const runs = [...value.matchAll(/(\d+)([st])/gy)];
+  const covered = runs.reduce((length, run) => length + run[0].length, 0);
+  if (!runs.length || covered !== value.length) return undefined;
+  return runs.map((run) => (run[2] === "s" ? " " : "\t").repeat(Number(run[1]))).join("");
 }
 
 function placementMeta(p: Placement): Map<string, string> {
@@ -336,7 +340,8 @@ function removals(layout: Layout, markers: readonly Marker[]): { rows: Set<numbe
       for (let r = first; r <= last; r++) rows.add(r);
     } else {
       const line = layout.lines[lineIndexAt(layout.lines, m.start)]!;
-      const gap = /[ \t]*$/.exec(layout.source.slice(line.start, m.start))![0];
+      const before = layout.source.slice(line.start, m.start);
+      const gap = before.slice(trailingRunStart(before, " \t"));
       trailing.push({ start: m.start - gap.length, end: m.end, text: "" });
     }
   }
@@ -418,7 +423,8 @@ function placementFor(layout: Layout, m: Marker, aiRows: Set<number>, cleanRow: 
 
   if (m.placement === "trailing") {
     const line = lines[first]!;
-    const gap = /[ \t]*$/.exec(layout.source.slice(line.start, m.start))![0];
+    const before = layout.source.slice(line.start, m.start);
+    const gap = before.slice(trailingRunStart(before, " \t"));
     const node = rows[first]!.node;
     if (node && node.startPosition.row === first) return anchored("trail", node, 0, "", gap);
     return { pos: "row", nth: 0, skip: cleanRow(first), seq: 0, gap };
