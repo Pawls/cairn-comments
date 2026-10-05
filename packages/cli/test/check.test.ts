@@ -88,6 +88,26 @@ describe.each([true, false])("check (autocrlf=%s)", (autocrlf) => {
         "hint: this clone commits without the filter; run `cairn init`, then `cairn collapse` and commit the result\n",
     );
   });
+
+  it("names every file a gone source's comments place in, and --fix leaves the sidecar where it is", () => {
+    box.write(box.path("main", "e.py"), SOURCE);
+    box.git(main, "add", "e.py");
+    commit(main, "e");
+    box.cli(main, "collapse");
+    const e = /^## ([0-9a-z]{4})$/m.exec(box.read(box.path("main", sidecar("e.py"))))![1]!;
+    const collapsed = box.read(box.path("main", "e.py"));
+    box.git(main, "rm", "-q", "e.py");
+    box.write(box.path("main", "f.py"), collapsed);
+    box.write(box.path("main", "g.py"), collapsed);
+    box.git(main, "add", "f.py", "g.py");
+    commit(main, "copy twice", "--no-verify");
+    const expected = `${sidecar("e.py")}: ${e} has no source; e.py is gone (its comments place in more than one file: d.py, f.py, g.py)\n`;
+    expect(check(main)).toMatchObject({ status: 1, stdout: expected });
+    expect(check(main, sidecar("e.py"))).toMatchObject({ status: 1, stdout: expected });
+    expect(check(main, "f.py")).toMatchObject({ status: 0, stdout: "" });
+    expect(check(main, "--fix")).toMatchObject({ status: 1, stdout: expected });
+    expect(box.status(main)).toBe("");
+  });
 });
 
 describe.each([true, false])("sidecar merge driver (autocrlf=%s)", (autocrlf) => {
