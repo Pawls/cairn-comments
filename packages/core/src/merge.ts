@@ -26,10 +26,10 @@ function mergeMeta(base: ReadonlyMap<string, string>, ours: ReadonlyMap<string, 
   const placement = placementOf(ours) === placementOf(base) ? theirs : ours;
   const merged = new Map<string, string>();
   for (const key of new Set([...ours.keys(), ...theirs.keys(), ...base.keys()])) {
-    const b = base.get(key);
     const o = ours.get(key);
-    const t = theirs.get(key);
-    const value = isPlacementKey(key) ? placement.get(key) : o === b ? t : o;
+    // Placement keys come from one side together; any other key takes the side that changed it.
+    let value = o === base.get(key) ? theirs.get(key) : o;
+    if (isPlacementKey(key)) value = placement.get(key);
     if (value !== undefined) merged.set(key, value);
   }
   return merged;
@@ -67,7 +67,7 @@ export function mergeSidecars(base: Sidecar, ours: Sidecar, theirs: Sidecar): Me
     const was = b.get(entry.id);
     if (!other) {
       // Theirs deleted it: keep ours only if ours edited it since the base.
-      if (!was || was.body !== entry.body) entries.push(copy(entry));
+      if (was?.body !== entry.body) entries.push(copy(entry));
       continue;
     }
     const merged = mergeEntry(was, entry, other);
@@ -77,16 +77,17 @@ export function mergeSidecars(base: Sidecar, ours: Sidecar, theirs: Sidecar): Me
   for (const entry of theirs.entries) {
     if (o.has(entry.id)) continue;
     const was = b.get(entry.id);
-    if (!was || was.body !== entry.body) entries.push(copy(entry));
+    if (was?.body !== entry.body) entries.push(copy(entry));
   }
 
-  let preamble = ours.preamble;
-  if (ours.preamble !== theirs.preamble) {
-    if (ours.preamble === base.preamble) preamble = theirs.preamble;
-    else if (theirs.preamble !== base.preamble) {
-      preamble = conflictText(ours.preamble, theirs.preamble);
-      conflicts.push("(preamble)");
-    }
-  }
-  return { sidecar: { preamble, entries }, conflicts };
+  const preamble = mergePreamble(base.preamble, ours.preamble, theirs.preamble);
+  if (preamble.conflict) conflicts.push("(preamble)");
+  return { sidecar: { preamble: preamble.text, entries }, conflicts };
+}
+
+/** One side's change wins; two different changes are written with conflict markers. */
+function mergePreamble(base: string, ours: string, theirs: string): { text: string; conflict: boolean } {
+  if (ours === theirs || theirs === base) return { text: ours, conflict: false };
+  if (ours === base) return { text: theirs, conflict: false };
+  return { text: conflictText(ours, theirs), conflict: true };
 }

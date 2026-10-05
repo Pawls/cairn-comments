@@ -107,7 +107,7 @@ const PRAGMA_ANYWHERE =
 const LICENSE = /\bSPDX-License-Identifier\b|\bcopyright\b|\blicen[cs]ed?\b|\(c\)\s*\d{4}|©|all rights reserved/i;
 // Below the first line of code, a license mention protects a comment only with one of these.
 const EXPLICIT_LICENSE = /SPDX-License-Identifier|copyright/i;
-const TICKETED_TODO = /^(?:TODO|FIXME|XXX|HACK|BUG)\b\s*(?:\([^)]*\)|[:-]?\s*(?:[A-Z][A-Z0-9]+-\d+|#\d+|https?:\/\/|@\w))/i;
+const TICKETED_TODO = /^(?:TODO|FIXME|XXX|HACK|BUG)\b\s*(?:\([^)]*\)|(?:[:-]\s*)?(?:[A-Z][A-Z0-9]+-\d+|#\d+|https?:\/\/|@\w))/i;
 // Only lines with code punctuation or a leading keyword go to the parser.
 const CODE_SHAPED = /[;{}()[\]=]|^(?:import|from|return|def|class|const|let|var|function|if|for|while|print|await|async|public|private|protected|static|using|namespace|package|throw|raise|try|new|val|fun|override)\b/;
 
@@ -259,7 +259,7 @@ function nextCodeLine(file: FileContext, row: number): string {
 
 async function analyzeGroup(file: FileContext, group: TokenGroup): Promise<ScannedComment> {
   const first = group.tokens[0]!;
-  const last = group.tokens[group.tokens.length - 1]!;
+  const last = group.tokens.at(-1)!;
   const textLines = group.tokens.flatMap((t) => t.lines);
   const text = textLines.join("\n");
   const placement = first.indent !== undefined ? "own-line" : "trailing";
@@ -336,7 +336,7 @@ function runsOf(flags: boolean[]): number[][] {
   const runs: number[][] = [];
   flags.forEach((flag, i) => {
     if (!flag) return;
-    if (flags[i - 1]) runs[runs.length - 1]!.push(i);
+    if (flags[i - 1]) runs.at(-1)!.push(i);
     else runs.push([i]);
   });
   return runs;
@@ -378,9 +378,9 @@ export async function newComments(path: string, source: string, baseline: string
       out.push({
         ...c,
         start: spans[0]!.start,
-        end: spans[spans.length - 1]!.end,
+        end: spans.at(-1)!.end,
         line: c.line + rows[0]!,
-        endLine: c.line + rows[rows.length - 1]!,
+        endLine: c.line + rows.at(-1)!,
         text,
         fingerprint: fingerprintOf(text),
         spans,

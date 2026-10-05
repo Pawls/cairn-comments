@@ -17,6 +17,7 @@ import {
   serializeSidecar,
   sidecarPathFor,
   stripComments,
+  type RecordResult,
   type Sidecar,
 } from "@cairn-comments/core";
 import { capturing, readWorkFile, removeWorkFile, writeWorkFile } from "./workfiles.js";
@@ -142,6 +143,38 @@ export interface SyncOptions {
   meta?: ReadonlyMap<string, string>;
 }
 
+interface RecordFileOptions extends SyncOptions {
+  afterCheckout?: boolean;
+  /** Where the seen record lives; undefined where git does not smudge. */
+  gitDir: string | undefined;
+  /** The file's blob in HEAD. */
+  head: Buffer | undefined;
+}
+
+/** Records one working file into its sidecar, writing the sidecar when it changed. */
+async function recordFile(root: string, file: string, original: string, options: RecordFileOptions): Promise<RecordResult> {
+  // After a checkout, comments on disk may belong to the previous commit's sidecar.
+  const seen = options.gitDir && !options.afterCheckout ? readSeen(options.gitDir, file) : undefined;
+  const recorded = await recordComments(file, original, readSidecarSync(root, file), {
+    meta: options.meta,
+    seen,
+    knownOnly: options.afterCheckout,
+    baseline: options.head && decodeExact(options.head),
+  });
+  if (recorded.sidecarChanged) writeSidecar(root, file, recorded.sidecar);
+  return recorded;
+}
+
+/** The recorded file as `then` leaves it, and the ids of the comments it then shows. */
+async function finish(file: string, recorded: RecordResult, then: "sync" | "expand" | "collapse"): Promise<{ source: string; onDisk: string[] }> {
+  if (then === "expand") {
+    const placed = await placeComments(file, await stripComments(file, recorded.source), recorded.sidecar);
+    return { source: placed.source, onDisk: placed.placed };
+  }
+  if (then === "collapse") return { source: await stripComments(file, recorded.source), onDisk: [] };
+  return { source: recorded.source, onDisk: recorded.ids };
+}
+
 /**
  * Records every file into its sidecar, then leaves its comments as they are (`sync`),
  * places all of them (`expand`), or strips them (`collapse`), and finishes with the
@@ -162,26 +195,8 @@ async function rewriteFiles(
     const bytes = readWorkFile(absolute);
     const original = bytes && decodeExact(bytes);
     if (original === undefined) continue;
-    // After a checkout, comments on disk may belong to the previous commit's sidecar.
-    const seen = gitDir && !options.afterCheckout ? readSeen(gitDir, file) : undefined;
-    const head = committed.get(file);
-    const recorded = await recordComments(file, original, readSidecarSync(root, file), {
-      meta: options.meta,
-      seen,
-      knownOnly: options.afterCheckout,
-      baseline: head && decodeExact(head),
-    });
-    if (recorded.sidecarChanged) writeSidecar(root, file, recorded.sidecar);
-    let source = recorded.source;
-    let onDisk = recorded.ids;
-    if (then === "expand") {
-      const placed = await placeComments(file, await stripComments(file, source), recorded.sidecar);
-      source = placed.source;
-      onDisk = placed.placed;
-    } else if (then === "collapse") {
-      source = await stripComments(file, source);
-      onDisk = [];
-    }
+    const recorded = await recordFile(root, file, original, { ...options, gitDir, head: committed.get(file) });
+    const { source, onDisk } = await finish(file, recorded, then);
     if (source !== original) writeWorkFile(absolute, source);
     if (gitDir) writeSeen(gitDir, file, onDisk);
     done.push(file);

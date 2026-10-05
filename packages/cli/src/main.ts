@@ -258,7 +258,7 @@ async function runDemote(args: string[]): Promise<void> {
   if (!positionals.length) throw new Error("demote needs one or more <file>:<line>");
   const root = repoRoot();
   const targets = positionals.map((arg) => {
-    const split = /^(.+):([1-9][0-9]*)$/.exec(arg);
+    const split = /^(.+):([1-9]\d*)$/.exec(arg);
     if (!split) throw new Error(`expected <file>:<line>, got ${arg}`);
     return { file: toRepoPath(root, split[1]!), line: Number(split[2]) };
   });
@@ -287,11 +287,11 @@ async function runHookCommand(args: string[]): Promise<void> {
   await runHook(args[0], (await readStdin()).toString("utf8"));
 }
 
-async function runAgentsMd(): Promise<void> {
+function runAgentsMd(): void {
   process.stdout.write(agentsSnippet());
 }
 
-async function runInit(args: string[]): Promise<void> {
+function runInit(args: string[]): void {
   const { values } = parseArgs({
     args,
     options: {
@@ -307,7 +307,7 @@ async function runInit(args: string[]): Promise<void> {
   for (const line of runPlan(planInit(repoRoot(), options), values["dry-run"])) console.log(line);
 }
 
-async function runUninstall(args: string[]): Promise<void> {
+function runUninstall(args: string[]): void {
   const { values } = parseArgs({ args, options: { "dry-run": { type: "boolean", default: false } } });
   const root = repoRoot();
   for (const line of runPlan(planUninstall(root), values["dry-run"])) console.log(line);
@@ -320,7 +320,7 @@ async function runUninstall(args: string[]): Promise<void> {
   }
 }
 
-async function runMergeSidecar(args: string[]): Promise<void> {
+function runMergeSidecar(args: string[]): void {
   const [base, ours, theirs] = args;
   if (!base || !ours || !theirs) throw new Error("merge-sidecar needs the %O %A %B paths git passes");
   const read = (file: string) => parseSidecar(readFileSync(file, "utf8"));
@@ -340,12 +340,12 @@ async function runRefresh(): Promise<void> {
   await refreshFiles(root);
 }
 
-async function runWorktree(args: string[]): Promise<void> {
+function runWorktree(args: string[]): void {
   if (args[0] !== "add") throw new Error("only `worktree add` is supported");
   console.log(`worktree ready: ${addWorktree(repoRoot(), args.slice(1))}`);
 }
 
-const COMMANDS = new Map<string, (args: string[]) => Promise<void>>([
+const COMMANDS = new Map<string, (args: string[]) => void | Promise<void>>([
   ["clean", (args) => runFilter("clean", args[0])],
   ["smudge", (args) => runFilter("smudge", args[0])],
   ["filter-process", runFilterProcess],
@@ -375,7 +375,9 @@ async function main(argv: string[]): Promise<void> {
   if (command && command !== "help" && command !== "--help") process.exitCode = 2;
 }
 
-main(process.argv.slice(2)).catch((error: unknown) => {
+try {
+  await main(process.argv.slice(2));
+} catch (error: unknown) {
   console.error(`${BRAND}: ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;
-});
+}

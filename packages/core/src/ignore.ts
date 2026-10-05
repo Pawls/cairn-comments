@@ -18,7 +18,10 @@ export function parseIgnore(text: string): Map<string, Set<string>> {
     const [file, fingerprint] = line.split("\t");
     if (!file || !fingerprint) continue;
     let set = ignored.get(file);
-    if (!set) ignored.set(file, (set = new Set()));
+    if (!set) {
+      set = new Set();
+      ignored.set(file, set);
+    }
     set.add(fingerprint);
   }
   return ignored;
@@ -34,7 +37,10 @@ export function appendIgnore(existing: string, entries: readonly IgnoreEntry[]):
     const preview = e.preview.split("\n")[0]!.replace(/\s+/g, " ").trim().slice(0, 72);
     out += `${e.file}\t${e.fingerprint}\t${preview}\n`;
     let set = known.get(e.file);
-    if (!set) known.set(e.file, (set = new Set()));
+    if (!set) {
+      set = new Set();
+      known.set(e.file, set);
+    }
     set.add(e.fingerprint);
   }
   return out;

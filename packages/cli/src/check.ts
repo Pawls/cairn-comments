@@ -48,15 +48,8 @@ const lineAt = (text: string, offset: number) => text.slice(0, offset).split("\n
 export async function check(root: string, options: CheckOptions): Promise<CheckReport> {
   const tracked = trackedFiles(root);
   const named = options.files.map((f) => toRepoPath(root, f));
-  const sources = named.length ? managedFiles(root, named) : managedFiles(root, options.staged ? stagedFiles(root) : tracked);
-  const sidecars = new Set<string>();
-  if (!named.length && !options.staged) tracked.filter(isSidecarPath).forEach((s) => sidecars.add(s));
-  for (const f of named) sidecars.add(isSidecarPath(f) ? f : sidecarPathFor(f));
-  for (const f of sources) sidecars.add(sidecarPathFor(f));
-  if (options.staged) {
-    for (const f of stagedFiles(root, "ACMD")) if (isSidecarPath(f)) sidecars.add(f);
-    for (const f of managedFiles(root, stagedFiles(root, "D"))) sidecars.add(sidecarPathFor(f));
-  }
+  const sources = managedFiles(root, sourcesToCheck(root, named, options.staged, tracked));
+  const sidecars = sidecarsToCheck(root, named, sources, options.staged, tracked);
   const index = new Index(root, [...sources, ...sidecars, ...[...sidecars].map(sourceOf)]);
 
   const problems: Problem[] = await leaks(index, sources);
@@ -68,22 +61,45 @@ export async function check(root: string, options: CheckOptions): Promise<CheckR
     fixes.push(...found.fixes);
   }
   if (options.orphans || options.prune) {
-    for (const orphan of await unplacedEntries(index, sidecars)) {
-      if (options.fix && options.prune) fixes.push({ kind: "pruned-unplaced", id: orphan.id, from: orphan.file });
-      else problems.push(orphan);
-    }
+    const orphans = await unplacedEntries(index, sidecars);
+    if (options.fix && options.prune) fixes.push(...orphans.map((o): Fix => ({ kind: "pruned-unplaced", id: o.id, from: o.file })));
+    else problems.push(...orphans);
   }
 
-  if (!options.fix) {
-    for (const f of fixes) {
-      if (f.kind === "pruned-unplaced") continue;
-      const hint = f.kind === "relocated" ? `\`${BRAND} check --fix\` moves it to ${f.to}` : `\`${BRAND} check --fix\` removes it`;
-      problems.push({ kind: "missing-source", file: f.from, id: f.id, source: sourceOf(f.from), hint });
-    }
-    return { problems: sortProblems(problems), fixes: [] };
-  }
+  if (!options.fix) return { problems: sortProblems([...problems, ...unappliedFixes(fixes)]), fixes: [] };
   await applyFixes(root, fixes, (sidecar) => index.sidecar(sidecar));
   return { problems: sortProblems(problems), fixes };
+}
+
+function sourcesToCheck(root: string, named: string[], staged: boolean, tracked: string[]): string[] {
+  if (named.length) return named;
+  return staged ? stagedFiles(root) : tracked;
+}
+
+/**
+ * The sidecars of the named files and of `sources`; on a full check every tracked sidecar,
+ * and in a commit the staged sidecar changes and the sidecars of staged deletions.
+ */
+function sidecarsToCheck(root: string, named: string[], sources: string[], staged: boolean, tracked: string[]): Set<string> {
+  const sidecars = new Set(!named.length && !staged ? tracked.filter(isSidecarPath) : []);
+  for (const f of named) sidecars.add(isSidecarPath(f) ? f : sidecarPathFor(f));
+  for (const f of sources) sidecars.add(sidecarPathFor(f));
+  if (staged) {
+    for (const f of stagedFiles(root, "ACMD").filter(isSidecarPath)) sidecars.add(f);
+    for (const f of managedFiles(root, stagedFiles(root, "D"))) sidecars.add(sidecarPathFor(f));
+  }
+  return sidecars;
+}
+
+/** Without `--fix`, a sidecar `--fix` would move or remove is reported, with what the fix would do. */
+function unappliedFixes(fixes: Fix[]): Problem[] {
+  const problems: Problem[] = [];
+  for (const f of fixes) {
+    if (f.kind === "pruned-unplaced") continue;
+    const hint = f.kind === "relocated" ? `\`${BRAND} check --fix\` moves it to ${f.to}` : `\`${BRAND} check --fix\` removes it`;
+    problems.push({ kind: "missing-source", file: f.from, id: f.id, source: sourceOf(f.from), hint });
+  }
+  return problems;
 }
 
 /** Index blobs by path, loaded in batches as the check needs them. */
@@ -149,13 +165,19 @@ async function followGoneSources(root: string, index: Index, gone: string[], tra
     const targets = renames ? candidates.filter((c) => c === renames.get(source)) : await placesIn(source, entries, candidates, index);
     const target = targets.length === 1 && !claimed.has(targets[0]!) ? targets[0] : undefined;
     if (target) claimed.add(target);
-    for (const { id } of entries) {
-      if (target) report.fixes.push({ kind: "relocated", id, from: sidecar, to: sidecarPathFor(target) });
-      else if (!targets.length) report.fixes.push({ kind: "pruned", id, from: sidecar });
-      else report.problems.push({ kind: "missing-source", file: sidecar, id, source, hint: `its comments place in more than one file: ${targets.join(", ")}` });
-    }
+    reportGone(report, sidecar, entries, targets, target);
   }
   return report;
+}
+
+/** Each entry of a gone source's sidecar moves to `target`, goes with no target, or is a problem when several files claim it. */
+function reportGone(report: CheckReport, sidecar: string, entries: SidecarEntry[], targets: string[], target: string | undefined): void {
+  const source = sourceOf(sidecar);
+  for (const { id } of entries) {
+    if (target) report.fixes.push({ kind: "relocated", id, from: sidecar, to: sidecarPathFor(target) });
+    else if (!targets.length) report.fixes.push({ kind: "pruned", id, from: sidecar });
+    else report.problems.push({ kind: "missing-source", file: sidecar, id, source, hint: `its comments place in more than one file: ${targets.join(", ")}` });
+  }
 }
 
 /** Entries of `sidecars` that no longer place in their source's blob. */
@@ -194,7 +216,11 @@ async function placesIn(source: string, entries: SidecarEntry[], candidates: str
 
 function sortProblems(problems: Problem[]): Problem[] {
   const key = (p: Problem) => `${p.file}\0${String("line" in p ? p.line : 0).padStart(9, "0")}\0${p.id ?? ""}`;
-  return problems.sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
+  return problems.sort((a, b) => {
+    const [ka, kb] = [key(a), key(b)];
+    if (ka === kb) return 0;
+    return ka < kb ? -1 : 1;
+  });
 }
 
 /** Edits the working sidecars (falling back to the staged entry) and stages every one it touched. */
@@ -203,7 +229,10 @@ async function applyFixes(root: string, fixes: Fix[], staged: (sidecar: string) 
   const working = new Map<string, Sidecar>();
   const get = async (sidecar: string) => {
     let s = working.get(sidecar);
-    if (!s) working.set(sidecar, (s = await readSidecar(root, sourceOf(sidecar))));
+    if (!s) {
+      s = await readSidecar(root, sourceOf(sidecar));
+      working.set(sidecar, s);
+    }
     return s;
   };
   for (const fix of fixes) {
@@ -220,21 +249,24 @@ async function applyFixes(root: string, fixes: Fix[], staged: (sidecar: string) 
   stage(root, [...working.keys()].filter((s) => existsSync(path.join(root, s)) || tracked.has(s)));
 }
 
+/** ` (text)`, or nothing when there is no text. */
+const aside = (text: string | undefined) => (text ? " (" + text + ")" : "");
+
+function formatFix(f: Fix): string {
+  if (f.kind === "relocated") return `relocated ${f.id}: ${f.from} -> ${f.to}`;
+  if (f.kind === "pruned") return `removed ${f.id} from ${f.from}: ${sourceOf(f.from)} is gone`;
+  return `removed ${f.id} from ${f.from}: it no longer places in ${sourceOf(f.from)}`;
+}
+
+function formatProblem(p: Problem): string {
+  if (p.kind === "expanded" && !p.text) return `${p.file}:${p.line}: sigil comment committed (${p.id})`;
+  if (p.kind === "expanded") return `${p.file}:${p.line}: comment committed with its text${aside(p.id)}: ${p.text}`;
+  if (p.kind === "missing-source") return `${p.file}: ${p.id} has no source; ${p.source} is gone${aside(p.hint)}`;
+  return `${p.file}: ${p.id} no longer places in ${p.source}${aside(p.scope && "last in " + p.scope)}: ${p.text}`;
+}
+
 export function formatCheck(report: CheckReport): string {
-  const lines: string[] = [];
-  for (const f of report.fixes) {
-    if (f.kind === "relocated") lines.push(`relocated ${f.id}: ${f.from} -> ${f.to}`);
-    else if (f.kind === "pruned") lines.push(`removed ${f.id} from ${f.from}: ${sourceOf(f.from)} is gone`);
-    else lines.push(`removed ${f.id} from ${f.from}: it no longer places in ${sourceOf(f.from)}`);
-  }
-  for (const p of report.problems) {
-    if (p.kind === "expanded" && !p.text) {
-      lines.push(`${p.file}:${p.line}: sigil comment committed (${p.id})`);
-    } else if (p.kind === "expanded") {
-      lines.push(`${p.file}:${p.line}: comment committed with its text${p.id ? ` (${p.id})` : ""}: ${p.text}`);
-    } else if (p.kind === "missing-source") lines.push(`${p.file}: ${p.id} has no source; ${p.source} is gone${p.hint ? ` (${p.hint})` : ""}`);
-    else lines.push(`${p.file}: ${p.id} no longer places in ${p.source}${p.scope ? ` (last in ${p.scope})` : ""}: ${p.text}`);
-  }
+  const lines = [...report.fixes.map(formatFix), ...report.problems.map(formatProblem)];
   if (report.problems.some((p) => p.kind === "expanded")) {
     lines.push(`hint: this clone commits without the filter; run \`${BRAND} init\`, then \`${BRAND} collapse\` and commit the result`);
   }

@@ -52,7 +52,7 @@ interface Payload {
   comments: { relRow: number; kind: CommentSite["kind"]; body: string; meta: [string, string][]; from: string }[];
 }
 
-const sameText = (a: string, b: string) => a.replace(/\r\n/g, "\n") === b.replace(/\r\n/g, "\n");
+const sameText = (a: string, b: string) => a.replaceAll("\r\n", "\n") === b.replaceAll("\r\n", "\n");
 
 /** A document's text split into lines, for reading a copy against text the editor no longer shows. */
 class Lines {

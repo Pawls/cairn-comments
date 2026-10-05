@@ -169,7 +169,7 @@ export function shellQuote(arg: string, platform: NodeJS.Platform = process.plat
     if (/[%"^]/.test(arg)) throw new Error(`${arg} cannot be passed through cmd.exe; rename the file.`);
     return `"${arg}"`;
   }
-  return `'${arg.replaceAll("'", `'\\''`)}'`;
+  return "'" + arg.replaceAll("'", String.raw`'\''`) + "'";
 }
 
 /**
@@ -179,9 +179,11 @@ export function shellQuote(arg: string, platform: NodeJS.Platform = process.plat
  */
 export function runCli(cli: string, args: string, cwd: string, input?: string, okCodes: readonly number[] = [0]): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = exec(`${cli} ${args}`, { cwd, encoding: "utf8", maxBuffer: 1 << 28 }, (error, stdout, stderr) =>
-      error && !okCodes.includes(typeof error.code === "number" ? error.code : -1) ? reject(new Error(stderr.trim() || error.message)) : resolve(stdout),
-    );
+    const child = exec(`${cli} ${args}`, { cwd, encoding: "utf8", maxBuffer: 1 << 28 }, (error, stdout, stderr) => {
+      const code = typeof error?.code === "number" ? error.code : -1;
+      if (error && !okCodes.includes(code)) reject(new Error(stderr.trim() || error.message));
+      else resolve(stdout);
+    });
     child.stdin?.end(input ?? "");
   });
 }

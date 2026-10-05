@@ -15,7 +15,8 @@ function parserFor(spec: LanguageSpec): Promise<Parser> {
     parser = (async () => {
       // Loaded on demand: a one-shot filter run on a marker-free file never pays for it.
       const { Language, Parser } = await import("web-tree-sitter");
-      await (ready ??= Parser.init());
+      ready ??= Parser.init();
+      await ready;
       const p = new Parser();
       p.setLanguage(await Language.load(resolveWasm(spec)));
       return p;

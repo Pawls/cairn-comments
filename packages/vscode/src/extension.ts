@@ -124,7 +124,7 @@ function locate(document: vscode.TextDocument): Located | undefined {
 }
 
 /** The sigil comments a document shows inline: an agent worktree's, or a file after `expand`. */
-async function markersIn(document: vscode.TextDocument, located: Located): Promise<Marker[]> {
+function markersIn(document: vscode.TextDocument, located: Located): Promise<Marker[]> {
   return findMarkers(languageForPath(located.file)!, document.getText());
 }
 
@@ -372,7 +372,9 @@ export function activate(context: vscode.ExtensionContext): TestApi {
   };
 }
 
-export function deactivate(): void {}
+export function deactivate(): void {
+  // Nothing to release: activate registers every disposable on context.subscriptions.
+}
 
 /** Stale comments across the repository through the CLI, as CI would see them. */
 async function staleComments(): Promise<StaleComment[] | string> {

@@ -93,7 +93,8 @@ function list<T>(id: string, empty: string, toItem: (item: T) => vscode.TreeItem
         found = `${BRAND}: ${error instanceof Error ? error.message : String(error)}`;
       }
       state.items = typeof found === "string" ? [] : found;
-      view.message = typeof found === "string" ? found : found.length ? undefined : empty;
+      if (typeof found === "string") view.message = found;
+      else view.message = found.length ? undefined : empty;
       view.badge = state.items.length ? { value: state.items.length, tooltip: `${state.items.length}` } : undefined;
       changed.fire();
     },

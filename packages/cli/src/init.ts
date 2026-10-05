@@ -169,7 +169,8 @@ function hookChange(root: string, name: string, script: string): Change | undefi
     writeFileSync(hook, script);
     chmodSync(hook, 0o755);
   };
-  const what = foreign ? "install; the previous hook now runs after it as " + chainedName(name) : existing === undefined ? "install" : "update";
+  let what = existing === undefined ? "install" : "update";
+  if (foreign) what = "install; the previous hook now runs after it as " + chainedName(name);
   const shared = isSharedHooksDir(root, dir) ? ` (a shared hooks directory from core.hooksPath; inert in repositories without ${BRAND})` : "";
   return { what: `${hook}: ${what}${shared}`, apply: write };
 }
@@ -199,34 +200,57 @@ export function agentsSnippet(): string {
   ].join("\n");
 }
 
+/** `text` without the LF and CRLF line breaks that end it. A loop, because `/(\r?\n)+$/` retries every inner run. */
+function withoutTrailingLineBreaks(text: string): string {
+  let end = text.length;
+  while (text.endsWith("\n", end)) end -= text.endsWith("\r\n", end) ? 2 : 1;
+  return text.slice(0, end);
+}
+
+interface AroundSnippet {
+  before: string;
+  /** From the line after the end marker. */
+  after: string;
+}
+
+/** The text of AGENTS.md around the snippet; undefined when the markers are missing. */
+function aroundSnippet(text: string): AroundSnippet | undefined {
+  const begin = text.indexOf(SNIPPET_BEGIN);
+  const end = text.indexOf(SNIPPET_END, begin);
+  if (begin === -1 || end === -1) return undefined;
+  return { before: text.slice(0, begin), after: text.slice(end + SNIPPET_END.length).replace(/^\r?\n/, "") };
+}
+
+/** `existing` with `snippet` appended after a blank line. */
+function appendSnippet(existing: string, snippet: string, eol: string): string {
+  if (!existing || existing.endsWith(eol + eol)) return existing + snippet;
+  return existing + (existing.endsWith(eol) ? eol : eol + eol) + snippet;
+}
+
+/** The text without the snippet; when nothing followed it, the text before it keeps one final line break. */
+function withoutSnippet({ before, after }: AroundSnippet, eol: string): string {
+  if (after) return before + after;
+  return withoutTrailingLineBreaks(before) + (before.trim() ? eol : "");
+}
+
 /** Adds the snippet to AGENTS.md, replaces the copy between its markers, or (`remove`) takes it out. */
 function agentsMdChange(root: string, remove: boolean): Change | undefined {
   const file = path.join(root, "AGENTS.md");
   const existing = existsSync(file) ? readFileSync(file, "utf8") : "";
   const eol = existing.includes("\r\n") ? "\r\n" : "\n";
+  const around = aroundSnippet(existing);
+  if (remove) return around && agentsMdRemoval(file, withoutSnippet(around, eol));
   const snippet = agentsSnippet().replaceAll("\n", eol);
-  const begin = existing.indexOf(SNIPPET_BEGIN);
-  const end = existing.indexOf(SNIPPET_END, begin);
-  const found = begin !== -1 && end !== -1;
-  if (remove && !found) return undefined;
-  let next: string;
-  if (found) {
-    const after = existing.slice(end + SNIPPET_END.length).replace(/^\r?\n/, "");
-    const before = existing.slice(0, begin);
-    next = remove ? (after ? before + after : before.replace(/(\r?\n)+$/, "") + (before.trim() ? eol : "")) : before + snippet + after;
-  } else {
-    const gap = !existing ? "" : existing.endsWith(eol + eol) ? "" : existing.endsWith(eol) ? eol : eol + eol;
-    next = existing + gap + snippet;
-  }
+  const next = around ? around.before + snippet + around.after : appendSnippet(existing, snippet, eol);
   if (next === existing) return undefined;
-  if (remove) {
-    const empty = !next.trim();
-    return {
-      what: `AGENTS.md: ${empty ? "delete (only the sigil convention was in it)" : "remove the sigil convention"}`,
-      apply: () => (empty ? rmSync(file, { force: true }) : writeFileSync(file, next)),
-    };
-  }
-  return { what: `AGENTS.md: ${existing ? (found ? "update" : "add") + " the sigil convention" : "create with the sigil convention"}`, apply: () => writeFileSync(file, next) };
+  let what = "create with the sigil convention";
+  if (existing) what = around ? "update the sigil convention" : "add the sigil convention";
+  return { what: `AGENTS.md: ${what}`, apply: () => writeFileSync(file, next) };
+}
+
+function agentsMdRemoval(file: string, next: string): Change {
+  if (!next.trim()) return { what: "AGENTS.md: delete (only the sigil convention was in it)", apply: () => rmSync(file, { force: true }) };
+  return { what: "AGENTS.md: remove the sigil convention", apply: () => writeFileSync(file, next) };
 }
 
 function settingsChange(root: string, harness: string, change: SettingsChange | undefined, installing: boolean): Change | undefined {
@@ -234,9 +258,13 @@ function settingsChange(root: string, harness: string, change: SettingsChange | 
   const relative = path.relative(root, change.file);
   // A linked worktree's copy is named in full; a `../` path would hide which worktree it is.
   const file = (relative.startsWith("..") ? change.file : relative).split(path.sep).join("/");
-  const what =
-    change.next === null ? "delete (nothing else was in it)" : !change.existed ? `create with the ${harness} hook` : `${installing ? "set" : "remove"} the ${harness} hook`;
-  return { what: `${file}: ${what}`, apply: () => applySettingsChange(change) };
+  return { what: `${file}: ${settingsWhat(change, harness, installing)}`, apply: () => applySettingsChange(change) };
+}
+
+function settingsWhat(change: SettingsChange, harness: string, installing: boolean): string {
+  if (change.next === null) return "delete (nothing else was in it)";
+  if (!change.existed) return `create with the ${harness} hook`;
+  return `${installing ? "set" : "remove"} the ${harness} hook`;
 }
 
 /**
@@ -289,7 +317,7 @@ function hookRemoval(root: string, name: string, configured: boolean): Change | 
   }
   const restore = existsSync(chained);
   return {
-    what: `${hook}: ${restore ? `remove; ${chainedName(name)} goes back to ${name}` : "remove"}`,
+    what: `${hook}: ${restore ? "remove; " + chainedName(name) + " goes back to " + name : "remove"}`,
     apply: () => (restore ? renameSync(chained, hook) : rmSync(hook, { force: true })),
   };
 }
@@ -300,6 +328,30 @@ function otherWorktreeConfig(wt: string): string[] {
   return list.split(/\r?\n/).filter((l) => l && !l.startsWith(`filter.${FILTER_DRIVER}.`));
 }
 
+/** A `git config --get-regexp` pattern matching every key in `section`. */
+function sectionKeys(section: string): string {
+  return "^" + section.replaceAll(".", String.raw`\.`) + String.raw`\.`;
+}
+
+/** Agent worktrees carry their own smudge settings (`worktree add`); this removes them. */
+function worktreeConfigRemovals(root: string): Change[] {
+  const changes: Change[] = [];
+  const worktrees = worktreeRoots(root);
+  for (const wt of worktrees) {
+    if (gitQuiet(["config", "--worktree", "--get-regexp", sectionKeys(`filter.${FILTER_DRIVER}`)], wt) === undefined) continue;
+    changes.push({
+      what: `git config --worktree (${wt}): remove [filter "${FILTER_DRIVER}"]`,
+      apply: () => git(["config", "--worktree", "--remove-section", `filter.${FILTER_DRIVER}`], { cwd: wt }),
+    });
+  }
+  // After the per-worktree removals, which need the extension on. Kept if anything else now relies on it.
+  const byInit = localConfig(root, WORKTREE_CONFIG_MARK) === "true";
+  if (byInit && !worktrees.some((wt) => otherWorktreeConfig(wt).length)) {
+    changes.push({ what: "git config: unset extensions.worktreeConfig (init turned it on)", apply: () => git(["config", "--local", "--unset", "extensions.worktreeConfig"], { cwd: root }) });
+  }
+  return changes;
+}
+
 /**
  * Every change `uninstall` would make. The sidecars are user data and stay; `promote --all`
  * first turns their comments into ordinary ones.
@@ -307,27 +359,12 @@ function otherWorktreeConfig(wt: string): string[] {
 export function planUninstall(root: string): Change[] {
   const changes: (Change | undefined)[] = [];
   const configured = localConfig(root, `filter.${FILTER_DRIVER}.clean`) !== undefined;
-  const worktreeConfigByInit = localConfig(root, WORKTREE_CONFIG_MARK) === "true";
   for (const section of [`filter.${FILTER_DRIVER}`, `merge.${FILTER_DRIVER}`]) {
-    if (gitQuiet(["config", "--local", "--get-regexp", `^${section.replace(".", "\\.")}\\.`], root) !== undefined) {
+    if (gitQuiet(["config", "--local", "--get-regexp", sectionKeys(section)], root) !== undefined) {
       changes.push({ what: `git config: remove [${section.replace(".", ' "')}"]`, apply: () => git(["config", "--local", "--remove-section", section], { cwd: root }) });
     }
   }
-  // Agent worktrees carry their own smudge settings (worktree add).
-  const worktrees = worktreeRoots(root);
-  if (localConfig(root, "extensions.worktreeConfig") === "true") {
-    for (const wt of worktrees) {
-      if (gitQuiet(["config", "--worktree", "--get-regexp", `^filter\\.${FILTER_DRIVER}\\.`], wt) === undefined) continue;
-      changes.push({
-        what: `git config --worktree (${wt}): remove [filter "${FILTER_DRIVER}"]`,
-        apply: () => git(["config", "--worktree", "--remove-section", `filter.${FILTER_DRIVER}`], { cwd: wt }),
-      });
-    }
-    // After the per-worktree removals, which need the extension on. Kept if anything else now relies on it.
-    if (worktreeConfigByInit && !worktrees.some((wt) => otherWorktreeConfig(wt).length)) {
-      changes.push({ what: "git config: unset extensions.worktreeConfig (init turned it on)", apply: () => git(["config", "--local", "--unset", "extensions.worktreeConfig"], { cwd: root }) });
-    }
-  }
+  if (localConfig(root, "extensions.worktreeConfig") === "true") changes.push(...worktreeConfigRemovals(root));
   changes.push(attributesChange(root, [], [...attributeLines(), ...LEGACY_ATTRIBUTES]));
   for (const name of ["pre-commit", ...REFRESH_HOOKS]) changes.push(hookRemoval(root, name, configured));
   for (const harness of Object.keys(ADAPTERS)) {

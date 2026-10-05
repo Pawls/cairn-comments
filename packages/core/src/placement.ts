@@ -2,7 +2,7 @@ import type { Node } from "web-tree-sitter";
 import { bodyHash, bodyOf, nodeHash } from "./anchors.js";
 import { resolveIds } from "./ids.js";
 import { languageForPath, type LanguageSpec } from "./languages.js";
-import { applySplices, dominantEol, lineIndexAt, splitLines, type Line, type Splice } from "./lines.js";
+import { applySplices, dominantEol, lineIndexAt, splitLines, trailingRunStart, type Line, type Splice } from "./lines.js";
 import { STALE_TAG, markersFrom, type Marker } from "./markers.js";
 import { commentsIn, parseWith } from "./parser.js";
 import { normalizeBody, type Sidecar, type SidecarEntry } from "./sidecar.js";
@@ -55,37 +55,54 @@ interface Placement {
 /** Whitespace as runs, so the metadata line stays readable: four spaces are `4s`, a tab `1t`. */
 function encodeWhitespace(ws: string): string {
   if (!ws) return "0";
-  return [...ws.matchAll(/ +|\t+/g)].map((run) => `${run[0].length}${run[0][0] === " " ? "s" : "t"}`).join("");
+  return [...ws.matchAll(/ +|\t+/g)].map((run) => `${run[0].length}${run[0].startsWith(" ") ? "s" : "t"}`).join("");
 }
 
 function decodeWhitespace(value: string | undefined): string | undefined {
-  if (value === undefined || !/^(?:0|(?:\d+[st])+)$/.test(value)) return undefined;
+  if (!value) return undefined;
   if (value === "0") return "";
-  return [...value.matchAll(/(\d+)([st])/g)].map((run) => (run[2] === "s" ? " " : "\t").repeat(Number(run[1]))).join("");
+  // Sticky: each run must start where the last one ended, so anything but runs fails.
+  const run = /(\d+)([st])/y;
+  let decoded = "";
+  while (run.lastIndex < value.length) {
+    const m = run.exec(value);
+    if (!m) return undefined;
+    decoded += (m[2] === "s" ? " " : "\t").repeat(Number(m[1]));
+  }
+  return decoded;
 }
 
+const EOF_BY_NAME = new Map([
+  ["crlf", "\r\n"],
+  ["lf", "\n"],
+]);
+
+/** A count's metadata value; a zero count is left out. */
+const countMeta = (n: number | undefined) => (n ? String(n) : undefined);
+
 function placementMeta(p: Placement): Map<string, string> {
-  const meta = new Map<string, string>([["pos", p.pos]]);
-  if (p.scope !== undefined) meta.set("scope", p.scope);
-  if (p.body !== undefined) meta.set("body", p.body);
-  if (p.stmts !== undefined) meta.set("stmts", p.stmts.join(".") || "-");
-  if (p.in !== undefined) meta.set("in", p.in.m ? `${p.in.k}.${p.in.m}` : String(p.in.k));
-  if (p.decl !== undefined) meta.set("decl", p.decl);
-  if (p.node !== undefined) meta.set("node", p.node);
-  if (p.nth) meta.set("nth", String(p.nth));
-  if (p.skip) meta.set("skip", String(p.skip));
-  if (p.seq) meta.set("seq", String(p.seq));
-  if (p.indent !== undefined) meta.set("indent", encodeWhitespace(p.indent));
-  if (p.gap !== undefined) meta.set("gap", encodeWhitespace(p.gap));
-  if (p.eof !== undefined) meta.set("eof", p.eof === "\r\n" ? "crlf" : "lf");
-  return meta;
+  const fields: [string, string | undefined][] = [
+    ["pos", p.pos],
+    ["scope", p.scope],
+    ["body", p.body],
+    ["stmts", p.stmts && (p.stmts.join(".") || "-")],
+    ["in", p.in && (p.in.m ? `${p.in.k}.${p.in.m}` : String(p.in.k))],
+    ["decl", p.decl],
+    ["node", p.node],
+    ["nth", countMeta(p.nth)],
+    ["skip", countMeta(p.skip)],
+    ["seq", countMeta(p.seq)],
+    ["indent", p.indent === undefined ? undefined : encodeWhitespace(p.indent)],
+    ["gap", p.gap === undefined ? undefined : encodeWhitespace(p.gap)],
+    ["eof", p.eof && (p.eof === "\r\n" ? "crlf" : "lf")],
+  ];
+  return new Map(fields.filter((field): field is [string, string] => field[1] !== undefined));
 }
 
 function placementOf(entry: SidecarEntry): Placement | undefined {
   const pos = entry.meta.get("pos");
   if (pos !== "before" && pos !== "after" && pos !== "trail" && pos !== "row") return undefined;
   const count = (key: string) => Number(entry.meta.get(key) ?? 0) || 0;
-  const eof = entry.meta.get("eof");
   const stmts = entry.meta.get("stmts");
   const within = /^(\d+)(?:\.(\d+))?$/.exec(entry.meta.get("in") ?? "");
   return {
@@ -101,7 +118,7 @@ function placementOf(entry: SidecarEntry): Placement | undefined {
     seq: count("seq"),
     indent: decodeWhitespace(entry.meta.get("indent")),
     gap: decodeWhitespace(entry.meta.get("gap")),
-    eof: eof === "crlf" ? "\r\n" : eof === "lf" ? "\n" : undefined,
+    eof: EOF_BY_NAME.get(entry.meta.get("eof") ?? ""),
   };
 }
 
@@ -175,7 +192,7 @@ class Layout {
     const at = line.start + indent.length;
     const leaf = this.root.descendantForIndex(at, at);
     // A line inside a multi-line string or template starts in the middle of a token.
-    if (!leaf || leaf.startIndex !== at) return { kind: "continuation", indent };
+    if (leaf?.startIndex !== at) return { kind: "continuation", indent };
     if (this.spec.commentTypes.includes(leaf.type)) return { kind: "comment", indent };
     let node = leaf;
     // Python's `block` starts at its first statement; climbing into it would take the whole body.
@@ -185,9 +202,9 @@ class Layout {
 
   private pathOf(scope: Node): string {
     const names: string[] = [];
-    const types = [...this.spec.functionTypes, ...this.spec.namespaceTypes];
+    const types = new Set([...this.spec.functionTypes, ...this.spec.namespaceTypes]);
     for (let n: Node | null = scope; n; n = n.parent) {
-      if (!types.includes(n.type)) continue;
+      if (!types.has(n.type)) continue;
       const name = scopeName(n);
       if (name !== undefined) names.unshift(name);
     }
@@ -219,13 +236,19 @@ class Layout {
 
   hashOf(node: Node): string {
     let hash = this.hashes.get(node.id);
-    if (hash === undefined) this.hashes.set(node.id, (hash = nodeHash(this.spec, node)));
+    if (hash === undefined) {
+      hash = nodeHash(this.spec, node);
+      this.hashes.set(node.id, hash);
+    }
     return hash;
   }
 
   bodyHashOf(scope: Node): string {
     let hash = this.bodies.get(scope.id);
-    if (hash === undefined) this.bodies.set(scope.id, (hash = bodyHash(this.spec, scope)));
+    if (hash === undefined) {
+      hash = bodyHash(this.spec, scope);
+      this.bodies.set(scope.id, hash);
+    }
     return hash;
   }
 
@@ -336,7 +359,8 @@ function removals(layout: Layout, markers: readonly Marker[]): { rows: Set<numbe
       for (let r = first; r <= last; r++) rows.add(r);
     } else {
       const line = layout.lines[lineIndexAt(layout.lines, m.start)]!;
-      const gap = /[ \t]*$/.exec(layout.source.slice(line.start, m.start))![0];
+      const before = layout.source.slice(line.start, m.start);
+      const gap = before.slice(trailingRunStart(before, " \t"));
       trailing.push({ start: m.start - gap.length, end: m.end, text: "" });
     }
   }
@@ -370,8 +394,8 @@ export async function stripComments(path: string, source: string): Promise<strin
 function runsOf(rows: ReadonlySet<number>): [number, number][] {
   const runs: [number, number][] = [];
   for (const row of [...rows].sort((a, b) => a - b)) {
-    const current = runs[runs.length - 1];
-    if (current && current[1] === row - 1) current[1] = row;
+    const current = runs.at(-1);
+    if (current?.[1] === row - 1) current[1] = row;
     else runs.push([row, row]);
   }
   return runs;
@@ -418,9 +442,10 @@ function placementFor(layout: Layout, m: Marker, aiRows: Set<number>, cleanRow: 
 
   if (m.placement === "trailing") {
     const line = lines[first]!;
-    const gap = /[ \t]*$/.exec(layout.source.slice(line.start, m.start))![0];
+    const before = layout.source.slice(line.start, m.start);
+    const gap = before.slice(trailingRunStart(before, " \t"));
     const node = rows[first]!.node;
-    if (node && node.startPosition.row === first) return anchored("trail", node, 0, "", gap);
+    if (node?.startPosition.row === first) return anchored("trail", node, 0, "", gap);
     return { pos: "row", nth: 0, skip: cleanRow(first), seq: 0, gap };
   }
 
@@ -585,8 +610,7 @@ function resolve(layout: Layout, entries: readonly SidecarEntry[]): Resolved {
   const placed: string[] = [];
   const staleRows: StalePlacement[] = [];
   const renamed: string[] = [];
-  const { lines, rows, spec } = layout;
-  const clamp = (row: number, low: number, high: number) => Math.min(Math.max(row, low), high);
+  const { rows, spec } = layout;
 
   entries.forEach((entry, order) => {
     const p = placementOf(entry);
@@ -603,21 +627,7 @@ function resolve(layout: Layout, entries: readonly SidecarEntry[]): Resolved {
       if (!found) return;
       stale = found.stale;
       if (found.renamed) renamed.push(entry.id);
-      const start = found.node.startPosition.row;
-      if (p.pos === "trail") {
-        row = start;
-      } else if (p.pos === "before") {
-        let low = start - 1;
-        while (low >= 0 && !layout.isContent(low)) low--;
-        row = clamp(start - p.skip, low + 1, start);
-        defaultIndent = rows[start]!.indent;
-      } else {
-        const end = layout.lastCodeRow(found.node);
-        let high = end + 1;
-        while (high < rows.length && !layout.isContent(high)) high++;
-        row = clamp(end + 1 + p.skip, end + 1, high);
-        defaultIndent = rows[start]!.indent;
-      }
+      ({ row, defaultIndent } = targetRow(layout, p, found.node));
     }
 
     placed.push(entry.id);
@@ -625,7 +635,7 @@ function resolve(layout: Layout, entries: readonly SidecarEntry[]): Resolved {
     const tag = stale ? STALE_TAG + " " : "";
     if (p.pos === "trail" || (p.pos === "row" && p.gap !== undefined)) {
       const onRow = trailing.get(row) ?? [];
-      onRow.push({ id: entry.id, text: `${p.gap ?? "  "}${spec.lineSigil}${entry.id} ${tag}${body.split("\n").join(" ")}` });
+      onRow.push({ id: entry.id, text: `${p.gap ?? "  "}${spec.lineSigil}${entry.id} ${tag}${body.replaceAll("\n", " ")}` });
       trailing.set(row, onRow);
       return;
     }
@@ -641,18 +651,40 @@ function resolve(layout: Layout, entries: readonly SidecarEntry[]): Resolved {
     });
   });
 
-  // A line holds one trailing comment: any other, or one after a comment already there, goes above it.
+  oneTrailingPerLine(layout, trailing, own);
+  return { own, trailing, placed, stale: staleRows, renamed };
+}
+
+const clamp = (row: number, low: number, high: number) => Math.min(Math.max(row, low), high);
+
+/** The row a located entry goes on, and the indent its comment takes unless it recorded its own. */
+function targetRow(layout: Layout, p: Placement, node: Node): { row: number; defaultIndent: string } {
+  const start = node.startPosition.row;
+  if (p.pos === "trail") return { row: start, defaultIndent: "" };
+  const defaultIndent = layout.rows[start]!.indent;
+  if (p.pos === "before") {
+    let low = start - 1;
+    while (low >= 0 && !layout.isContent(low)) low--;
+    return { row: clamp(start - p.skip, low + 1, start), defaultIndent };
+  }
+  const end = layout.lastCodeRow(node);
+  let high = end + 1;
+  while (high < layout.rows.length && !layout.isContent(high)) high++;
+  return { row: clamp(end + 1 + p.skip, end + 1, high), defaultIndent };
+}
+
+/** A line holds one trailing comment: any other, or one after a comment already there, moves to `own` above it. */
+function oneTrailingPerLine(layout: Layout, trailing: Map<number, { id: string; text: string }[]>, own: Insertion[]): void {
   for (const [row, items] of trailing) {
-    const pastEnd = row >= lines.length;
+    const pastEnd = row >= layout.lines.length;
     const keep = pastEnd || layout.endsWithComment(row) ? [] : items.slice(0, 1);
     for (const extra of items.slice(keep.length)) {
-      const indent = rows[row]?.indent ?? "";
+      const indent = layout.rows[row]?.indent ?? "";
       const text = extra.text.trimStart();
       own.push({ id: extra.id, row, seq: Number.MAX_SAFE_INTEGER, order: own.length, lines: [indent + text] });
     }
     trailing.set(row, keep);
   }
-  return { own, trailing, placed, stale: staleRows, renamed };
 }
 
 /** The terminator of `row`, else the one before it, else the file's usual one. */
@@ -693,37 +725,45 @@ function placeIn(layout: Layout, sidecar: Sidecar): PlaceResult {
   const { own, trailing, placed, stale, renamed } = resolve(layout, managed);
   const { lines, source } = layout;
   const splices: Splice[] = [];
-  for (const [row, items] of trailing) {
-    if (items.length && row < lines.length) splices.push({ start: lines[row]!.contentEnd, end: lines[row]!.contentEnd, text: items[0]!.text });
-  }
   const sites: CommentSite[] = [];
   for (const [row, items] of trailing) {
-    if (items.length && row < lines.length) sites.push({ id: items[0]!.id, row, kind: "trail" });
+    if (!items.length || row >= lines.length) continue;
+    splices.push({ start: lines[row]!.contentEnd, end: lines[row]!.contentEnd, text: items[0]!.text });
+    sites.push({ id: items[0]!.id, row, kind: "trail" });
   }
   const byRow = new Map<number, Insertion[]>();
   for (const ins of own) byRow.set(ins.row, [...(byRow.get(ins.row) ?? []), ins]);
   for (const [row, group] of byRow) {
     group.sort((a, b) => a.seq - b.seq || a.order - b.order);
     for (const ins of group) sites.push({ id: ins.id, row, kind: "own" });
-    const text = group.flatMap((g) => g.lines);
-    if (row < lines.length) {
-      const eol = eolFor(layout, row);
-      splices.push({ start: lines[row]!.start, end: lines[row]!.start, text: text.map((l) => l + eol).join("") });
-    } else {
-      const terminated = !source || /\n$/.test(source);
-      const eol = (!terminated && group.find((g) => g.eof)?.eof) || eolFor(layout, lines.length - 1);
-      splices.push({ start: source.length, end: source.length, text: terminated ? text.map((l) => l + eol).join("") : eol + text.join(eol) });
-    }
+    splices.push(ownLinesSplice(layout, row, group));
   }
   const placedSet = new Set(placed);
+  sites.sort((a, b) => a.row - b.row || kindOrder(a) - kindOrder(b));
   return {
     source: applySplices(source, splices),
     placed,
     unplaced: managed.filter((e) => e.body && !placedSet.has(e.id)).map((e) => e.id),
     stale,
     renamed,
-    sites: sites.sort((a, b) => a.row - b.row || (a.kind === b.kind ? 0 : a.kind === "own" ? -1 : 1)),
+    sites,
   };
+}
+
+/** On one row, own-line comments come before the trailing one. */
+const kindOrder = (site: CommentSite) => (site.kind === "own" ? 0 : 1);
+
+/** Inserts the own-line comments of `group` above `row`, or appends them when `row` is past the last line. */
+function ownLinesSplice(layout: Layout, row: number, group: Insertion[]): Splice {
+  const { lines, source } = layout;
+  const text = group.flatMap((g) => g.lines);
+  if (row < lines.length) {
+    const eol = eolFor(layout, row);
+    return { start: lines[row]!.start, end: lines[row]!.start, text: text.map((l) => l + eol).join("") };
+  }
+  const terminated = !source || source.endsWith("\n");
+  const eol = (!terminated && group.find((g) => g.eof)?.eof) || eolFor(layout, lines.length - 1);
+  return { start: source.length, end: source.length, text: terminated ? text.map((l) => l + eol).join("") : eol + text.join(eol) };
 }
 
 /** Inserts each placement entry's comment into a stripped file; entries that no longer match stay out. */
@@ -762,7 +802,7 @@ export interface RecordOptions {
 /** Whether `now`'s function changed since `entry` was placed, somewhere other than this working file. */
 function unseenChange(entry: SidecarEntry, now: Placement, baselineBodies: ReadonlyMap<string, string> | undefined): boolean {
   const before = placementOf(entry);
-  if (!baselineBodies || !before || before.body === undefined || now.scope === undefined || before.scope !== now.scope) return false;
+  if (!baselineBodies || before?.body === undefined || now.scope === undefined || before.scope !== now.scope) return false;
   return before.body !== now.body && baselineBodies.get(now.scope) === now.body;
 }
 
@@ -791,6 +831,29 @@ function setPlacement(entry: SidecarEntry, placement: Placement): boolean {
   for (const k of PLACEMENT_KEYS) entry.meta.delete(k);
   for (const [k, v] of wanted) entry.meta.set(k, v);
   return true;
+}
+
+/**
+ * Moves a comment's text into its entry, creating the entry for a new comment. `written`
+ * when the body changed; a trailing comment's text matches a multi-line body joined with spaces.
+ */
+function recordBody(entries: SidecarEntry[], id: string, m: Marker, meta: ReadonlyMap<string, string> | undefined): { entry: SidecarEntry | undefined; written: boolean } {
+  const entry = entries.find((e) => e.id === id);
+  const text = m.text === undefined ? undefined : normalizeBody(m.text);
+  const flat = (body: string) => (m.placement === "trailing" ? body.replaceAll("\n", " ") : body);
+  if (text === undefined || (entry && flat(entry.body) === text)) return { entry, written: false };
+  const target = entry ?? { id, meta: new Map(), body: text };
+  if (!entry) entries.push(target);
+  target.body = text;
+  for (const [k, v] of meta ?? []) target.meta.set(k, v);
+  return { entry: target, written: true };
+}
+
+/** Removes `STALE_TAG`, which starts at `tagStart`, and one space beside it. */
+function staleTagRemoval(source: string, tagStart: number): Splice {
+  const tagEnd = tagStart + STALE_TAG.length;
+  if (source[tagEnd] === " ") return { start: tagStart, end: tagEnd + 1, text: "" };
+  return { start: tagStart - 1, end: tagEnd, text: "" };
 }
 
 /**
@@ -859,29 +922,13 @@ export async function recordComments(path: string, source: string, sidecar: Side
       const idStart = m.start + spec.lineSigil.length;
       splices.push({ start: idStart, end: idStart + (m.id?.length ?? 0), text: id });
     }
-    let entry = entries.find((e) => e.id === id);
-    const text = m.text === undefined ? undefined : normalizeBody(m.text);
-    const flat = (body: string) => (m.placement === "trailing" ? body.split("\n").join(" ") : body);
-    const written = text !== undefined && (!entry || flat(entry.body) !== text);
-    if (written) {
-      if (!entry) {
-        entry = { id, meta: new Map(), body: text };
-        entries.push(entry);
-      }
-      entry.body = text;
-      for (const [k, v] of options.meta ?? []) entry.meta.set(k, v);
-      sidecarChanged = true;
-    }
+    const { entry, written } = recordBody(entries, id, m, options.meta);
+    if (written) sidecarChanged = true;
     if (!entry) return;
     const placement = recorded.placements[i]!;
     if (!written && !options.confirm?.has(id) && unseenChange(entry, placement, baselineBodies)) return;
     if (setPlacement(entry, placement)) sidecarChanged = true;
-    if (m.staleTag) {
-      const tagStart = m.start + spec.lineSigil.length + id.length + 1;
-      const tagEnd = tagStart + STALE_TAG.length;
-      const spaceAfter = source[tagEnd] === " ";
-      splices.push({ start: spaceAfter ? tagStart : tagStart - 1, end: spaceAfter ? tagEnd + 1 : tagEnd, text: "" });
-    }
+    if (m.staleTag) splices.push(staleTagRemoval(source, m.start + spec.lineSigil.length + id.length + 1));
   });
 
   const deleted = entries.filter((e) => options.seen?.has(e.id) && !present.has(e.id)).map((e) => e.id);

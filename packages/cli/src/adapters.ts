@@ -69,7 +69,10 @@ export function patchedFiles(input: unknown): string[] {
   walk(input);
   const files = new Set<string>();
   for (const text of texts) {
-    for (const m of text.matchAll(/^\*\*\* (?:Add File|Update File|Move to): (.+?)\s*$/gm)) files.add(m[1]!);
+    for (const m of text.matchAll(/^\*\*\* (?:Add File|Update File|Move to): (.+)$/gm)) {
+      const file = m[1]!.trimEnd();
+      if (file) files.add(file);
+    }
   }
   return [...files];
 }
@@ -154,9 +157,9 @@ export const ADAPTERS: Record<string, Adapter> = {
     settingsFile: ".cursor/hooks.json",
     parse(p) {
       const file = str(p.file_path);
-      const roots = arr(p.workspace_roots).map(str).filter((r): r is string => !!r);
+      const root = arr(p.workspace_roots).map(str).find((r): r is string => !!r);
       return {
-        cwd: roots[0] ?? process.cwd(),
+        cwd: root ?? process.cwd(),
         files: file ? [file] : [],
         provenance: { by: "cursor", session: str(p.conversation_id), model: str(p.model) },
       };

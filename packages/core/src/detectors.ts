@@ -38,7 +38,7 @@ const CHANGE_HISTORY_ANYWHERE =
 
 const NARRATION = [
   /^step\s*\d+\b/i,
-  /^(?:first(?:ly)?|second(?:ly)?|next|then|finally|lastly|now)\s*,?\s+(?:we|let'?s|i|you)\b/i,
+  /^(?:first(?:ly)?|second(?:ly)?|next|then|finally|lastly|now)(?:\s*,)?\s+(?:we|let'?s|i|you)\b/i,
   /^(?:finally|lastly),\s/i,
   /^(?:here|now) we\b/i,
   /^let(?:'s| us)\b/i,

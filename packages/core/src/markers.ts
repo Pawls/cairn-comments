@@ -43,7 +43,7 @@ interface SigilComment {
 }
 
 export function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return s.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }
 
 /**
@@ -59,9 +59,21 @@ export async function findMarkers(spec: LanguageSpec, source: string): Promise<M
 
 /** Sigil comments among `comments`, for callers that hold the parse tree themselves. */
 export function markersFrom(spec: LanguageSpec, source: string, lines: Line[], comments: readonly CommentSpan[]): Marker[] {
+  const sigils = sigilComments(spec, source, lines, comments);
+  const markers: Marker[] = [];
+  let start = 0;
+  while (start < sigils.length) {
+    const block = blockAt(sigils, start);
+    start += block.length;
+    const marker = markerOf(block);
+    if (marker) markers.push(marker);
+  }
+  return markers;
+}
+
+function sigilComments(spec: LanguageSpec, source: string, lines: Line[], comments: readonly CommentSpan[]): SigilComment[] {
   const form = new RegExp(`^${escapeRegExp(spec.lineSigil)}(${ID_PATTERN})?(?: (.*))?$`, "s");
   const tagged = new RegExp(`^${escapeRegExp(STALE_TAG)}(?: |$)`);
-
   const sigils: SigilComment[] = [];
   for (const span of comments) {
     // Some grammars (Python's) let the comment token swallow the CR of a CRLF terminator.
@@ -83,33 +95,44 @@ export function markersFrom(spec: LanguageSpec, source: string, lines: Line[], c
       indent: /^[ \t]*$/.test(before) ? before : undefined,
     });
   }
+  return sigils;
+}
 
-  const markers: Marker[] = [];
-  for (let i = 0; i < sigils.length; i++) {
-    const first = sigils[i]!;
-    if (!first.id && !first.text) continue;
-    const ownLine = first.indent !== undefined;
-    const bodyLines = [first.text];
-    let last = first;
-    if (ownLine && first.text) {
-      for (let next = sigils[i + 1]; next; next = sigils[i + 1]) {
-        if (next.id || next.indent !== first.indent || next.row !== last.row + 1) break;
-        bodyLines.push(next.text);
-        last = next;
-        i++;
-      }
-    }
-    while (bodyLines.length > 1 && !bodyLines[bodyLines.length - 1]) bodyLines.pop();
-    markers.push({
-      kind: first.text ? (first.id ? "expanded" : "new") : "bare",
-      placement: ownLine ? "own-line" : "trailing",
-      id: first.id,
-      text: first.text ? bodyLines.join("\n") : undefined,
-      start: first.start,
-      end: last.end,
-      indent: first.indent ?? "",
-      staleTag: first.staleTag,
-    });
+/**
+ * The sigils from `start` that form one comment: an own-line one with text takes the lines
+ * right below it at its indent, up to one that carries an id.
+ */
+function blockAt(sigils: SigilComment[], start: number): SigilComment[] {
+  const first = sigils[start]!;
+  const block = [first];
+  if (first.indent === undefined || !first.text) return block;
+  for (let k = start + 1; k < sigils.length; k++) {
+    const next = sigils[k]!;
+    if (next.id || next.indent !== first.indent || next.row !== block.at(-1)!.row + 1) break;
+    block.push(next);
   }
-  return markers;
+  return block;
+}
+
+/** The marker a block forms; none for a lone sigil with neither id nor text. */
+function markerOf(block: SigilComment[]): Marker | undefined {
+  const first = block[0]!;
+  if (!first.id && !first.text) return undefined;
+  const bodyLines = block.map((s) => s.text);
+  while (bodyLines.length > 1 && !bodyLines.at(-1)) bodyLines.pop();
+  return {
+    kind: markerKind(first),
+    placement: first.indent === undefined ? "trailing" : "own-line",
+    id: first.id,
+    text: first.text ? bodyLines.join("\n") : undefined,
+    start: first.start,
+    end: block.at(-1)!.end,
+    indent: first.indent ?? "",
+    staleTag: first.staleTag,
+  };
+}
+
+function markerKind(first: SigilComment): MarkerKind {
+  if (!first.text) return "bare";
+  return first.id ? "expanded" : "new";
 }

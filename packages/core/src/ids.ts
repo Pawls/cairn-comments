@@ -3,7 +3,7 @@ import type { Marker } from "./markers.js";
 
 function hashId(path: string, text: string, occurrence: number, salt: number): string {
   const hex = createHash("sha256").update([path, text, occurrence, salt].join("\0")).digest("hex");
-  return parseInt(hex.slice(0, 8), 16).toString(36).padStart(4, "0").slice(-4);
+  return Number.parseInt(hex.slice(0, 8), 16).toString(36).padStart(4, "0").slice(-4);
 }
 
 /** An id for a new comment of `text` in `path` that is not in `taken`, which it then joins. */

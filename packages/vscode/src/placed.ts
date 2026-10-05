@@ -296,7 +296,7 @@ export class PlacedView implements vscode.CodeLensProvider, vscode.Disposable {
       const key = JSON.stringify([w.stale, w.entry.body, [...w.entry.meta]]);
       const record = records.get(id);
       if (record?.comment.mode === vscode.CommentMode.Editing) continue;
-      if (record && record.key === key && record.style === style) {
+      if (record?.key === key && record.style === style) {
         if (!record.thread.range?.isEqual(range)) record.thread.range = range;
         continue;
       }
