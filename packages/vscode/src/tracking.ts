@@ -76,11 +76,11 @@ function insertedLines(changes: readonly Change[], before: readonly string[]): I
     const lines = change.text.split("\n");
     const prefix = (before[change.start.line] ?? "").slice(0, change.start.character);
     const suffix = (before[change.end.line] ?? "").slice(change.end.character);
-    lines.forEach((text, i) => {
+    for (const [i, text] of lines.entries()) {
       const last = i === lines.length - 1;
       const whole = (i > 0 || !prefix.trim()) && (!last || !suffix.trim());
       if (whole && text.trim()) inserted.push({ row: change.start.line + shift + i, text: text.trim() });
-    });
+    }
     shift += lines.length - 1 - (change.end.line - change.start.line);
   }
   return inserted;

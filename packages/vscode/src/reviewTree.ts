@@ -242,7 +242,11 @@ function reviewMessage(model: ReviewModel): string {
 }
 
 async function confirmSetup(root: string, plan: string): Promise<boolean> {
-  const choice = await vscode.window.showInformationMessage(`Set up ${BRAND_TITLE} in ${path.basename(root)}?`, { modal: true, detail: plan.trim() }, "Set Up");
+  const choice = await vscode.window.showInformationMessage(
+    `Set up ${BRAND_TITLE} in ${path.basename(root)}?`,
+    { modal: true, detail: plan.trim() },
+    "Set Up",
+  );
   return choice === "Set Up";
 }
 

@@ -2,7 +2,16 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import * as vscode from "vscode";
-import { SIDECAR_ROOT, findMarkers, languageForPath, parseSidecar, sidecarPathFor, type Marker, type Sidecar, type SidecarEntry } from "@cairn-comments/core";
+import {
+  SIDECAR_ROOT,
+  findMarkers,
+  languageForPath,
+  parseSidecar,
+  sidecarPathFor,
+  type Marker,
+  type Sidecar,
+  type SidecarEntry,
+} from "@cairn-comments/core";
 import type { Located } from "./actions.js";
 import { findSidecarRoot } from "./overlay.js";
 

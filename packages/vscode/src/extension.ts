@@ -353,7 +353,12 @@ async function provideCodeActions(document: vscode.TextDocument, line: number): 
  * reports the rewrite and the extension applies it (see ./edits.ts). Resolves to the CLI's
  * report, or undefined after telling the user why it did not run.
  */
-async function runOnFile(document: vscode.TextDocument, verb: string, suffix: string, options: { print?: boolean } = {}): Promise<string | undefined> {
+async function runOnFile(
+  document: vscode.TextDocument,
+  verb: string,
+  suffix: string,
+  options: { print?: boolean } = {},
+): Promise<string | undefined> {
   if (document.isDirty && !(await document.save())) return undefined;
   const repo = await findRepo(path.dirname(document.fileName));
   if (!repo) {
