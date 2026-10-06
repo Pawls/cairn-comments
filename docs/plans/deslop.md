@@ -12,9 +12,9 @@
 > runs `npm run bench` within noise of the recorded 3,182 ms; the PR body carries the
 > before/after metrics from § Baseline, including any that got worse and why.
 >
-> **Next:** D5, settle the one Windows `test:vscode` failure and ship; then D6.
+> **Next:** D6, deslop the extension e2e suite, the native harness, and the scripts.
 > **Branch:** `deslop-<slice>` per lane (e.g. `deslop-d1`), each off `main` as its own PR.
-> **Lanes:** E: D5→D6
+> **Lanes:** E: D6
 
 - [~~D1 — Core placement~~ — SHIPPED 2026-10-06](#d1)
 - [~~D2 — Core scan, detectors, literals, markers~~ — SHIPPED 2026-10-06](#d2)
@@ -160,22 +160,37 @@ unreferenced `git.ts` exports (`grepTokens`, `ignoredByPattern`) are removed. `r
 
 ### D5 — VS Code extension source · Opus 5.5 / high {#d5}
 
-**Status:** Not started. UI code whose real check is the e2e and native suites.
+**Status:** Merged in PR #13 on 2026-10-06; one box is open. `activate` went from 243 lines to 49
+(`OverlayController`, `PasteSaves`/`UndoSaves`, a sidecar lookup), `registerReviewTree` became a `ReviewTree`
+class, worst score 14; source lines rose from 2,034 to 2,282. 490 tests pass on Windows and WSL at 172e654.
+One review-suite test failed once on Windows (promote returned `undefined`, at 4ed8cf5) and never again: 0 of
+11 on the branch and 0 of 10 on `main` on Windows, 0 of 18 and 0 of 19 in WSL, 0 of 1,200 at the CLI. Cause
+unknown; nothing separates the branch from `main`. One timing difference: with no workspace folder the review
+tree clears its model one microtask later, on a path no test reaches.
 **Touches:** `packages/vscode/src/*.ts`; `packages/vscode/test/*.ts`.
 **After:** none.
 
-- [ ] Metrics re-run and recorded
-- [ ] `activate` (243 lines of closures over shared state) split by phase with state passed
+- [x] Metrics re-run and recorded
+- [x] `activate` (243 lines of closures over shared state) split by phase with state passed
       explicitly (rules 4, 36); `registerReviewTree` (187) likewise
-- [ ] Comment pass as in D1; `TestApi` shape unchanged, or D6's Touches updated
+- [x] Comment pass as in D1; `TestApi` shape unchanged, or D6's Touches updated
 - [ ] Verify: lint, `npm test`, `npm run test:vscode` (tell the user first on Windows),
       `npm run test:native` (the user stays off the machine), then rebuild and install the
-      `.vsix` and open one Python file with the overlay on
-- [ ] `## Skill notes` and `## Plan notes` in the PR body
+      `.vsix` and open one Python file with the overlay on. Open: the owner's overlay check in the installed
+      build; `test:native` passed 3 of 3 at 4ed8cf5 and was not repeated after the D4, D7, and D8 merges
+      (D6 runs it on `main`'s head).
+- [x] `## Skill notes` and `## Plan notes` in the PR body
 
 ### D6 — Extension e2e, native harness, scripts · Sonnet 5.5 / high {#d6}
 
 **Status:** Not started. Runs after D5 because the e2e suite drives D5's `TestApi`.
+**Note (from D5):** the overlay e2e suite flakes on `main` in WSL under xvfb, 1 run in 20 (two undo-save tests
+timing out in `waitFor`, one cut test asserting `undefined !== 1`), and 0 in 20 on Windows. Measure the split
+suite against that rate, not against zero: 20 WSL runs before and 20 after.
+**Note (from D5):** the review e2e repository has no `.vscode/settings.json`, so VS Code's built-in git
+extension is on there, while the overlay fixture sets `"git.enabled": false`. Make them consistent in a commit
+of its own; it is a test-environment change, not a refactor.
+**Note (from D5):** run `test:native` on `main`'s head first; it last ran before the D4, D7, and D8 merges.
 **Touches:** `packages/vscode/{e2e,native}/*.ts`, `packages/vscode/esbuild.mjs`, `scripts/*.ts`, `scripts/*.mjs`.
 **After:** D5.
 
@@ -245,6 +260,13 @@ Cancel if the fix would change the cleaned form of a file that round-trips today
   unterminated code line, or no code, placed comments fall back to LF: `#~ note\r\npass` comes back as
   `#~ note\npass`. design.md § Known gaps covers only the comment-only file. The fix records the comment's own
   terminator, which is new sidecar metadata, so it is a slice of its own, test first.
+- **Make a failed CLI run in the extension visible to tests** (from D5). `runOnFile` shows the error as a
+  notification and returns `undefined`, so an e2e failure on that path cannot show its cause. Log it to the
+  console as well. This is what would explain the one Windows failure if it recurs.
+- **A unit-test seam for the extension** (from D5). Every extension module imports `vscode`, so only the e2e
+  and native suites cover `activate` and the review tree. A small `vscode` mock for vitest, or the pure parts
+  (`UndoSaves` timing, `changedSpan`) moved behind an injected clock.
+- **An e2e launch with no workspace folder** (from D5); nothing tests that path or its message.
 - **A root `.prettierrc` (print width 120) and a format check** (from D4), so the wrapping holds. The owner
   decides; nothing is added until then.
 - **Stale lines in `docs/plans/v1.md`** (from D7 and its review): line 30 says `v1` carries every slice and
