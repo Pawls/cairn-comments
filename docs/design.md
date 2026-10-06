@@ -542,7 +542,8 @@ Implemented in `packages/core/src/placement.ts` (`stripComments` is the clean fi
     last comment of a block, whose next code line dedents), `trail` (end of the line where
     the node starts), or `row` (a line number, when no code node anchors the comment);
   - `scope`: the enclosing function, else class, as a dotted path (`Ledger.size`), with
-    `@n` for the nth declaration of that path (a property and its setter); absent at
+    `@n` on each later declaration of that path, counting from 1 after the first
+    (`Ledger.size@1` for a setter after its property); absent at
     module level. The node types per language are `functionTypes` and `namespaceTypes` in
     `languages.ts` (a C# property counts as a function). A function or class expression is
     a scope only when bound to a name (`const f = () => {}`, a class field,
