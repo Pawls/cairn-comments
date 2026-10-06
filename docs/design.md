@@ -525,9 +525,12 @@ placements and `confirmPlaced` (`packages/core/src/owner.ts`) clears them. The C
   leaves the code as it was, so neither turns the comments around them stale. The hashed
   node itself still counts, so a comment right above a string tells one string from
   another. Other languages keep every string statement: JavaScript's `"use strict"`
-  changes what the code does. Eight pairs in `normalization.test.ts` pin the rule. An
-  entry recorded before it, in a function holding a string statement, places stale once
-  and `confirm` clears it; the earlier hash is not accepted as well.
+  changes what the code does. Eight pairs in `normalization.test.ts` pin the rule. The
+  earlier hash is not accepted as well. An entry recorded before the rule, in a function
+  holding a string statement, places stale once and `confirm` clears it. One whose anchor
+  node itself holds a string statement (an `if` around a note, a `def` with a docstring)
+  no longer finds that node and becomes an orphan, which `confirm` cannot clear. On the
+  owner's 23 real entries the rule made 6 stale and orphaned none.
 - **The tag.** `placeComments` writes `[stale?]` and a space before a stale body.
   `findMarkers` strips the tag from any comment with an id, so `stripComments`, `sync`,
   and the id rules never see it; a new comment (no id) that starts with it keeps it as
