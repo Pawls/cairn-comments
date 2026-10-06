@@ -104,9 +104,9 @@ const PRAGMA_OPENERS = [
 const PRAGMA_OPENER = new RegExp(`^(?:${PRAGMA_OPENERS.map((r) => r.source).join("|")})`, "i");
 // Suppression directives that count wherever they sit in the text.
 const PRAGMAS_ANYWHERE = [
-  /noqa/, /nosec/, /NOSONAR/, /NOLINT(?:NEXTLINE)?/, /eslint-disable(?:-next-line|-line)?/, /@ts-(?:ignore|expect-error|nocheck)/,
-  /pylint: ?disable/, /pragma: no cover/, /type: ?ignore/, /istanbul ignore/, /c8 ignore/, /CHECKSTYLE:(?:ON|OFF)/,
-  /ReSharper disable/,
+  /noqa/, /nosec/, /NOSONAR/, /NOLINT(?:NEXTLINE)?/, /eslint-disable(?:-next-line|-line)?/,
+  /@ts-(?:ignore|expect-error|nocheck)/, /pylint: ?disable/, /pragma: no cover/, /type: ?ignore/, /istanbul ignore/,
+  /c8 ignore/, /CHECKSTYLE:(?:ON|OFF)/, /ReSharper disable/,
 ];
 const PRAGMA_ANYWHERE = new RegExp(String.raw`\b(?:${PRAGMAS_ANYWHERE.map((r) => r.source).join("|")})\b`);
 const LICENSE = /\bSPDX-License-Identifier\b|\bcopyright\b|\blicen[cs]ed?\b|\(c\)\s*\d{4}|©|all rights reserved/i;

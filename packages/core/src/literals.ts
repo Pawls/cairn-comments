@@ -81,7 +81,7 @@ function bareStringAt(root: Node, row: number): { statement: Node; string: Node 
   return { statement, string };
 }
 
-/** Why the bare string `statement` stays in the code for what it is or where it sits; undefined when neither keeps it. */
+/** Why the bare string `statement` stays in the code for what it is or where it sits, if it does. */
 function statementRefusal(statement: Node, string: Node): string | undefined {
   const siblings = statementsOf(statement.parent!);
   if (isDocstring(statement, siblings)) return "a docstring stays in the code";
