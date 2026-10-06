@@ -140,6 +140,7 @@ describe("placeComments after recordComments", () => {
   it("restores comments at the top of a file and in a file with no code", async () => {
     await expectExact("a.py", "#~ about this module\nimport os\n");
     await expectExact("a.py", "# license\n\n#~ only a note\n");
+    await expectExact("a.py", "#~ only a note");
   });
 
   it("reports each comment's site in the stripped file", async () => {
