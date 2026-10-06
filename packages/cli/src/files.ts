@@ -21,7 +21,19 @@ import {
   type Sidecar,
 } from "@cairn-comments/core";
 import { capturing, readWorkFile, removeWorkFile, writeWorkFile } from "./workfiles.js";
-import { filesContaining, indexBlobs, isTracked, managedFiles, restat, smudges, stage, stagedFiles, toRepoPath, trackedFiles, worktreeGitDir } from "./git.js";
+import {
+  filesContaining,
+  indexBlobs,
+  isTracked,
+  managedFiles,
+  restat,
+  smudges,
+  stage,
+  stagedFiles,
+  toRepoPath,
+  trackedFiles,
+  worktreeGitDir,
+} from "./git.js";
 
 /** 1-based line number of `offset` in `text`. */
 export function lineAt(text: string, offset: number): number {
@@ -92,7 +104,13 @@ export function filterMode(root: string, smudging: boolean): FilterMode {
  * One file through a filter endpoint, for the one-shot commands and the filter process
  * alike. Returns `input` itself when nothing changes, so non-UTF-8 passes byte for byte.
  */
-export async function filterContent(endpoint: "clean" | "smudge", root: string, file: string, input: Buffer, mode: FilterMode = {}): Promise<Buffer> {
+export async function filterContent(
+  endpoint: "clean" | "smudge",
+  root: string,
+  file: string,
+  input: Buffer,
+  mode: FilterMode = {},
+): Promise<Buffer> {
   const text = decodeExact(input);
   if (text === undefined) return input;
   let result: string;
@@ -160,7 +178,12 @@ interface RecordFileOptions extends SyncOptions {
 }
 
 /** Records one working file into its sidecar, writing the sidecar when it changed. */
-async function recordFile(root: string, file: string, original: string, options: RecordFileOptions): Promise<RecordResult> {
+async function recordFile(
+  root: string,
+  file: string,
+  original: string,
+  options: RecordFileOptions,
+): Promise<RecordResult> {
   // After a checkout, comments on disk may belong to the previous commit's sidecar.
   const seen = options.gitDir && !options.afterCheckout ? readSeen(options.gitDir, file) : undefined;
   const recorded = await recordComments(file, original, readSidecarSync(root, file), {
@@ -225,7 +248,11 @@ export async function syncFiles(root: string, files: string[], options: SyncOpti
   const done = await rewriteFiles(root, files, "sync", options);
   // A sidecar emptied by deleting its last comment is gone from disk but still in the index;
   // staging it records the removal.
-  if (options.add) stage(root, done.map((file) => sidecarPathFor(file)).filter((s) => existsSync(path.join(root, s)) || isTracked(root, s)));
+  if (options.add)
+    stage(
+      root,
+      done.map((file) => sidecarPathFor(file)).filter((s) => existsSync(path.join(root, s)) || isTracked(root, s)),
+    );
 }
 
 /** Places every comment, bringing each `[stale?]` tag up to date. */
@@ -240,7 +267,12 @@ export async function expandFiles(root: string, files: string[]): Promise<void> 
  */
 export async function refreshFiles(root: string): Promise<void> {
   const files = new Set([...filesWithSidecars(root), ...managedFiles(root, filesContaining(root, SIGILS))]);
-  await rewriteFiles(root, [...files].filter((f) => existsSync(path.join(root, f))), "expand", { afterCheckout: true });
+  await rewriteFiles(
+    root,
+    [...files].filter((f) => existsSync(path.join(root, f))),
+    "expand",
+    { afterCheckout: true },
+  );
 }
 
 export async function collapseFiles(root: string, files: string[], options: SyncOptions = {}): Promise<void> {
@@ -267,9 +299,12 @@ export async function staleIn(root: string, files: string[]): Promise<StaleRepor
     const sidecar = readSidecarSync(root, file);
     if (!sidecar.entries.length) continue;
     const placed = await placeComments(file, await stripComments(file, source), sidecar);
-    const shown = new Map((await findMarkers(languageForPath(file)!, source)).map((m) => [m.id, lineAt(source, m.start)]));
+    const shown = new Map(
+      (await findMarkers(languageForPath(file)!, source)).map((m) => [m.id, lineAt(source, m.start)]),
+    );
     const bodies = bodiesOf(sidecar);
-    for (const s of placed.stale) found.push({ file, line: shown.get(s.id) ?? s.row + 1, id: s.id, body: bodies.get(s.id) ?? "" });
+    for (const s of placed.stale)
+      found.push({ file, line: shown.get(s.id) ?? s.row + 1, id: s.id, body: bodies.get(s.id) ?? "" });
   }
   return found;
 }

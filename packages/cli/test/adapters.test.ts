@@ -4,19 +4,23 @@ import { ADAPTERS, patchedFiles } from "../src/adapters.js";
 const FOREIGN = { matcher: "Bash", hooks: [{ type: "command", command: "lint --fix" }] };
 
 describe("hook adapter settings", () => {
-  it.each(["claude-code", "codex"])("%s installs beside foreign hooks and updates its own command in place", (harness) => {
-    const adapter = ADAPTERS[harness]!;
-    const settings: Record<string, unknown> = { theme: "dark", hooks: { PostToolUse: [structuredClone(FOREIGN)] } };
-    adapter.install(settings, "old");
-    adapter.install(settings, "new");
-    const groups = (settings.hooks as { PostToolUse: { matcher: string; hooks: { command: string }[] }[] }).PostToolUse;
-    expect(groups).toHaveLength(2);
-    expect(groups[0]).toEqual(FOREIGN);
-    expect(groups[1]!.hooks).toEqual([{ type: "command", command: `new hook ${harness}` }]);
+  it.each(["claude-code", "codex"])(
+    "%s installs beside foreign hooks and updates its own command in place",
+    (harness) => {
+      const adapter = ADAPTERS[harness]!;
+      const settings: Record<string, unknown> = { theme: "dark", hooks: { PostToolUse: [structuredClone(FOREIGN)] } };
+      adapter.install(settings, "old");
+      adapter.install(settings, "new");
+      const groups = (settings.hooks as { PostToolUse: { matcher: string; hooks: { command: string }[] }[] })
+        .PostToolUse;
+      expect(groups).toHaveLength(2);
+      expect(groups[0]).toEqual(FOREIGN);
+      expect(groups[1]!.hooks).toEqual([{ type: "command", command: `new hook ${harness}` }]);
 
-    adapter.uninstall(settings);
-    expect(settings).toEqual({ theme: "dark", hooks: { PostToolUse: [FOREIGN] } });
-  });
+      adapter.uninstall(settings);
+      expect(settings).toEqual({ theme: "dark", hooks: { PostToolUse: [FOREIGN] } });
+    },
+  );
 
   it.each(["claude-code", "codex"])("%s uninstall prunes the containers it empties", (harness) => {
     const adapter = ADAPTERS[harness]!;
@@ -28,10 +32,18 @@ describe("hook adapter settings", () => {
 
   it("an uninstall keeps a group that still holds a foreign hook beside ours", () => {
     const adapter = ADAPTERS["claude-code"]!;
-    const shared = { matcher: "Edit", hooks: [{ type: "command", command: "x hook claude-code" }, { type: "command", command: "fmt" }] };
+    const shared = {
+      matcher: "Edit",
+      hooks: [
+        { type: "command", command: "x hook claude-code" },
+        { type: "command", command: "fmt" },
+      ],
+    };
     const settings: Record<string, unknown> = { hooks: { PostToolUse: [shared] } };
     adapter.uninstall(settings);
-    expect(settings).toEqual({ hooks: { PostToolUse: [{ matcher: "Edit", hooks: [{ type: "command", command: "fmt" }] }] } });
+    expect(settings).toEqual({
+      hooks: { PostToolUse: [{ matcher: "Edit", hooks: [{ type: "command", command: "fmt" }] }] },
+    });
   });
 
   it("cursor installs with a version, updates in place, and removes the version it added", () => {

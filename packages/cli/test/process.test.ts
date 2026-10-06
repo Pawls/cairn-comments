@@ -154,7 +154,10 @@ describe("filter process protocol", () => {
 
   it("smudges from the sidecar under the worktree root", async () => {
     await removingAfter(await sidecarRoot(), async (root) => {
-      const { responses } = await serve([...GREETING, ...OFFER, ...request("smudge", "src/a.py", "x = 1\n")], { smudge: true, root });
+      const { responses } = await serve([...GREETING, ...OFFER, ...request("smudge", "src/a.py", "x = 1\n")], {
+        smudge: true,
+        root,
+      });
       expect(responses).toEqual([{ status: "status=success", content: Buffer.from(SHOWN) }]);
     });
   });
@@ -224,7 +227,10 @@ describe("filter process protocol", () => {
       ...request("smudge", "a.py", "x = 1\n"),
       ...request("clean", "a.py", "x = 1\n"),
     ]);
-    expect(responses).toEqual([{ status: "status=error" }, { status: "status=success", content: Buffer.from("x = 1\n") }]);
+    expect(responses).toEqual([
+      { status: "status=error" },
+      { status: "status=success", content: Buffer.from("x = 1\n") },
+    ]);
     expect(log).toEqual([expect.stringContaining("a.py: unsupported request")]);
   });
 
@@ -242,7 +248,9 @@ describe("filter process protocol", () => {
  */
 function writeCrashingFilter(file: string): void {
   // The tsc output, which keeps process.js a module of its own; the bundle does not.
-  const processModule = pathToFileURL(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../dist/process.js")).href;
+  const processModule = pathToFileURL(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../dist/process.js"),
+  ).href;
   writeFileSync(
     file,
     [

@@ -145,7 +145,10 @@ async function convertAndSync(root: string, chosen: Map<string, ScannedComment[]
   else await collapseFiles(root, written);
   // A demoted string's quotes go on the entry sync just made for it.
   for (const [file, ids] of literals) {
-    writeWorkFile(path.join(root, sidecarPathFor(file)), serializeSidecar(recordLiterals(readSidecarSync(root, file), ids)));
+    writeWorkFile(
+      path.join(root, sidecarPathFor(file)),
+      serializeSidecar(recordLiterals(readSidecarSync(root, file), ids)),
+    );
   }
   return written;
 }
@@ -205,7 +208,12 @@ interface FileVerdicts {
  * Matches one file's entries to its comments as they are now, adding each entry to the
  * report as converted, ignored, or stale.
  */
-async function judgeFile(root: string, file: string, entries: ReviewEntry[], report: ApplyReport): Promise<FileVerdicts> {
+async function judgeFile(
+  root: string,
+  file: string,
+  entries: ReviewEntry[],
+  report: ApplyReport,
+): Promise<FileVerdicts> {
   const source = readSource(root, file);
   const available = source === undefined ? [] : (await analyzeSource(file, source)).filter((c) => !c.protected);
   const verdicts: FileVerdicts = { picks: [], ignore: [] };

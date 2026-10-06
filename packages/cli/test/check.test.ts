@@ -26,7 +26,8 @@ describe.each([true, false])("check (autocrlf=%s)", (autocrlf) => {
   afterAll(() => box.dispose());
 
   const check = (cwd: string, ...args: string[]) => box.cliResult(cwd, "check", ...args);
-  const commit = (cwd: string, message: string, ...args: string[]) => box.gitResult(cwd, "commit", "-qm", message, ...args);
+  const commit = (cwd: string, message: string, ...args: string[]) =>
+    box.gitResult(cwd, "commit", "-qm", message, ...args);
 
   it("passes on a repository the filter kept consistent", () => {
     expect(box.read(box.path("main", "a.py"))).toBe("def settle(order):\n    ledger.write(order.id)\n");
@@ -39,9 +40,9 @@ describe.each([true, false])("check (autocrlf=%s)", (autocrlf) => {
     // Git sends hook output to stderr.
     expect(result.status).toBe(0);
     expect(result.stderr).toContain(`relocated ${id}: ${sidecar("a.py")} -> ${sidecar("b.py")}\n`);
-    expect(box.git(main, "show", "--name-status", "--no-renames", "--format=", "HEAD").trim().split("\n").sort()).toEqual(
-      [`A\t${sidecar("b.py")}`, "A\tb.py", `D\t${sidecar("a.py")}`, "D\ta.py"].sort(),
-    );
+    expect(
+      box.git(main, "show", "--name-status", "--no-renames", "--format=", "HEAD").trim().split("\n").sort(),
+    ).toEqual([`A\t${sidecar("b.py")}`, "A\tb.py", `D\t${sidecar("a.py")}`, "D\ta.py"].sort());
     expect(box.git(main, "show", `HEAD:${sidecar("b.py")}`)).toContain(NOTE);
     expect(box.status(main)).toBe("");
     expect(check(main).status).toBe(0);
@@ -52,9 +53,16 @@ describe.each([true, false])("check (autocrlf=%s)", (autocrlf) => {
     commit(main, "rename, hook skipped", "--no-verify");
     const found = check(main);
     expect(found.status).toBe(1);
-    expect(found.stdout).toBe(`${sidecar("b.py")}: ${id} has no source; b.py is gone (\`cairn check --fix\` moves it to ${sidecar("c.py")})\n`);
-    expect(JSON.parse(check(main, "--json").stdout).problems.map((p: { kind: string }) => p.kind)).toEqual(["missing-source"]);
-    expect(check(main, "--fix")).toMatchObject({ status: 0, stdout: `relocated ${id}: ${sidecar("b.py")} -> ${sidecar("c.py")}\n` });
+    expect(found.stdout).toBe(
+      `${sidecar("b.py")}: ${id} has no source; b.py is gone (\`cairn check --fix\` moves it to ${sidecar("c.py")})\n`,
+    );
+    expect(JSON.parse(check(main, "--json").stdout).problems.map((p: { kind: string }) => p.kind)).toEqual([
+      "missing-source",
+    ]);
+    expect(check(main, "--fix")).toMatchObject({
+      status: 0,
+      stdout: `relocated ${id}: ${sidecar("b.py")} -> ${sidecar("c.py")}\n`,
+    });
     expect(box.status(main)).toBe(`R  ${sidecar("b.py")} -> ${sidecar("c.py")}\n`);
     commit(main, "fix");
     expect(check(main)).toMatchObject({ status: 0, stdout: "" });
@@ -64,7 +72,10 @@ describe.each([true, false])("check (autocrlf=%s)", (autocrlf) => {
     box.git(main, "rm", "-q", "c.py");
     // Not a rename in git's eyes: the shared function is a small part of the new file.
     const helpers = Array.from({ length: 30 }, (_, i) => `def helper_${i}(x):\n    return x + ${i}\n`).join("\n\n");
-    box.write(box.path("main", "d.py"), `${helpers}\n\ndef settle(order):\n    ledger.write(order.id)\n    audit(order)\n`);
+    box.write(
+      box.path("main", "d.py"),
+      `${helpers}\n\ndef settle(order):\n    ledger.write(order.id)\n    audit(order)\n`,
+    );
     box.git(main, "add", "d.py");
     const result = commit(main, "drop the file");
     expect(result.status).toBe(0);
@@ -167,7 +178,10 @@ describe("init --dry-run, uninstall, and promote --all", () => {
     box.git(box.dir, "init", "-q", "main");
     box.write(box.path("main", ".gitattributes"), "*.png binary\n.agents/comments/** merge=union text eol=lf\n");
     box.write(box.path("main", "AGENTS.md"), "# Rules\n");
-    box.write(box.path("main", ".claude/settings.local.json"), JSON.stringify({ permissions: { allow: ["Bash(ls)"] } }, null, 2) + "\n");
+    box.write(
+      box.path("main", ".claude/settings.local.json"),
+      JSON.stringify({ permissions: { allow: ["Bash(ls)"] } }, null, 2) + "\n",
+    );
     box.write(box.path("main", "a.py"), SOURCE);
     box.git(main, "add", "-A");
     box.git(main, "commit", "-qm", "base");
@@ -180,7 +194,9 @@ describe("init --dry-run, uninstall, and promote --all", () => {
     const before = config();
     const out = box.cli(main, "init", "--dry-run", "--hooks", "claude-code,cursor", "--agents-md");
     // The CLI home install comes first: every line after it records the home's copy.
-    expect(out).toMatch(/^dry run; would change:\n {2}\S.*: install \d+\.\d+\.\d+ \(build \d+\)\n {2}git config: set extensions\.worktreeConfig = true\n/);
+    expect(out).toMatch(
+      /^dry run; would change:\n {2}\S.*: install \d+\.\d+\.\d+ \(build \d+\)\n {2}git config: set extensions\.worktreeConfig = true\n/,
+    );
     expect(out).toContain("  .gitattributes: add 16 line(s), remove 1 line(s)\n");
     expect(out).toContain("  .claude/settings.local.json: set the claude-code hook\n");
     expect(out).toContain("  .cursor/hooks.json: create with the cursor hook\n");
@@ -222,9 +238,13 @@ describe("init --dry-run, uninstall, and promote --all", () => {
     expect(box.gitResult(box.path("agent"), "config", "--worktree", "--list").stdout).not.toContain("cairn");
     expect(box.read(box.path("main", ".gitattributes"))).toBe("*.png binary\n");
     expect(box.read(box.path("main", "AGENTS.md"))).toBe("# Rules\n");
-    expect(JSON.parse(box.read(box.path("main", ".claude/settings.local.json")))).toEqual({ permissions: { allow: ["Bash(ls)"] } });
+    expect(JSON.parse(box.read(box.path("main", ".claude/settings.local.json")))).toEqual({
+      permissions: { allow: ["Bash(ls)"] },
+    });
     expect(existsSync(box.path("main", ".git/hooks/pre-commit"))).toBe(false);
-    expect(box.status(main)).toBe(" M .claude/settings.local.json\n D .cursor/hooks.json\n M .gitattributes\n M AGENTS.md\n");
+    expect(box.status(main)).toBe(
+      " M .claude/settings.local.json\n D .cursor/hooks.json\n M .gitattributes\n M AGENTS.md\n",
+    );
     expect(box.cli(main, "uninstall")).toBe("nothing to change\n");
   });
 });
@@ -243,7 +263,11 @@ describe("a rename in a smudged agent worktree", () => {
     box.git(main, "commit", "-qm", "base");
     // An entry that no longer places anywhere: kept in the sidecar as an orphan.
     const file = box.path("main", sidecar("a.py"));
-    box.write(file, box.read(file) + "\n## zzzz\n<!-- pos=before scope=gone nth=0 skip=0 node=deadbeef -->\nan orphan nobody placed\n");
+    box.write(
+      file,
+      box.read(file) +
+        "\n## zzzz\n<!-- pos=before scope=gone nth=0 skip=0 node=deadbeef -->\nan orphan nobody placed\n",
+    );
     box.git(main, "add", "-A");
     box.git(main, "commit", "-qm", "orphan");
     agent = box.path("agent");

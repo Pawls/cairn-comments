@@ -1,8 +1,26 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { BRAND, FILTER_DRIVER, LANGUAGES, SCAN_IGNORE, SIDECAR_ROOT, cliHome, homeCommand, installCli, pendingInstall } from "@cairn-comments/core";
-import { ADAPTERS, adapterInstalled, adapterRoots, applySettingsChange, planAdapterInstall, planAdapterUninstall, type SettingsChange } from "./adapters.js";
+import {
+  BRAND,
+  FILTER_DRIVER,
+  LANGUAGES,
+  SCAN_IGNORE,
+  SIDECAR_ROOT,
+  cliHome,
+  homeCommand,
+  installCli,
+  pendingInstall,
+} from "@cairn-comments/core";
+import {
+  ADAPTERS,
+  adapterInstalled,
+  adapterRoots,
+  applySettingsChange,
+  planAdapterInstall,
+  planAdapterUninstall,
+  type SettingsChange,
+} from "./adapters.js";
 import { git, gitQuiet, worktreeRoots } from "./git.js";
 
 const HOOK_TAG = `managed by ${BRAND} init`;
@@ -25,7 +43,10 @@ function homeInstallChange(home: string): Change | undefined {
   const source = path.dirname(fileURLToPath(import.meta.url));
   const incoming = pendingInstall(source, home);
   if (!incoming) return undefined;
-  return { what: `${home}: install ${incoming.version} (build ${incoming.build})`, apply: () => installCli(source, home) };
+  return {
+    what: `${home}: install ${incoming.version} (build ${incoming.build})`,
+    apply: () => installCli(source, home),
+  };
 }
 
 /** The CLI invocation `init` recorded, recovered from the clean filter's config. */
@@ -36,7 +57,8 @@ export function configuredCommand(cwd: string): string {
   } catch {
     // Unset exits 1; handled below.
   }
-  if (!clean.endsWith(" clean %f")) throw new Error(`filter.${FILTER_DRIVER}.clean is not set; run \`${BRAND} init\` first`);
+  if (!clean.endsWith(" clean %f"))
+    throw new Error(`filter.${FILTER_DRIVER}.clean is not set; run \`${BRAND} init\` first`);
   return clean.slice(0, -" clean %f".length);
 }
 
@@ -73,8 +95,16 @@ function configChanges(root: string, wanted: Record<string, string | undefined>)
   for (const [key, value] of Object.entries(wanted)) {
     const current = localConfig(root, key);
     if (current === value) continue;
-    if (value === undefined) changes.push({ what: `git config: unset ${key}`, apply: () => git(["config", "--local", "--unset", key], { cwd: root }) });
-    else changes.push({ what: `git config: set ${key} = ${value}`, apply: () => git(["config", "--local", key, value], { cwd: root }) });
+    if (value === undefined)
+      changes.push({
+        what: `git config: unset ${key}`,
+        apply: () => git(["config", "--local", "--unset", key], { cwd: root }),
+      });
+    else
+      changes.push({
+        what: `git config: set ${key} = ${value}`,
+        apply: () => git(["config", "--local", key, value], { cwd: root }),
+      });
   }
   return changes;
 }
@@ -107,7 +137,9 @@ function attributesChange(root: string, add: string[], remove: string[]): Change
   const separator = body && !body.endsWith("\n") && missing.length ? eol : "";
   const next = body + separator + missing.map((l) => l + eol).join("");
   const removed = lines.length - kept.length;
-  const parts = [missing.length && `add ${missing.length} line(s)`, removed && `remove ${removed} line(s)`].filter(Boolean);
+  const parts = [missing.length && `add ${missing.length} line(s)`, removed && `remove ${removed} line(s)`].filter(
+    Boolean,
+  );
   const empty = !next.trim();
   return {
     what: `.gitattributes: ${empty && existing ? "delete (nothing else was in it)" : parts.join(", ")}`,
@@ -147,7 +179,11 @@ function hookChanges(root: string, command: string): (Change | undefined)[] {
   ]);
   // A failed refresh must not fail the git command that already happened.
   const refresh = (name: string) =>
-    hookScript(name, [`if git config --get filter.${FILTER_DRIVER}.smudge >/dev/null 2>&1; then`, `  ${command} refresh || true`, "fi"]);
+    hookScript(name, [
+      `if git config --get filter.${FILTER_DRIVER}.smudge >/dev/null 2>&1; then`,
+      `  ${command} refresh || true`,
+      "fi",
+    ]);
   return [hookChange(root, "pre-commit", preCommit), ...REFRESH_HOOKS.map((h) => hookChange(root, h, refresh(h)))];
 }
 
@@ -164,7 +200,8 @@ function hookChange(root: string, name: string, script: string): Change | undefi
   const existing = existsSync(hook) ? readFileSync(hook, "utf8") : undefined;
   if (existing === script) return undefined;
   const foreign = existing !== undefined && !existing.includes(HOOK_TAG);
-  if (foreign && existsSync(chained)) throw new Error(`${chained} already exists; merge it with ${hook} by hand, then rerun`);
+  if (foreign && existsSync(chained))
+    throw new Error(`${chained} already exists; merge it with ${hook} by hand, then rerun`);
   const write = () => {
     mkdirSync(dir, { recursive: true });
     if (foreign) renameSync(hook, chained);
@@ -173,7 +210,9 @@ function hookChange(root: string, name: string, script: string): Change | undefi
   };
   let what = existing === undefined ? "install" : "update";
   if (foreign) what = "install; the previous hook now runs after it as " + chainedName(name);
-  const shared = isSharedHooksDir(root, dir) ? ` (a shared hooks directory from core.hooksPath; inert in repositories without ${BRAND})` : "";
+  const shared = isSharedHooksDir(root, dir)
+    ? ` (a shared hooks directory from core.hooksPath; inert in repositories without ${BRAND})`
+    : "";
   return { what: `${hook}: ${what}${shared}`, apply: write };
 }
 
@@ -257,11 +296,20 @@ function agentsMdChange(root: string, remove: boolean): Change | undefined {
 }
 
 function agentsMdRemoval(file: string, next: string): Change {
-  if (!next.trim()) return { what: "AGENTS.md: delete (only the sigil convention was in it)", apply: () => rmSync(file, { force: true }) };
+  if (!next.trim())
+    return {
+      what: "AGENTS.md: delete (only the sigil convention was in it)",
+      apply: () => rmSync(file, { force: true }),
+    };
   return { what: "AGENTS.md: remove the sigil convention", apply: () => writeFileSync(file, next) };
 }
 
-function settingsChange(root: string, harness: string, change: SettingsChange | undefined, installing: boolean): Change | undefined {
+function settingsChange(
+  root: string,
+  harness: string,
+  change: SettingsChange | undefined,
+  installing: boolean,
+): Change | undefined {
   if (!change) return undefined;
   const relative = path.relative(root, change.file);
   // A linked worktree's copy is named in full; a `../` path would hide which worktree it is.
@@ -302,7 +350,9 @@ export function planInit(root: string, options: InitOptions = {}): Change[] {
     }),
     attributesChange(root, attributeLines(), LEGACY_ATTRIBUTES),
     ...hookChanges(root, command),
-    ...hooks.flatMap((h) => adapterRoots(root, h).map((wt) => settingsChange(root, h, planAdapterInstall(wt, h, command), true))),
+    ...hooks.flatMap((h) =>
+      adapterRoots(root, h).map((wt) => settingsChange(root, h, planAdapterInstall(wt, h, command), true)),
+    ),
     options.agentsMd ? agentsMdChange(root, false) : undefined,
   ];
   return changes.filter((c): c is Change => !!c);
@@ -321,7 +371,10 @@ function hookRemoval(root: string, name: string, configured: boolean): Change | 
   if (!existsSync(hook) || !readFileSync(hook, "utf8").includes(HOOK_TAG)) return undefined;
   if (isSharedHooksDir(root, dir)) {
     if (!configured) return undefined;
-    return { what: `${hook}: kept, since core.hooksPath shares it with other repositories (inert here from now on)`, apply: () => {} };
+    return {
+      what: `${hook}: kept, since core.hooksPath shares it with other repositories (inert here from now on)`,
+      apply: () => {},
+    };
   }
   const restore = existsSync(chained);
   return {
@@ -346,7 +399,8 @@ function worktreeConfigRemovals(root: string): Change[] {
   const changes: Change[] = [];
   const worktrees = worktreeRoots(root);
   for (const wt of worktrees) {
-    if (gitQuiet(["config", "--worktree", "--get-regexp", sectionKeys(`filter.${FILTER_DRIVER}`)], wt) === undefined) continue;
+    if (gitQuiet(["config", "--worktree", "--get-regexp", sectionKeys(`filter.${FILTER_DRIVER}`)], wt) === undefined)
+      continue;
     changes.push({
       what: `git config --worktree (${wt}): remove [filter "${FILTER_DRIVER}"]`,
       apply: () => git(["config", "--worktree", "--remove-section", `filter.${FILTER_DRIVER}`], { cwd: wt }),
@@ -355,7 +409,10 @@ function worktreeConfigRemovals(root: string): Change[] {
   // After the per-worktree removals, which need the extension on. Kept if anything else now relies on it.
   const byInit = localConfig(root, WORKTREE_CONFIG_MARK) === "true";
   if (byInit && !worktrees.some((wt) => otherWorktreeConfig(wt).length)) {
-    changes.push({ what: "git config: unset extensions.worktreeConfig (init turned it on)", apply: () => git(["config", "--local", "--unset", "extensions.worktreeConfig"], { cwd: root }) });
+    changes.push({
+      what: "git config: unset extensions.worktreeConfig (init turned it on)",
+      apply: () => git(["config", "--local", "--unset", "extensions.worktreeConfig"], { cwd: root }),
+    });
   }
   return changes;
 }
@@ -369,14 +426,18 @@ export function planUninstall(root: string): Change[] {
   const configured = localConfig(root, `filter.${FILTER_DRIVER}.clean`) !== undefined;
   for (const section of [`filter.${FILTER_DRIVER}`, `merge.${FILTER_DRIVER}`]) {
     if (gitQuiet(["config", "--local", "--get-regexp", sectionKeys(section)], root) !== undefined) {
-      changes.push({ what: `git config: remove [${section.replace(".", ' "')}"]`, apply: () => git(["config", "--local", "--remove-section", section], { cwd: root }) });
+      changes.push({
+        what: `git config: remove [${section.replace(".", ' "')}"]`,
+        apply: () => git(["config", "--local", "--remove-section", section], { cwd: root }),
+      });
     }
   }
   if (localConfig(root, "extensions.worktreeConfig") === "true") changes.push(...worktreeConfigRemovals(root));
   changes.push(attributesChange(root, [], [...attributeLines(), ...LEGACY_ATTRIBUTES]));
   for (const name of ["pre-commit", ...REFRESH_HOOKS]) changes.push(hookRemoval(root, name, configured));
   for (const harness of Object.keys(ADAPTERS)) {
-    for (const wt of adapterRoots(root, harness)) changes.push(settingsChange(root, harness, planAdapterUninstall(wt, harness), false));
+    for (const wt of adapterRoots(root, harness))
+      changes.push(settingsChange(root, harness, planAdapterUninstall(wt, harness), false));
   }
   changes.push(agentsMdChange(root, true));
   return changes.filter((c): c is Change => !!c);

@@ -17,7 +17,9 @@ export interface FilterProcessOptions {
 const DEFAULT_DELAY_BUDGET = 64 << 20;
 
 function send(output: Writable, packets: Buffer[]): Promise<void> {
-  return new Promise((resolve, reject) => output.write(Buffer.concat(packets), (err) => (err ? reject(err) : resolve())));
+  return new Promise((resolve, reject) =>
+    output.write(Buffer.concat(packets), (err) => (err ? reject(err) : resolve())),
+  );
 }
 
 function describe(error: unknown): string {
@@ -42,10 +44,12 @@ class DelayedSmudges {
   start(pathname: string, content: Buffer): void {
     this.held += content.length;
     this.unsettled++;
-    const result = filterContent("smudge", this.options.root, pathname, content, this.options.mode).catch((error: unknown) => {
-      this.options.log(`${pathname}: ${describe(error)}; checked out unfiltered`);
-      return content;
-    });
+    const result = filterContent("smudge", this.options.root, pathname, content, this.options.mode).catch(
+      (error: unknown) => {
+        this.options.log(`${pathname}: ${describe(error)}; checked out unfiltered`);
+        return content;
+      },
+    );
     this.jobs.set(pathname, { size: content.length, result });
     void result.then(() => {
       this.unsettled--;
@@ -77,7 +81,11 @@ class DelayedSmudges {
  * unfiltered content exactly as a failing one-shot filter does; a protocol violation ends
  * the process, and git reports the filter as failed.
  */
-export async function serveFilterProcess(input: AsyncIterable<Buffer | string>, output: Writable, options: FilterProcessOptions): Promise<void> {
+export async function serveFilterProcess(
+  input: AsyncIterable<Buffer | string>,
+  output: Writable,
+  options: FilterProcessOptions,
+): Promise<void> {
   const reader = new PacketReader(input);
   const welcome = await reader.readList();
   if (welcome?.[0] !== "git-filter-client" || !welcome.includes("version=2")) {
@@ -86,9 +94,16 @@ export async function serveFilterProcess(input: AsyncIterable<Buffer | string>, 
   await send(output, [textPacket("git-filter-server"), textPacket("version=2"), FLUSH]);
 
   const offered = new Set(await reader.readList());
-  const supported = (options.smudge ? ["clean", "smudge", "delay"] : ["clean"]).filter((c) => offered.has(`capability=${c}`));
+  const supported = (options.smudge ? ["clean", "smudge", "delay"] : ["clean"]).filter((c) =>
+    offered.has(`capability=${c}`),
+  );
   await send(output, [...supported.map((c) => textPacket(`capability=${c}`)), FLUSH]);
-  const session: Session = { supported, delayed: new DelayedSmudges(options), delayBudget: options.delayBudget ?? DEFAULT_DELAY_BUDGET, options };
+  const session: Session = {
+    supported,
+    delayed: new DelayedSmudges(options),
+    delayBudget: options.delayBudget ?? DEFAULT_DELAY_BUDGET,
+    options,
+  };
 
   for (;;) {
     const headers = await reader.readList();
@@ -96,7 +111,12 @@ export async function serveFilterProcess(input: AsyncIterable<Buffer | string>, 
     const fields = new Map(headers.map((h) => [h.slice(0, h.indexOf("=")), h.slice(h.indexOf("=") + 1)]));
     if (fields.get("command") === "list_available_blobs" && supported.includes("delay")) {
       const paths = await session.delayed.list();
-      await send(output, [...paths.map((p) => textPacket(`pathname=${p}`)), FLUSH, textPacket("status=success"), FLUSH]);
+      await send(output, [
+        ...paths.map((p) => textPacket(`pathname=${p}`)),
+        FLUSH,
+        textPacket("status=success"),
+        FLUSH,
+      ]);
       continue;
     }
     const content = await reader.readContent();
@@ -112,7 +132,12 @@ interface Session {
 }
 
 /** The packets answering one clean or smudge request: the filtered content, a delay, or an error. */
-async function respond(session: Session, headers: string[], fields: Map<string, string>, content: Buffer): Promise<Buffer[]> {
+async function respond(
+  session: Session,
+  headers: string[],
+  fields: Map<string, string>,
+  content: Buffer,
+): Promise<Buffer[]> {
   const { supported, delayed, delayBudget, options } = session;
   const command = fields.get("command");
   const pathname = fields.get("pathname");

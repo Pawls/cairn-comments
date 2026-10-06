@@ -1,4 +1,14 @@
-import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  fstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import { BRAND } from "@cairn-comments/core";
 import { isTracked, worktreeRoots } from "./git.js";
@@ -92,12 +102,19 @@ const isOurs = (entry: unknown, harness: string) => {
 };
 
 /** The `{matcher, hooks: [{type: "command", command}]}` layout Claude Code and Codex share. */
-function installMatcherHook(settings: Record<string, unknown>, matcher: string, command: string, harness: string): void {
+function installMatcherHook(
+  settings: Record<string, unknown>,
+  matcher: string,
+  command: string,
+  harness: string,
+): void {
   const hooks = (settings.hooks = asObject(settings.hooks));
   const groups = (hooks.PostToolUse = asArray(hooks.PostToolUse));
   const hookCommand = `${command} hook ${harness}`;
   for (const group of groups) {
-    const ours = asArray(asObject(group).hooks).map(asObject).find((h) => isOurs(h, harness));
+    const ours = asArray(asObject(group).hooks)
+      .map(asObject)
+      .find((h) => isOurs(h, harness));
     if (ours) {
       ours.command = hookCommand;
       return;
@@ -140,7 +157,11 @@ export const ADAPTERS: Record<string, Adapter> = {
       return {
         cwd: asString(p.cwd) ?? process.cwd(),
         files: file ? [file] : [],
-        provenance: { by: "claude-code", session: asString(p.session_id), model: modelFromTranscript(asString(p.transcript_path)) },
+        provenance: {
+          by: "claude-code",
+          session: asString(p.session_id),
+          model: modelFromTranscript(asString(p.transcript_path)),
+        },
       };
     },
     install(settings, command) {
@@ -172,7 +193,9 @@ export const ADAPTERS: Record<string, Adapter> = {
     settingsFile: ".cursor/hooks.json",
     parse(p) {
       const file = asString(p.file_path);
-      const root = asArray(p.workspace_roots).map(asString).find((r): r is string => !!r);
+      const root = asArray(p.workspace_roots)
+        .map(asString)
+        .find((r): r is string => !!r);
       return {
         cwd: root ?? process.cwd(),
         files: file ? [file] : [],
@@ -200,7 +223,8 @@ export const ADAPTERS: Record<string, Adapter> = {
 
 export function adapterFor(harness: string): Adapter {
   const adapter = ADAPTERS[harness];
-  if (!adapter) throw new Error(`unknown harness "${harness}"; ${BRAND} has adapters for ${Object.keys(ADAPTERS).join(", ")}`);
+  if (!adapter)
+    throw new Error(`unknown harness "${harness}"; ${BRAND} has adapters for ${Object.keys(ADAPTERS).join(", ")}`);
   return adapter;
 }
 

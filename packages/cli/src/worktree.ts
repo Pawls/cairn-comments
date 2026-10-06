@@ -18,7 +18,9 @@ export function addWorktree(root: string, args: string[], cwd = process.cwd()): 
   if (!created) throw new Error("git worktree add reported success but no new worktree is listed");
   git(["config", "--worktree", `filter.${FILTER_DRIVER}.smudge`, `${command} smudge %f`], { cwd: created });
   if (configuredProcess(root)) {
-    git(["config", "--worktree", `filter.${FILTER_DRIVER}.process`, `${command} filter-process --smudge`], { cwd: created });
+    git(["config", "--worktree", `filter.${FILTER_DRIVER}.process`, `${command} filter-process --smudge`], {
+      cwd: created,
+    });
   }
   git(["reset", "--hard", "--quiet"], { cwd: created });
   for (const harness of Object.keys(ADAPTERS)) {

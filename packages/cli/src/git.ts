@@ -60,7 +60,9 @@ export function trackedFiles(root: string): string[] {
 
 /** --no-renames: a staged `git mv` must list its new path, which rename detection reports as `R`. */
 export function stagedFiles(root: string, filter = "ACM"): string[] {
-  return nulSeparated(git(["diff", "--cached", "--name-only", "--no-renames", `--diff-filter=${filter}`, "-z"], { cwd: root }));
+  return nulSeparated(
+    git(["diff", "--cached", "--name-only", "--no-renames", `--diff-filter=${filter}`, "-z"], { cwd: root }),
+  );
 }
 
 /** Staged renames as old path → new path, by git's own rename detection. */
@@ -127,7 +129,9 @@ export function restat(root: string, files: string[]): void {
   }
   const tracked = files.filter((f) => indexed.has(f));
   if (!tracked.length) return;
-  const hashes = git(["hash-object", "--stdin-paths"], { cwd: root, input: tracked.join("\n") + "\n" }).trim().split("\n");
+  const hashes = git(["hash-object", "--stdin-paths"], { cwd: root, input: tracked.join("\n") + "\n" })
+    .trim()
+    .split("\n");
   const identical = tracked.filter((f, i) => hashes[i] === indexed.get(f));
   if (identical.length) git(["update-index", "-z", "--stdin"], { cwd: root, input: identical.join("\0") + "\0" });
 }
@@ -163,7 +167,11 @@ export function changedFiles(root: string): string[] {
 /** The staged blob of `file`, or undefined when the index has no stage-0 entry for it. */
 export function indexBlob(root: string, file: string): Buffer | undefined {
   try {
-    return execFileSync("git", ["cat-file", "blob", `:${file}`], { cwd: root, stdio: ["ignore", "pipe", "ignore"], maxBuffer: 1 << 28 });
+    return execFileSync("git", ["cat-file", "blob", `:${file}`], {
+      cwd: root,
+      stdio: ["ignore", "pipe", "ignore"],
+      maxBuffer: 1 << 28,
+    });
   } catch {
     return undefined;
   }
@@ -171,5 +179,8 @@ export function indexBlob(root: string, file: string): Buffer | undefined {
 
 export function stage(root: string, files: string[]): void {
   if (!files.length) return;
-  git(["--literal-pathspecs", "add", "--pathspec-from-file=-", "--pathspec-file-nul"], { cwd: root, input: files.join("\0") + "\0" });
+  git(["--literal-pathspecs", "add", "--pathspec-from-file=-", "--pathspec-file-nul"], {
+    cwd: root,
+    input: files.join("\0") + "\0",
+  });
 }

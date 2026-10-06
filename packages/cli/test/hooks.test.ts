@@ -13,7 +13,10 @@ describe("init with a global-style core.hooksPath", () => {
     box = new Sandbox({ autocrlf: false });
     hooks = box.path("global-hooks").replaceAll("\\", "/");
     mkdirSync(hooks);
-    writeFileSync(`${hooks}/pre-commit`, '#!/bin/sh\necho ran >> "$(git rev-parse --show-toplevel)/../previous-hook.log"\n');
+    writeFileSync(
+      `${hooks}/pre-commit`,
+      '#!/bin/sh\necho ran >> "$(git rev-parse --show-toplevel)/../previous-hook.log"\n',
+    );
     chmodSync(`${hooks}/pre-commit`, 0o755);
     repo = box.path("repo");
     box.git(box.dir, "init", "-q", "repo");
@@ -31,7 +34,9 @@ describe("init with a global-style core.hooksPath", () => {
     box.write(box.path("repo", "a.py"), "x = 1  #~ why one\n");
     box.git(repo, "add", "-A");
     box.git(repo, "commit", "-qm", "with a comment");
-    expect(box.git(repo, "show", "HEAD:.agents/comments/a.py.md")).toMatch(/^## [0-9a-z]{4}\n<!-- pos=trail [^\n]*-->\nwhy one\n$/);
+    expect(box.git(repo, "show", "HEAD:.agents/comments/a.py.md")).toMatch(
+      /^## [0-9a-z]{4}\n<!-- pos=trail [^\n]*-->\nwhy one\n$/,
+    );
     expect(box.git(repo, "show", "HEAD:a.py")).toBe("x = 1\n");
     expect(readFileSync(box.path("previous-hook.log"), "utf8").trim()).toBe("ran");
     expect(box.status(repo)).toBe("");
@@ -74,7 +79,9 @@ describe("uninstall with a shared hooks directory", () => {
   afterAll(() => box.dispose());
 
   it("init says the hook directory is shared", () => {
-    expect(box.cli(box.path("one"), "init")).toContain("pre-commit: install (a shared hooks directory from core.hooksPath");
+    expect(box.cli(box.path("one"), "init")).toContain(
+      "pre-commit: install (a shared hooks directory from core.hooksPath",
+    );
     box.cli(box.path("two"), "init");
   });
 
