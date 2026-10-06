@@ -30,7 +30,7 @@ const SETTINGS = {
   "git.enabled": false,
 };
 
-/** Native windows are slower than the e2e host, so this polls less often and waits longer than `waitFor`'s defaults. */
+/** `waitFor` with a longer timeout and a slower poll than its defaults: each step here drives a real window. */
 const waitUntil = (what: string, condition: () => boolean | Promise<boolean>) =>
   waitFor(what, condition, { timeout: 15_000, every: 100 });
 
