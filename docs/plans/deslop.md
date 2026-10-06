@@ -259,14 +259,17 @@ it elsewhere (the comments move), undo until the method is back, with no save in
 without its comments on screen. A read of the code says D5 did not cause it: the path makes the same calls in
 the same order before and after PR #13, and the old code already renders stale tracked sites when the buffer
 is still dirty after the undo (`isCurrent` in `placed.ts`; nothing restores sites for text an undo re-inserts).
-That reading is unverified; the first box settles it. No test undoes a cut in either harness.
+That reading is unverified; the first box settles it. No test undoes a cut in either harness. The owner then
+saw the same with redo (Ctrl+Shift+Z): the function moved again and its comments did not. The owner's buffer
+probably had unsaved changes, which fits the reading.
 **Touches:** `packages/vscode/src/{placed,tracking,saves,controller}.ts`; one new case in
 `packages/vscode/e2e/overlay.test.ts`; `packages/vscode/native/run.ts` if real undo grouping needs pinning;
 `docs/design.md` § Overlay rendering, "Live tracking" and § Promote and demote, "Undo".
 **After:** D5.
 
 - [ ] A failing e2e test for the owner's steps (dirty buffer, cut, paste, undo twice, assert the comment is
-      rendered on the original method), committed red; a clean-buffer variant beside it
+      rendered on the original method), committed red; a clean-buffer variant beside it; and a redo case
+      (redo twice after the undo, assert the comment is rendered on the moved method)
 - [ ] Both tests run on a build of ed03167 (before PR #13) and of `main`, to say whether D5 changed anything
 - [ ] The rule written into design.md before the fix: what an undo of a cut shows in a dirty buffer, and what
       happens to the sidecar when the owner undoes "this file only"
