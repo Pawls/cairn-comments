@@ -106,6 +106,7 @@ describe("placeComments after recordComments", () => {
     await expectExact("a.py", SETTLE.replaceAll("\n", "\r\n"));
     await expectExact("a.py", "x = 1\n#~ end");
     await expectExact("a.py", "x = 1\r\n#~ end");
+    await expectExact("a.py", "x = 1\r\n#~ first\r\n#~a1b2 second\r\n#~c3d4 third");
   });
 
   it("keeps the order of blocks that land on one line", async () => {
@@ -334,6 +335,16 @@ describe("recordComments", () => {
     const kept = await recordComments("a.py", withoutOne, recorded.sidecar, { seen: new Set([two!]) });
     expect(kept.deleted).toEqual([]);
     expect(kept.sidecar.entries.map((e) => e.body)).toEqual(["one", "two"]);
+  });
+
+  it("with knownOnly, ignores a comment whose id the sidecar lacks and still records new ones", async () => {
+    const { recorded } = await roundTrip("a.py", "#~ known\nx = 1\n");
+    const [known] = recorded.sidecar.entries.map((e) => e.id);
+    const working = `#~${known} known\nx = 1\n#~zz99 from another commit\ny = 2\n#~ fresh\nz = 3\n`;
+    const result = await recordComments("a.py", working, recorded.sidecar, { knownOnly: true });
+    expect(result.sidecar.entries.map((e) => e.body)).toEqual(["known", "fresh"]);
+    expect(result.ids).toEqual([known, result.sidecar.entries[1]!.id]);
+    expect(result.source).toContain("#~zz99 from another commit\n");
   });
 });
 
