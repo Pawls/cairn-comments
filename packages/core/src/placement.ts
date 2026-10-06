@@ -26,7 +26,10 @@ type Pos = "before" | "after" | "trail" | "row";
  */
 interface Placement {
   pos: Pos;
-  /** Path of the enclosing function or class (`Ledger.settle`, `@n` for the nth duplicate); absent at module level. */
+  /**
+   * Path of the enclosing function, else class or namespace (`Ledger.settle`); a path that
+   * repeats gets `@1`, `@2`, … in document order. Absent at module level.
+   */
   scope?: string;
   /** Hash of the enclosing function, name left out (`bodyHash`): while it matches, placement is exact. */
   body?: string;
@@ -122,7 +125,7 @@ function placementOf(entry: SidecarEntry): Placement | undefined {
   };
 }
 
-/** Whether `stripComments` and `placeComments` manage this entry. */
+/** Whether the entry holds a placement, so `placeComments` manages it. */
 function isPlaced(entry: SidecarEntry): boolean {
   return placementOf(entry) !== undefined;
 }
@@ -142,14 +145,14 @@ function scopeName(node: Node): string | undefined {
   return undefined;
 }
 
-type RowKind = "blank" | "comment" | "code" | "continuation";
-
-interface Row {
-  kind: RowKind;
+interface CodeRow {
+  kind: "code";
   indent: string;
-  /** The largest node starting at the line's first character, on a code line. */
-  node?: Node;
+  /** The largest node starting at the line's first character. */
+  node: Node;
 }
+
+type Row = CodeRow | { kind: "blank" | "comment" | "continuation"; indent: string };
 
 /**
  * One parse, with everything placement needs to ask of it. The same questions asked of a
@@ -215,10 +218,14 @@ class Layout {
     return types.includes(node.type) && scopeName(node) !== undefined;
   }
 
-  /** The innermost named function around `node`, else its innermost class; null at module level. */
+  /** The innermost named function around `node`, else its innermost named class or namespace; null at module level. */
   scopeOf(node: Node): Node | null {
-    for (let p = node.parent; p; p = p.parent) if (this.isScope(p, this.spec.functionTypes)) return p;
-    for (let p = node.parent; p; p = p.parent) if (this.isScope(p, this.spec.namespaceTypes)) return p;
+    for (let p = node.parent; p; p = p.parent) {
+      if (this.isScope(p, this.spec.functionTypes)) return p;
+    }
+    for (let p = node.parent; p; p = p.parent) {
+      if (this.isScope(p, this.spec.namespaceTypes)) return p;
+    }
     return null;
   }
 
@@ -270,6 +277,11 @@ class Layout {
     return nodeHash(this.spec, statement, true).slice(0, 4);
   }
 
+  /** The nodes of `nodes` whose hash is `hash`, in order: an anchor's `nth` indexes into these. */
+  sameHash(nodes: readonly Node[], hash: string | undefined): Node[] {
+    return nodes.filter((c) => this.hashOf(c) === hash);
+  }
+
   /** Candidates of `scope` inside `statement`. */
   candidatesWithin(scope: Node, statement: Node): Node[] {
     return this.candidatesIn(scope).filter((c) => c.startIndex >= statement.startIndex && c.startIndex < statement.endIndex);
@@ -294,6 +306,15 @@ class Layout {
     return [...this.byKey.values()];
   }
 
+  /** The body hash of every named function, by scope path. */
+  functionBodies(): Map<string, string> {
+    const bodies = new Map<string, string>();
+    for (const [key, scope] of this.byKey) {
+      if (this.isFunction(scope)) bodies.set(key, this.bodyHashOf(scope));
+    }
+    return bodies;
+  }
+
   /** Nodes that start a code line and belong to `scope` itself, not to a function inside it. */
   candidatesIn(scope: Node | null): Node[] {
     const id = scope?.id ?? -1;
@@ -303,8 +324,8 @@ class Layout {
       const first = scope?.startPosition.row ?? 0;
       const last = scope?.endPosition.row ?? this.rows.length - 1;
       for (let r = first; r <= last && r < this.rows.length; r++) {
-        const node = this.rows[r]!.node;
-        if (node && (this.scopeOf(node)?.id ?? -1) === id) found.push(node);
+        const row = this.rows[r]!;
+        if (row.kind === "code" && (this.scopeOf(row.node)?.id ?? -1) === id) found.push(row.node);
       }
       this.candidates.set(id, found);
     }
@@ -401,68 +422,122 @@ function runsOf(rows: ReadonlySet<number>): [number, number][] {
   return runs;
 }
 
+/** A row of the working file to its row in the stripped file. */
+type RowMap = (row: number) => number;
+
+/** Maps each row of the working file to its row in the stripped file, which lacks `aiRows`. */
+function strippedRows(rowCount: number, aiRows: ReadonlySet<number>): RowMap {
+  const removedBefore: number[] = [];
+  let removed = 0;
+  for (let r = 0; r < rowCount; r++) {
+    removedBefore.push(removed);
+    if (aiRows.has(r)) removed++;
+  }
+  return (row) => row - removedBefore[row]!;
+}
+
+/** Rows in [from, to) that stay in the stripped file. */
+function keptRows(aiRows: ReadonlySet<number>, from: number, to: number): number {
+  let n = 0;
+  for (let r = from; r < to; r++) {
+    if (!aiRows.has(r)) n++;
+  }
+  return n;
+}
+
+/** Index of `node` among the nodes of `nodes` with its hash; -1 when it is not one of them. */
+function twinIndex(layout: Layout, nodes: readonly Node[], node: Node): number {
+  return layout.sameHash(nodes, layout.hashOf(node)).findIndex((c) => c.id === node.id);
+}
+
+/** A function's statement hashes, and which statement holds `node` (`Placement.in`). */
+function statementAnchor(layout: Layout, scope: Node, node: Node): Pick<Placement, "stmts" | "in"> {
+  const statements = layout.statements(scope);
+  const k = statements.findIndex((s) => node.startIndex >= s.startIndex && node.startIndex < s.endIndex);
+  const holder = statements[k];
+  const m = holder ? twinIndex(layout, layout.candidatesWithin(scope, holder), node) : -1;
+  return { stmts: statements.map((s) => layout.statementHash(s)), in: m >= 0 ? { k, m } : undefined };
+}
+
+/** A placement against code node `node`, with no indent or gap of its own. */
+function anchoredPlacement(layout: Layout, pos: Pos, node: Node, skip: number): Placement {
+  const scope = layout.scopeOf(node);
+  const isFunction = layout.isFunction(scope);
+  return {
+    pos,
+    scope: layout.keyOf(scope),
+    body: isFunction ? layout.bodyHashOf(scope) : undefined,
+    ...(isFunction ? statementAnchor(layout, scope, node) : {}),
+    decl: layout.declarationAt(node),
+    node: layout.hashOf(node),
+    nth: Math.max(twinIndex(layout, layout.candidatesIn(scope), node), 0),
+    skip,
+    seq: 0,
+  };
+}
+
+/** A trailing comment goes on the node that starts its line, else on its row of the stripped file. */
+function trailingPlacement(layout: Layout, m: Marker, cleanRow: RowMap): Placement {
+  const first = lineIndexAt(layout.lines, m.start);
+  const line = layout.lines[first]!;
+  const before = layout.source.slice(line.start, m.start);
+  const gap = before.slice(trailingRunStart(before, " \t"));
+  const row = layout.rows[first];
+  if (row?.kind === "code" && row.node.startPosition.row === first) {
+    return { ...anchoredPlacement(layout, "trail", row.node, 0), gap };
+  }
+  return { pos: "row", nth: 0, skip: cleanRow(first), seq: 0, gap };
+}
+
+/** The first code row at or after `from`; `rows.length` when there is none. */
+function nextCodeRow(rows: readonly Row[], from: number): number {
+  let next = from;
+  while (next < rows.length && rows[next]!.kind !== "code") next++;
+  return next;
+}
+
+/**
+ * The code row above `row` at `indent`, unless a shallower code row comes first: the
+ * statement a block's last comment follows.
+ */
+function precedingAtIndent(rows: readonly Row[], row: number, indent: number): CodeRow | undefined {
+  for (let prev = row - 1; prev >= 0; prev--) {
+    const candidate = rows[prev]!;
+    if (candidate.kind !== "code" || candidate.indent.length > indent) continue;
+    if (candidate.indent.length < indent) return undefined;
+    return candidate;
+  }
+  return undefined;
+}
+
 /** The code line an own-line comment block sits against, found the same way in both parses. */
-function placementFor(layout: Layout, m: Marker, aiRows: Set<number>, cleanRow: (row: number) => number): Placement {
+function ownLinePlacement(layout: Layout, m: Marker, aiRows: ReadonlySet<number>, cleanRow: RowMap): Placement {
   const { lines, rows } = layout;
   const first = lineIndexAt(lines, m.start);
   const last = lineIndexAt(lines, m.end);
-  const kept = (from: number, to: number) => {
-    let n = 0;
-    for (let r = from; r < to; r++) if (!aiRows.has(r)) n++;
-    return n;
-  };
-  const anchored = (pos: Pos, node: Node, skip: number, defaultIndent: string, gap?: string): Placement => {
-    const scope = layout.scopeOf(node);
-    const hash = layout.hashOf(node);
-    const nth = layout.candidatesIn(scope).filter((c) => layout.hashOf(c) === hash).findIndex((c) => c.id === node.id);
-    let stmts: string[] | undefined;
-    let within: Placement["in"];
-    if (layout.isFunction(scope)) {
-      const statements = layout.statements(scope);
-      stmts = statements.map((s) => layout.statementHash(s));
-      const k = statements.findIndex((s) => node.startIndex >= s.startIndex && node.startIndex < s.endIndex);
-      const m = k < 0 ? -1 : layout.candidatesWithin(scope, statements[k]!).filter((c) => layout.hashOf(c) === hash).findIndex((c) => c.id === node.id);
-      if (m >= 0) within = { k, m };
-    }
-    return {
-      pos,
-      scope: layout.keyOf(scope),
-      body: layout.isFunction(scope) ? layout.bodyHashOf(scope) : undefined,
-      stmts,
-      in: within,
-      decl: layout.declarationAt(node),
-      node: hash,
-      nth: Math.max(nth, 0),
-      skip,
-      seq: 0,
-      indent: m.placement === "own-line" && m.indent !== defaultIndent ? m.indent : undefined,
-      gap,
-    };
-  };
+  const ownIndent = (defaultIndent: string) => (m.indent === defaultIndent ? undefined : m.indent);
 
-  if (m.placement === "trailing") {
-    const line = lines[first]!;
-    const before = layout.source.slice(line.start, m.start);
-    const gap = before.slice(trailingRunStart(before, " \t"));
-    const node = rows[first]!.node;
-    if (node?.startPosition.row === first) return anchored("trail", node, 0, "", gap);
-    return { pos: "row", nth: 0, skip: cleanRow(first), seq: 0, gap };
-  }
-
-  let next = last + 1;
-  while (next < rows.length && rows[next]!.kind !== "code") next++;
+  const next = nextCodeRow(rows, last + 1);
   const nextRow = rows[next];
-  if (nextRow && nextRow.indent.length >= m.indent.length) return anchored("before", nextRow.node!, kept(last + 1, next), nextRow.indent);
-
+  const above = nextRow?.kind === "code" ? nextRow : undefined;
+  const placeAbove = (row: CodeRow): Placement => ({
+    ...anchoredPlacement(layout, "before", row.node, keptRows(aiRows, last + 1, next)),
+    indent: ownIndent(row.indent),
+  });
+  if (above && above.indent.length >= m.indent.length) return placeAbove(above);
   // The last comment of a block: below the statement it follows at its own indent.
-  for (let prev = first - 1; prev >= 0; prev--) {
-    const row = rows[prev]!;
-    if (row.kind !== "code" || row.indent.length > m.indent.length) continue;
-    if (row.indent.length < m.indent.length) break;
-    return anchored("after", row.node!, kept(layout.lastCodeRow(row.node!) + 1, first), row.indent);
+  const after = precedingAtIndent(rows, first, m.indent.length);
+  if (after) {
+    const skip = keptRows(aiRows, layout.lastCodeRow(after.node) + 1, first);
+    return { ...anchoredPlacement(layout, "after", after.node, skip), indent: ownIndent(after.indent) };
   }
-  if (nextRow) return anchored("before", nextRow.node!, kept(last + 1, next), nextRow.indent);
+  if (above) return placeAbove(above);
   return { pos: "row", nth: 0, skip: cleanRow(first), seq: 0, indent: m.indent || undefined };
+}
+
+function placementFor(layout: Layout, m: Marker, aiRows: ReadonlySet<number>, cleanRow: RowMap): Placement {
+  if (m.placement === "trailing") return trailingPlacement(layout, m, cleanRow);
+  return ownLinePlacement(layout, m, aiRows, cleanRow);
 }
 
 /** A stale comment, and the row of the stripped file it was placed against. */
@@ -481,7 +556,7 @@ interface Located {
 
 /**
  * Statement-set overlap (Jaccard) a function needs to count as the renamed one when its
- * body changed too. The measured history never exercised it (design.md § Anchoring, "Measured").
+ * body changed too. No replay window exercised it (design.md § Anchoring, "Measured").
  */
 const RENAME_OVERLAP = 0.5;
 
@@ -499,7 +574,7 @@ function locate(layout: Layout, p: Placement): Located | undefined {
   if (scope === undefined) return undefined;
   const renamed = resolved === undefined;
   const exact = p.body === undefined || (layout.isFunction(scope) && layout.bodyHashOf(scope) === p.body);
-  const node = exact ? layout.candidatesIn(scope).filter((c) => layout.hashOf(c) === p.node)[p.nth] : inUnchangedRun(layout, scope, p);
+  const node = exact ? layout.sameHash(layout.candidatesIn(scope), p.node)[p.nth] : inUnchangedRun(layout, scope, p);
   if (node) return { node, stale: !exact, renamed };
   // A declaration whose signature changed: the comment above it follows it by name, to the
   // line that starts it (decorators, `export`), never an `if` block around it.
@@ -511,8 +586,8 @@ function locate(layout: Layout, p: Placement): Located | undefined {
 /**
  * The recorded node, found through a diff of the function's statement hashes: only while
  * the statement holding it is in an unchanged run, or was moved whole within the function.
- * A comment on a replaced statement is not moved onto its replacement; the measurement
- * found such moves wrong a third of the time (design.md § Anchoring, "Measured").
+ * A comment on a replaced statement is not moved onto its replacement; in the replay, 34%
+ * and 38% of such moves were wrong (design.md § Anchoring, "Measured").
  */
 function inUnchangedRun(layout: Layout, scope: Node | null, p: Placement): Node | undefined {
   if (!layout.isFunction(scope) || !p.stmts || !p.in) return undefined;
@@ -521,7 +596,7 @@ function inUnchangedRun(layout: Layout, scope: Node | null, p: Placement): Node 
   const matched = matchRuns(p.stmts, hashes);
   const now = matched.get(p.in.k) ?? movedStatement(p.stmts, hashes, matched, p.in.k);
   if (now === undefined) return undefined;
-  return layout.candidatesWithin(scope, statements[now]!).filter((c) => layout.hashOf(c) === p.node)[p.in.m];
+  return layout.sameHash(layout.candidatesWithin(scope, statements[now]!), p.node)[p.in.m];
 }
 
 /**
@@ -548,9 +623,15 @@ function matchRuns(old: readonly string[], now: readonly string[]): Map<number, 
   let i = 0;
   let j = 0;
   while (i < old.length && j < now.length) {
-    if (old[i] === now[j]) matched.set(i++, j++);
-    else if (lengths[i + 1]![j]! >= lengths[i]![j + 1]!) i++;
-    else j++;
+    if (old[i] === now[j]) {
+      matched.set(i, j);
+      i++;
+      j++;
+    } else if (lengths[i + 1]![j]! >= lengths[i]![j + 1]!) {
+      i++;
+    } else {
+      j++;
+    }
   }
   return matched;
 }
@@ -558,13 +639,13 @@ function matchRuns(old: readonly string[], now: readonly string[]): Map<number, 
 /**
  * The declaration a scope that no longer resolves was renamed to: the one function whose
  * body hash is unchanged, else the function whose statements overlap most (at least
- * `RENAME_OVERLAP`); for a class, the one class holding the anchor node.
+ * `RENAME_OVERLAP`); for a class or namespace, the one such scope holding the anchor node.
  */
 function renamedScope(layout: Layout, p: Placement): Node | undefined {
   if (p.scope === undefined) return undefined;
   const scopes = layout.scopes();
   if (p.body === undefined) {
-    const holders = scopes.filter((s) => !layout.isFunction(s) && layout.candidatesIn(s).filter((c) => layout.hashOf(c) === p.node).length > p.nth);
+    const holders = scopes.filter((s) => !layout.isFunction(s) && layout.sameHash(layout.candidatesIn(s), p.node).length > p.nth);
     return holders.length === 1 ? holders[0] : undefined;
   }
   const functions = scopes.filter((s) => layout.isFunction(s));
@@ -580,8 +661,13 @@ function renamedScope(layout: Layout, p: Placement): Node | undefined {
     const shared = [...now].filter((h) => old.has(h)).length;
     // One shared statement (a lone `pass` or `return`) says nothing about identity.
     const score = shared < 2 ? 0 : shared / (old.size + now.size - shared);
-    if (score > bestScore) [best, bestScore, tied] = [f, score, false];
-    else if (score === bestScore) tied = true;
+    if (score > bestScore) {
+      best = f;
+      bestScore = score;
+      tied = false;
+    } else if (score === bestScore) {
+      tied = true;
+    }
   }
   return best && !tied && bestScore >= RENAME_OVERLAP ? best : undefined;
 }
@@ -590,6 +676,7 @@ interface Insertion {
   id: string;
   row: number;
   seq: number;
+  /** Breaks a tie in `seq`: sidecar order, or arrival order for a trailing comment moved off its line. */
   order: number;
   lines: string[];
   eof?: string;
@@ -604,52 +691,66 @@ interface Resolved {
   renamed: string[];
 }
 
+/** Where a placement lands in the stripped file. */
+interface Target {
+  row: number;
+  /** The indent of the line placed against, which an own-line comment takes unless it recorded its own. */
+  defaultIndent: string;
+  stale: boolean;
+  renamed: boolean;
+}
+
+/** The target of a placement; undefined for an orphan. */
+function targetOf(layout: Layout, p: Placement): Target | undefined {
+  if (p.pos === "row") {
+    return { row: clamp(p.skip, 0, layout.rows.length), defaultIndent: "", stale: false, renamed: false };
+  }
+  const found = locate(layout, p);
+  if (!found) return undefined;
+  return { ...targetRow(layout, p, found.node), stale: found.stale, renamed: found.renamed };
+}
+
+/** A `row` placement with a recorded gap was a trailing comment on a line no code node starts. */
+const isTrailing = (p: Placement) => p.pos === "trail" || (p.pos === "row" && p.gap !== undefined);
+
+/** The text of a trailing comment, its gap included; a multi-line body is joined with spaces. */
+function trailingText(sigil: string, id: string, p: Placement, tag: string, body: string): string {
+  return `${p.gap ?? "  "}${sigil}${id} ${tag}${body.replaceAll("\n", " ")}`;
+}
+
+/** The lines of an own-line comment: the id on the first, the sigil alone on each further one. */
+function ownLines(sigil: string, id: string, indent: string, tag: string, body: string): string[] {
+  const [head, ...rest] = body.split("\n");
+  return [`${indent}${sigil}${id} ${tag}${head!}`, ...rest.map((l) => indent + sigil + (l ? " " + l : ""))];
+}
+
 function resolve(layout: Layout, entries: readonly SidecarEntry[]): Resolved {
   const own: Insertion[] = [];
   const trailing = new Map<number, { id: string; text: string }[]>();
   const placed: string[] = [];
   const staleRows: StalePlacement[] = [];
   const renamed: string[] = [];
-  const { rows, spec } = layout;
+  const sigil = layout.spec.lineSigil;
 
-  entries.forEach((entry, order) => {
+  for (const [order, entry] of entries.entries()) {
     const p = placementOf(entry);
     const body = normalizeBody(entry.body);
-    if (!p || !body) return;
-
-    let row: number;
-    let defaultIndent = "";
-    let stale = false;
-    if (p.pos === "row") {
-      row = clamp(p.skip, 0, rows.length);
+    if (!p || !body) continue;
+    const target = targetOf(layout, p);
+    if (!target) continue;
+    const { id } = entry;
+    const { row } = target;
+    if (target.renamed) renamed.push(id);
+    placed.push(id);
+    if (target.stale) staleRows.push({ id, row });
+    const tag = target.stale ? STALE_TAG + " " : "";
+    if (isTrailing(p)) {
+      trailing.set(row, [...(trailing.get(row) ?? []), { id, text: trailingText(sigil, id, p, tag, body) }]);
     } else {
-      const found = locate(layout, p);
-      if (!found) return;
-      stale = found.stale;
-      if (found.renamed) renamed.push(entry.id);
-      ({ row, defaultIndent } = targetRow(layout, p, found.node));
+      const lines = ownLines(sigil, id, p.indent ?? target.defaultIndent, tag, body);
+      own.push({ id, row, seq: p.seq, order, lines, eof: p.eof });
     }
-
-    placed.push(entry.id);
-    if (stale) staleRows.push({ id: entry.id, row });
-    const tag = stale ? STALE_TAG + " " : "";
-    if (p.pos === "trail" || (p.pos === "row" && p.gap !== undefined)) {
-      const onRow = trailing.get(row) ?? [];
-      onRow.push({ id: entry.id, text: `${p.gap ?? "  "}${spec.lineSigil}${entry.id} ${tag}${body.replaceAll("\n", " ")}` });
-      trailing.set(row, onRow);
-      return;
-    }
-    const indent = p.indent ?? defaultIndent;
-    const [head, ...rest] = body.split("\n");
-    own.push({
-      id: entry.id,
-      row,
-      seq: p.seq,
-      order,
-      lines: [`${indent}${spec.lineSigil}${entry.id} ${tag}${head!}`, ...rest.map((l) => indent + spec.lineSigil + (l ? " " + l : ""))],
-      eof: p.eof,
-    });
-  });
+  }
 
   oneTrailingPerLine(layout, trailing, own);
   return { own, trailing, placed, stale: staleRows, renamed };
@@ -726,10 +827,11 @@ function placeIn(layout: Layout, sidecar: Sidecar): PlaceResult {
   const { lines, source } = layout;
   const splices: Splice[] = [];
   const sites: CommentSite[] = [];
-  for (const [row, items] of trailing) {
-    if (!items.length || row >= lines.length) continue;
-    splices.push({ start: lines[row]!.contentEnd, end: lines[row]!.contentEnd, text: items[0]!.text });
-    sites.push({ id: items[0]!.id, row, kind: "trail" });
+  for (const [row, [item]] of trailing) {
+    if (!item || row >= lines.length) continue;
+    const end = lines[row]!.contentEnd;
+    splices.push({ start: end, end, text: item.text });
+    sites.push({ id: item.id, row, kind: "trail" });
   }
   const byRow = new Map<number, Insertion[]>();
   for (const ins of own) byRow.set(ins.row, [...(byRow.get(ins.row) ?? []), ins]);
@@ -761,9 +863,15 @@ function ownLinesSplice(layout: Layout, row: number, group: Insertion[]): Splice
     const eol = eolFor(layout, row);
     return { start: lines[row]!.start, end: lines[row]!.start, text: text.map((l) => l + eol).join("") };
   }
-  const terminated = !source || source.endsWith("\n");
-  const eol = (!terminated && group.find((g) => g.eof)?.eof) || eolFor(layout, lines.length - 1);
-  return { start: source.length, end: source.length, text: terminated ? text.map((l) => l + eol).join("") : eol + text.join(eol) };
+  const end = source.length;
+  if (!source || source.endsWith("\n")) {
+    const eol = eolFor(layout, lines.length - 1);
+    return { start: end, end, text: text.map((l) => l + eol).join("") };
+  }
+  // The file stays unterminated: the terminator `stripComments` took (`Placement.eof`) goes
+  // back before the comments and separates their lines.
+  const eol = group.find((g) => g.eof)?.eof || eolFor(layout, lines.length - 1);
+  return { start: end, end, text: eol + text.join(eol) };
 }
 
 /** Inserts each placement entry's comment into a stripped file; entries that no longer match stay out. */
@@ -795,7 +903,7 @@ export interface RecordOptions {
    * (design.md § Anchoring, "Who saw it"). Without a baseline every comment is re-recorded.
    */
   baseline?: string;
-  /** Ids re-recorded whatever the baseline says: `confirm`. */
+  /** Ids re-recorded whatever the baseline says (the `confirm` command). */
   confirm?: ReadonlySet<string>;
 }
 
@@ -856,11 +964,118 @@ function staleTagRemoval(source: string, tagStart: number): Splice {
   return { start: tagStart - 1, end: tagEnd, text: "" };
 }
 
+/** A comment in the working file: its marker, the id it has or is stamped with, and where it sits. */
+interface FoundComment {
+  marker: Marker;
+  id: string;
+  placement: Placement;
+}
+
+/** Every comment in the file, with its placement as `recordComments` writes it. */
+function findComments(path: string, layout: Layout): FoundComment[] {
+  const { spec, source, lines } = layout;
+  const markers = markersFrom(spec, source, lines, commentsIn(spec, layout.root));
+  const ids = resolveIds(path, markers);
+  const { rows: aiRows } = removals(layout, markers);
+  const cleanRow = strippedRows(lines.length, aiRows);
+  const comments = markers.map((marker, i) => ({
+    marker,
+    id: ids[i]!,
+    placement: placementFor(layout, marker, aiRows, cleanRow),
+  }));
+  recordFinalTerminator(layout, aiRows, comments);
+  recordLineOrder(layout, cleanRow, comments);
+  return comments;
+}
+
 /**
- * What `sync` does to one file: stamps ids onto new comments, moves bodies into the sidecar, and
- * records where every comment in the file sits. A comment on disk has been seen by whoever
- * edited the file, so its placement is always re-recorded. Entries not on disk are kept,
- * except deletions (see `RecordOptions`).
+ * Sets `eof` on the blocks in the run of comment lines that ends the file, when its last
+ * line is unterminated: `stripComments` took the terminator before the run.
+ */
+function recordFinalTerminator(layout: Layout, aiRows: ReadonlySet<number>, comments: readonly FoundComment[]): void {
+  const lastRow = layout.lines.length - 1;
+  const lastLine = layout.lines[lastRow];
+  if (!lastLine || lastLine.end !== lastLine.contentEnd || !aiRows.has(lastRow)) return;
+  let runStart = lastRow;
+  while (aiRows.has(runStart - 1)) runStart--;
+  const before = layout.lines[runStart - 1];
+  if (!before) return;
+  const eol = layout.source.slice(before.contentEnd, before.end);
+  for (const { marker, placement } of comments) {
+    if (marker.placement === "own-line" && lineIndexAt(layout.lines, marker.start) >= runStart) placement.eof = eol;
+  }
+}
+
+/** Sets `seq` so own-line blocks that land on one line of the stripped file keep their order. */
+function recordLineOrder(layout: Layout, cleanRow: RowMap, comments: readonly FoundComment[]): void {
+  const onRow = new Map<number, number>();
+  for (const { marker, placement } of comments) {
+    if (marker.placement !== "own-line") continue;
+    const row = cleanRow(lineIndexAt(layout.lines, marker.start));
+    const n = onRow.get(row) ?? 0;
+    placement.seq = n;
+    onRow.set(row, n + 1);
+  }
+}
+
+/** Whether the comment carries an id that `entries` lacks (`RecordOptions.knownOnly`). */
+function isForeign(m: Marker, entries: readonly SidecarEntry[]): boolean {
+  return m.id !== undefined && !entries.some((e) => e.id === m.id);
+}
+
+/**
+ * Writes one comment's body and placement into its entry in `entries`. `placed` when its
+ * placement was re-recorded; `changed` when the entry changed.
+ */
+function recordEntry(
+  entries: SidecarEntry[],
+  { marker, id, placement }: FoundComment,
+  options: RecordOptions,
+  baselineBodies: ReadonlyMap<string, string> | undefined,
+): { changed: boolean; placed: boolean } {
+  const { entry, written } = recordBody(entries, id, marker, options.meta);
+  if (!entry) return { changed: written, placed: false };
+  if (!written && !options.confirm?.has(id) && unseenChange(entry, placement, baselineBodies)) {
+    return { changed: false, placed: false };
+  }
+  const moved = setPlacement(entry, placement);
+  return { changed: written || moved, placed: true };
+}
+
+/**
+ * Records every comment into `entries`, and the edits to `source` that stamp new ids and
+ * remove the stale tag from each re-recorded comment.
+ */
+function recordAll(
+  sigil: string,
+  source: string,
+  comments: readonly FoundComment[],
+  entries: SidecarEntry[],
+  options: RecordOptions,
+  baselineBodies: ReadonlyMap<string, string> | undefined,
+): { splices: Splice[]; present: Set<string>; sidecarChanged: boolean } {
+  let sidecarChanged = false;
+  const splices: Splice[] = [];
+  const present = new Set<string>();
+  for (const comment of comments) {
+    const { marker: m, id } = comment;
+    if (options.knownOnly && isForeign(m, entries)) continue;
+    present.add(id);
+    const idStart = m.start + sigil.length;
+    if (m.id !== id) splices.push({ start: idStart, end: idStart + (m.id?.length ?? 0), text: id });
+    const { changed, placed } = recordEntry(entries, comment, options, baselineBodies);
+    if (changed) sidecarChanged = true;
+    if (placed && m.staleTag) splices.push(staleTagRemoval(source, idStart + id.length + 1));
+  }
+  return { splices, present, sidecarChanged };
+}
+
+/**
+ * What `sync` does to one file: stamps ids onto new comments, moves bodies into the sidecar,
+ * records where every comment in the file sits, and removes the stale tag from each comment
+ * it re-records. A comment on disk has been seen by whoever edited the file, so its placement
+ * is re-recorded, unless its function changed only outside this file (`RecordOptions.baseline`).
+ * Entries not on disk are kept, except deletions (see `RecordOptions.seen`).
  */
 export async function recordComments(path: string, source: string, sidecar: Sidecar, options: RecordOptions = {}): Promise<RecordResult> {
   const unchanged: RecordResult = { source, sidecar, sourceChanged: false, sidecarChanged: false, ids: [], deleted: [] };
@@ -868,69 +1083,12 @@ export async function recordComments(path: string, source: string, sidecar: Side
   if (!spec) return unchanged;
   if (!source.includes(spec.lineSigil) && !options.seen?.size) return unchanged;
 
-  const recorded = await withLayout(spec, source, (layout) => {
-    const markers = markersFrom(spec, source, layout.lines, commentsIn(spec, layout.root));
-    const ids = resolveIds(path, markers);
-    const { rows: aiRows } = removals(layout, markers);
-    const removedBefore: number[] = [];
-    let removed = 0;
-    for (let r = 0; r < layout.lines.length; r++) {
-      removedBefore.push(removed);
-      if (aiRows.has(r)) removed++;
-    }
-    const cleanRow = (row: number) => row - removedBefore[row]!;
-    const placements = markers.map((m) => placementFor(layout, m, aiRows, cleanRow));
-    // Blocks in the run of comment lines that ends the file, when its last line is
-    // unterminated: `stripComments` took the terminator before the run.
-    const lastRow = layout.lines.length - 1;
-    const lastLine = layout.lines[lastRow];
-    if (lastLine && lastLine.end === lastLine.contentEnd && aiRows.has(lastRow)) {
-      let runStart = lastRow;
-      while (aiRows.has(runStart - 1)) runStart--;
-      const before = layout.lines[runStart - 1];
-      markers.forEach((m, i) => {
-        if (before && m.placement === "own-line" && lineIndexAt(layout.lines, m.start) >= runStart) {
-          placements[i]!.eof = layout.source.slice(before.contentEnd, before.end);
-        }
-      });
-    }
-    // Own-line blocks that land on one line of the stripped file keep their order.
-    const onRow = new Map<number, number>();
-    markers.forEach((m, i) => {
-      if (m.placement !== "own-line") return;
-      const row = cleanRow(lineIndexAt(layout.lines, m.start));
-      const n = onRow.get(row) ?? 0;
-      placements[i]!.seq = n;
-      onRow.set(row, n + 1);
-    });
-    return { markers, ids, placements };
-  });
+  const comments = await withLayout(spec, source, (layout) => findComments(path, layout));
   const baselineBodies =
-    options.baseline === undefined
-      ? undefined
-      : await withLayout(spec, options.baseline, (layout) => new Map(layout.scopes().filter((s) => layout.isFunction(s)).map((s) => [layout.keyOf(s)!, layout.bodyHashOf(s)])));
+    options.baseline === undefined ? undefined : await withLayout(spec, options.baseline, (layout) => layout.functionBodies());
 
   const entries = sidecar.entries.map((e) => ({ ...e, meta: new Map(e.meta) }));
-  let sidecarChanged = false;
-  const splices: Splice[] = [];
-  const present = new Set<string>();
-  recorded.markers.forEach((m, i) => {
-    const id = recorded.ids[i]!;
-    if (options.knownOnly && m.id !== undefined && !entries.some((e) => e.id === m.id)) return;
-    present.add(id);
-    if (m.id !== id) {
-      const idStart = m.start + spec.lineSigil.length;
-      splices.push({ start: idStart, end: idStart + (m.id?.length ?? 0), text: id });
-    }
-    const { entry, written } = recordBody(entries, id, m, options.meta);
-    if (written) sidecarChanged = true;
-    if (!entry) return;
-    const placement = recorded.placements[i]!;
-    if (!written && !options.confirm?.has(id) && unseenChange(entry, placement, baselineBodies)) return;
-    if (setPlacement(entry, placement)) sidecarChanged = true;
-    if (m.staleTag) splices.push(staleTagRemoval(source, m.start + spec.lineSigil.length + id.length + 1));
-  });
-
+  const { splices, present, sidecarChanged } = recordAll(spec.lineSigil, source, comments, entries, options, baselineBodies);
   const deleted = entries.filter((e) => options.seen?.has(e.id) && !present.has(e.id)).map((e) => e.id);
   return {
     source: applySplices(source, splices),

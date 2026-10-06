@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { convertComments, newComments, parseSidecar, recordComments, serializeSidecar } from "../src/index.js";
+import { PLACEMENT_KEYS } from "../src/placement.js";
 
 const texts = async (path: string, source: string, baseline: string) => (await newComments(path, source, baseline)).map((c) => c.text);
 
@@ -53,7 +54,8 @@ describe("recorded provenance", () => {
     const source = "#~ab12 new text\n#~cd34 same\nx = 1\n#~ fresh\n";
     const { sidecar } = await recordComments("a.py", source, stored, { meta });
     const byId = new Map(sidecar.entries.map((e) => [e.id, e]));
-    const provenance = (id: string) => [...byId.get(id)!.meta.keys()].filter((k) => !["pos", "node", "nth", "skip", "seq"].includes(k));
+    const placementKeys: readonly string[] = PLACEMENT_KEYS;
+    const provenance = (id: string) => [...byId.get(id)!.meta.keys()].filter((k) => !placementKeys.includes(k));
     expect(provenance("ab12")).toEqual(["hash", "by", "model", "at"]);
     // An unchanged body gains only its placement, never provenance.
     expect(provenance("cd34")).toEqual([]);
