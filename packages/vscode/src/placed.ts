@@ -158,6 +158,8 @@ export class PlacedView implements vscode.CodeLensProvider, vscode.Disposable {
     const text = document.getText();
     const placed = await placeComments(file, text, sidecar);
     if (document.version !== version || document.isClosed) return false;
+    // A placement that overlapped this one already finished; replacing its merge would undo it.
+    if (this.isCurrent(document)) return true;
     const uri = document.uri.toString();
     const stale = new Set(placed.stale.map((s) => s.id));
     const kept = this.states.get(uri);
