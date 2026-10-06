@@ -50,7 +50,8 @@ interface Placement {
   gap?: string;
   /**
    * The terminator `stripComments` took from the line before a comment on an unterminated
-   * last line; nothing left in the stripped file says which one it was.
+   * last line; nothing left in the stripped file says which one it was. Empty when it took
+   * none (the line before is empty, or there is none): the comment still ends the file.
    */
   eof?: string;
 }
@@ -78,7 +79,9 @@ function decodeWhitespace(value: string | undefined): string | undefined {
 const EOF_BY_NAME = new Map([
   ["crlf", "\r\n"],
   ["lf", "\n"],
+  ["none", ""],
 ]);
+const EOF_NAME = new Map([...EOF_BY_NAME].map(([name, eol]) => [eol, name]));
 
 /** A count's metadata value; a zero count is left out. */
 const countMeta = (n: number | undefined) => (n ? String(n) : undefined);
@@ -97,7 +100,7 @@ function placementMeta(p: Placement): Map<string, string> {
     ["seq", countMeta(p.seq)],
     ["indent", p.indent === undefined ? undefined : encodeWhitespace(p.indent)],
     ["gap", p.gap === undefined ? undefined : encodeWhitespace(p.gap)],
-    ["eof", p.eof && (p.eof === "\r\n" ? "crlf" : "lf")],
+    ["eof", p.eof === undefined ? undefined : EOF_NAME.get(p.eof)],
   ];
   return new Map(fields.filter((field): field is [string, string] => field[1] !== undefined));
 }
@@ -392,7 +395,7 @@ function removals(layout: Layout, markers: readonly Marker[]): { rows: Set<numbe
  * Removes every sigil comment whole: own-line comments with their lines and terminators,
  * trailing ones with the whitespace before them. Pure in (path, source), like `clean`.
  * A comment on an unterminated last line takes the terminator before it instead, so the
- * stripped file keeps the original's missing final newline.
+ * stripped file keeps the original's missing final newline (see `terminatorGiver`).
  */
 export async function stripComments(path: string, source: string): Promise<string> {
   const spec = languageForPath(path);
@@ -404,11 +407,21 @@ export async function stripComments(path: string, source: string): Promise<strin
     const splices: Splice[] = [...trailing];
     for (const [first, lastRow] of runsOf(rows)) {
       const last = layout.lines[lastRow]!;
-      const unterminated = last.end === last.contentEnd && first > 0;
-      splices.push({ start: unterminated ? layout.lines[first - 1]!.contentEnd : layout.lines[first]!.start, end: last.end, text: "" });
+      const giver = last.end === last.contentEnd ? terminatorGiver(layout.lines, first) : undefined;
+      splices.push({ start: giver?.contentEnd ?? layout.lines[first]!.start, end: last.end, text: "" });
     }
     return applySplices(source, splices);
   });
+}
+
+/**
+ * The line whose terminator `stripComments` takes when the run of comment lines starting at
+ * `first` ends an unterminated file: the line before the run, unless that line is empty, since
+ * an empty line without its terminator is no line at all. Undefined when it takes none.
+ */
+function terminatorGiver(lines: readonly Line[], first: number): Line | undefined {
+  const before = lines[first - 1];
+  return before && before.contentEnd > before.start ? before : undefined;
 }
 
 /** Consecutive rows as [first, last] pairs, in order. */
@@ -866,7 +879,9 @@ function ownLinesSplice(layout: Layout, row: number, group: Insertion[]): Splice
   const end = source.length;
   if (!source || source.endsWith("\n")) {
     const eol = eolFor(layout, lines.length - 1);
-    return { start: end, end, text: text.map((l) => l + eol).join("") };
+    // An empty `Placement.eof`: the comments ended an unterminated file, and nothing was taken from it.
+    const final = group.some((g) => g.eof === "") ? "" : eol;
+    return { start: end, end, text: text.join(eol) + final };
   }
   // The file stays unterminated: the terminator `stripComments` took (`Placement.eof`) goes
   // back before the comments and separates their lines.
@@ -990,7 +1005,8 @@ function findComments(path: string, layout: Layout): FoundComment[] {
 
 /**
  * Sets `eof` on the blocks in the run of comment lines that ends the file, when its last
- * line is unterminated: `stripComments` took the terminator before the run.
+ * line is unterminated: to the terminator `stripComments` took before the run, or to empty
+ * when it took none.
  */
 function recordFinalTerminator(layout: Layout, aiRows: ReadonlySet<number>, comments: readonly FoundComment[]): void {
   const lastRow = layout.lines.length - 1;
@@ -998,9 +1014,8 @@ function recordFinalTerminator(layout: Layout, aiRows: ReadonlySet<number>, comm
   if (!lastLine || lastLine.end !== lastLine.contentEnd || !aiRows.has(lastRow)) return;
   let runStart = lastRow;
   while (aiRows.has(runStart - 1)) runStart--;
-  const before = layout.lines[runStart - 1];
-  if (!before) return;
-  const eol = layout.source.slice(before.contentEnd, before.end);
+  const giver = terminatorGiver(layout.lines, runStart);
+  const eol = giver ? layout.source.slice(giver.contentEnd, giver.end) : "";
   for (const { marker, placement } of comments) {
     if (marker.placement === "own-line" && lineIndexAt(layout.lines, marker.start) >= runStart) placement.eof = eol;
   }
