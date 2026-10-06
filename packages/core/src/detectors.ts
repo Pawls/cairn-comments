@@ -1,6 +1,7 @@
-// Heuristic tells of AI-written comments (design.md § Scan detectors). Each detector's `score` is its measured
-// precision on the labeled corpus, and `enabled` follows the kill criterion (>= 80%);
-// packages/core/test/scan.corpus.test.ts pins both, so neither can drift from the evidence.
+// Heuristic tells of AI-written comments (design.md § Scan detectors). Each detector's
+// `score` is its measured precision on the labeled corpus, and `enabled` follows the kill
+// criterion (>= 80%); packages/core/test/scan.corpus.test.ts pins both, so neither can
+// drift from the evidence.
 
 export interface DetectorInput {
   /** Comment text, lines joined with a space. */
@@ -22,20 +23,41 @@ export interface Detector {
 
 const anyOf = (patterns: RegExp[], s: string) => patterns.some((p) => p.test(s));
 
+/** The sources of `parts` joined as one alternation; a literal per part keeps each one's escapes checked. */
+const alternation = (parts: RegExp[]) => parts.map((p) => p.source).join("|");
+
 // ©, ®, and ™ are Extended_Pictographic but turn up in license and brand text.
 const EMOJI = /(?![©®™])\p{Extended_Pictographic}/u;
 
+const CHANGED_THINGS = [
+  "a", "an", "the", "this", "that", "new", "support", "check", "checks", "logic", "handling", "validation", "error",
+  "fallback", "redundant", "unnecessary", "unused", "extra", "missing", "proper", "explicit", "caching", "retry", "retries",
+];
 const CHANGE_HISTORY_OPENERS = [
   /^(?:NEW|UPDATED?|CHANGED?|FIXED|ADDED|REMOVED|MODIFIED)\s*[:!]/,
   // "Changed in 3.8" and "Added in version 2" are release notes, not agent narration.
   /^(?:updated|changed|modified|refactored|switched|converted|migrated|reworked)\s+(?:to|from|so|this|the|it)\b/i,
   // Past tense only: an imperative "Fix the cell" is an instruction, not a changelog.
   /^fixed(?::|\s+(?:the|a|an|this|that|it|bug|issue|problem|error|crash)\b)/i,
-  /^(?:added|removed|deleted|introduced|replaced)\s+(?:a|an|the|this|that|new|support|check|checks|logic|handling|validation|error|fallback|redundant|unnecessary|unused|extra|missing|proper|explicit|caching|retry|retries)\b/i,
+  new RegExp(String.raw`^(?:added|removed|deleted|introduced|replaced)\s+(?:${CHANGED_THINGS.join("|")})\b`, "i"),
 ];
-const CHANGE_HISTORY_ANYWHERE =
-  /\b(?:instead of the (?:old|previous|original)|no longer (?:throws?|crash(?:es)?|fails?)|now (?:correctly|properly) (?:handles?|returns?|works?)|(?:as|per) (?:requested|your request)|was (?:changed|updated|modified) to)\b/i;
+const CHANGE_HISTORY_PHRASES = [
+  /instead of the (?:old|previous|original)/,
+  /no longer (?:throws?|crash(?:es)?|fails?)/,
+  /now (?:correctly|properly) (?:handles?|returns?|works?)/,
+  /(?:as|per) (?:requested|your request)/,
+  /was (?:changed|updated|modified) to/,
+];
+const CHANGE_HISTORY_ANYWHERE = new RegExp(String.raw`\b(?:${alternation(CHANGE_HISTORY_PHRASES)})\b`, "i");
 
+const CODE_UNITS = [
+  "function", "method", "block", "code", "section", "loop", "line", "part", "snippet", "class", "helper", "component",
+  "hook", "module", "script", "file",
+];
+const CODE_UNIT_VERBS = [
+  "is used to", "will", "does", "handles", "takes", "returns", "retrieves", "renders", "parses", "builds", "creates",
+  "checks", "initializes", "computes", "calculates", "converts", "is responsible",
+];
 const NARRATION = [
   /^step\s*\d+\b/i,
   /^(?:first(?:ly)?|second(?:ly)?|next|then|finally|lastly|now)(?:\s*,)?\s+(?:we|let'?s|i|you)\b/i,
@@ -44,11 +66,16 @@ const NARRATION = [
   /^let(?:'s| us)\b/i,
   // "We need to" and "We can't" explain constraints in human code as often as not.
   /^we (?:now |then |first )?(?:will|are going to|iterate|loop|create|initialize|set up|start by)\b/i,
-  /^this (?:function|method|block|code|section|loop|line|part|snippet|class|helper|component|hook|module|script|file)\s+(?:is used to|will|does|handles|takes|returns|retrieves|renders|parses|builds|creates|checks|initializes|computes|calculates|converts|is responsible)\b/i,
+  new RegExp(String.raw`^this (?:${CODE_UNITS.join("|")})\s+(?:${CODE_UNIT_VERBS.join("|")})\b`, "i"),
 ];
 
+const FILLER_OPENERS = [
+  /note that/, /please note/, /it'?s worth noting/, /it is worth noting/, /it'?s important to/, /it is important to/,
+  /keep in mind/, /remember that/, /as you can see/, /as mentioned/, /basically/, /essentially/, /simply put/,
+  /in other words/, /just to be safe/, /for good measure/,
+];
 const FILLER = [
-  /^(?:note that|please note|it'?s worth noting|it is worth noting|it'?s important to|it is important to|keep in mind|remember that|as you can see|as mentioned|basically|essentially|simply put|in other words|just to be safe|for good measure)\b/i,
+  new RegExp(String.raw`^(?:${alternation(FILLER_OPENERS)})\b`, "i"),
   /^(?:IMPORTANT|CRITICAL)\s*:/,
   /^(?:this|which) (?:ensures|guarantees|makes sure|allows us to|helps (?:us )?to|is (?:needed|necessary|required) (?:to|for|because))\b/i,
   /^(?:make sure|ensure)\s+(?:to|that|we|you)\b/i,
@@ -56,8 +83,24 @@ const FILLER = [
   /^(?:helper|utility) (?:function|method) (?:to|that|for)\b/i,
 ];
 
-const HEDGING =
-  /\b(?:should (?:work|be fine|be enough|be sufficient) (?:for|in)|you (?:may|might|could) (?:want|need) to|you(?:'ll| will) (?:want|need) to|adjust (?:this |it )?(?:as needed|accordingly|based on|depending on)|depending on your|based on your (?:needs|use case|requirements)|in a real(?:[- ]world)? (?:app|application|implementation|scenario|project|system|environment|codebase)\b|in production,? (?:you|we) (?:would|should|might|may)|this is (?:a |just a )?(?:simplified|basic|naive|simple) (?:example|version|implementation|approach)|^placeholder\b|for (?:demonstration|illustration) purposes|for the sake of (?:simplicity|brevity|this example)|for simplicity\b|replace (?:this |it )?with (?:your|the actual|a real)|your (?:actual|own) )/i;
+const HEDGES = [
+  /should (?:work|be fine|be enough|be sufficient) (?:for|in)/,
+  /you (?:may|might|could) (?:want|need) to/,
+  /you(?:'ll| will) (?:want|need) to/,
+  /adjust (?:this |it )?(?:as needed|accordingly|based on|depending on)/,
+  /depending on your/,
+  /based on your (?:needs|use case|requirements)/,
+  /in a real(?:[- ]world)? (?:app|application|implementation|scenario|project|system|environment|codebase)\b/,
+  /in production,? (?:you|we) (?:would|should|might|may)/,
+  /this is (?:a |just a )?(?:simplified|basic|naive|simple) (?:example|version|implementation|approach)/,
+  /^placeholder\b/,
+  /for (?:demonstration|illustration) purposes/,
+  /for the sake of (?:simplicity|brevity|this example)/,
+  /for simplicity\b/,
+  /replace (?:this |it )?with (?:your|the actual|a real)/,
+  /your (?:actual|own) /,
+];
+const HEDGING = new RegExp(String.raw`\b(?:${alternation(HEDGES)})`, "i");
 
 // Words that carry no claim of their own when a comment names what the next line does.
 const STOPWORDS = new Set(
