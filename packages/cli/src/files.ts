@@ -23,6 +23,11 @@ import {
 import { capturing, readWorkFile, removeWorkFile, writeWorkFile } from "./workfiles.js";
 import { filesContaining, indexBlobs, isTracked, managedFiles, restat, smudges, stage, stagedFiles, toRepoPath, trackedFiles, worktreeGitDir } from "./git.js";
 
+/** 1-based line number of `offset` in `text`. */
+export function lineAt(text: string, offset: number): number {
+  return text.slice(0, offset).split("\n").length;
+}
+
 /** Text of a buffer, or undefined when it is not UTF-8 that re-encodes to the same bytes. */
 export function decodeExact(bytes: Buffer): string | undefined {
   const text = bytes.toString("utf8");
@@ -30,8 +35,9 @@ export function decodeExact(bytes: Buffer): string | undefined {
 }
 
 /**
- * Async and a single open: on Windows each open costs ~0.45 ms, and the filter process
- * overlaps them.
+ * The sidecar of `file` on disk, empty when there is none. Async and a single open, with
+ * no exists check first: opens are slow on Windows (design.md § Filter process), and the
+ * filter process overlaps them.
  */
 export async function readSidecar(root: string, file: string): Promise<Sidecar> {
   try {
@@ -49,9 +55,9 @@ export function readSidecarSync(root: string, file: string): Sidecar {
 }
 
 /**
- * Ids the tool last wrote into a working file of a smudged worktree, kept under that
- * worktree's git dir: what `recordComments` needs to tell a deleted comment from one that
- * was never placed (design.md § Anchoring).
+ * Where the seen record of `file` lives, under the worktree's git dir: the ids the tool last
+ * wrote into that working file of a smudged worktree, which `recordComments` needs to tell a
+ * deleted comment from one that was never placed (design.md § Anchoring).
  */
 function seenPath(gitDir: string, file: string): string {
   return path.join(gitDir, BRAND, "seen", createHash("sha1").update(file).digest("hex"));
@@ -145,6 +151,7 @@ export interface SyncOptions {
 }
 
 interface RecordFileOptions extends SyncOptions {
+  /** Set by `refresh`: skip the seen record, and ignore ids the sidecar does not hold. */
   afterCheckout?: boolean;
   /** Where the seen record lives; undefined where git does not smudge. */
   gitDir: string | undefined;
@@ -166,8 +173,16 @@ async function recordFile(root: string, file: string, original: string, options:
   return recorded;
 }
 
-/** The recorded file as `then` leaves it, and the ids of the comments it then shows. */
-async function finish(file: string, recorded: RecordResult, then: "sync" | "expand" | "collapse"): Promise<{ source: string; onDisk: string[] }> {
+type Then = "sync" | "expand" | "collapse";
+
+interface Finished {
+  source: string;
+  /** Ids of the comments `source` shows. */
+  onDisk: string[];
+}
+
+/** The recorded file as `then` leaves it. */
+async function finish(file: string, recorded: RecordResult, then: Then): Promise<Finished> {
   if (then === "expand") {
     const placed = await placeComments(file, await stripComments(file, recorded.source), recorded.sidecar);
     return { source: placed.source, onDisk: placed.placed };
@@ -184,8 +199,8 @@ async function finish(file: string, recorded: RecordResult, then: "sync" | "expa
 async function rewriteFiles(
   root: string,
   files: string[],
-  then: "sync" | "expand" | "collapse",
-  options: SyncOptions & { afterCheckout?: boolean } = {},
+  then: Then,
+  options: Pick<RecordFileOptions, "meta" | "afterCheckout"> = {},
 ): Promise<string[]> {
   const gitDir = smudges(root) ? worktreeGitDir(root) : undefined;
   // What HEAD holds tells an edit made here from one that arrived by merge or checkout.
@@ -208,7 +223,8 @@ async function rewriteFiles(
 
 export async function syncFiles(root: string, files: string[], options: SyncOptions & { add: boolean }): Promise<void> {
   const done = await rewriteFiles(root, files, "sync", options);
-  // A sidecar emptied by deleting its last comment is gone from disk but still in the index; staging it records the removal.
+  // A sidecar emptied by deleting its last comment is gone from disk but still in the index;
+  // staging it records the removal.
   if (options.add) stage(root, done.map((file) => sidecarPathFor(file)).filter((s) => existsSync(path.join(root, s)) || isTracked(root, s)));
 }
 
@@ -233,7 +249,10 @@ export async function collapseFiles(root: string, files: string[], options: Sync
 
 export interface StaleReport {
   file: string;
-  /** 1-based line of the comment; where the file shows no comments, the line of the code it would be placed against. */
+  /**
+   * 1-based line of the comment; where the file shows no comments, the line of the code it
+   * would be placed against.
+   */
   line: number;
   id: string;
   body: string;
@@ -242,14 +261,13 @@ export interface StaleReport {
 /** Possibly stale comments across `files` (design.md § Anchoring); reads only, so CI can run it. */
 export async function staleIn(root: string, files: string[]): Promise<StaleReport[]> {
   const found: StaleReport[] = [];
-  const lineOf = (source: string, offset: number) => source.slice(0, offset).split("\n").length;
   for (const file of files) {
     const source = decodeExact(readFileSync(path.join(root, file)));
     if (source === undefined) continue;
     const sidecar = readSidecarSync(root, file);
     if (!sidecar.entries.length) continue;
     const placed = await placeComments(file, await stripComments(file, source), sidecar);
-    const shown = new Map((await findMarkers(languageForPath(file)!, source)).map((m) => [m.id, lineOf(source, m.start)]));
+    const shown = new Map((await findMarkers(languageForPath(file)!, source)).map((m) => [m.id, lineAt(source, m.start)]));
     const bodies = bodiesOf(sidecar);
     for (const s of placed.stale) found.push({ file, line: shown.get(s.id) ?? s.row + 1, id: s.id, body: bodies.get(s.id) ?? "" });
   }

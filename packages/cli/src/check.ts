@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { BRAND, SIDECAR_ROOT, findMarkers, languageForPath, parseSidecar, placeComments, sidecarPathFor, type Sidecar, type SidecarEntry } from "@cairn-comments/core";
-import { decodeExact, readSidecar, writeSidecar } from "./files.js";
+import { decodeExact, lineAt, readSidecar, writeSidecar } from "./files.js";
 import { indexBlobs, managedFiles, stage, stagedFiles, stagedRenames, toRepoPath, trackedFiles } from "./git.js";
 
 export type Problem =
@@ -36,7 +36,6 @@ export interface CheckReport {
 const PREFIX = `${SIDECAR_ROOT}/`;
 const isSidecarPath = (p: string) => p.startsWith(PREFIX) && p.endsWith(".md");
 const sourceOf = (sidecar: string) => sidecar.slice(PREFIX.length, -".md".length);
-const lineAt = (text: string, offset: number) => text.slice(0, offset).split("\n").length;
 
 /**
  * The guard for clones without the filter (design.md § Check). Reads the index, never the

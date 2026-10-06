@@ -73,7 +73,8 @@ export function stagedRenames(root: string): Map<string, string> {
 
 /**
  * Blobs by path, read in one `git cat-file --batch`: staged ones, or those of `rev`. Paths
- * the index or `rev` lacks are absent.
+ * the index or `rev` lacks are absent, as are paths with a newline, which the batch input
+ * cannot carry.
  */
 export function indexBlobs(root: string, files: Iterable<string>, rev = ""): Map<string, Buffer> {
   const paths = [...new Set(files)].filter((f) => !f.includes("\n"));
@@ -98,43 +99,16 @@ export function indexBlobs(root: string, files: Iterable<string>, rev = ""): Map
   return blobs;
 }
 
-/**
- * Where each fixed-string token occurs, as token → paths: in the index with `cached`, else
- * in the working tree, untracked files included. A token must not contain `:`.
- */
-export function grepTokens(root: string, tokens: string[], cached: boolean): Map<string, Set<string>> {
-  const found = new Map<string, Set<string>>();
-  if (!tokens.length) return found;
-  let out = "";
-  try {
-    // Patterns on stdin (`-f -`): a repository's worth of ids would overflow a command line.
-    const args = ["-c", "core.quotePath=false", "grep", "-o", "-F", "--full-name", cached ? "--cached" : "--untracked", "-f", "-"];
-    out = execFileSync("git", args, { cwd: root, input: tokens.join("\n") + "\n", encoding: "utf8", stdio: ["pipe", "pipe", "ignore"], maxBuffer: 1 << 28 });
-  } catch {
-    // Exit 1: no match.
-  }
-  for (const line of out.split("\n")) {
-    const colon = line.lastIndexOf(":");
-    if (colon <= 0) continue;
-    const token = line.slice(colon + 1);
-    const files = found.get(token) ?? new Set<string>();
-    files.add(line.slice(0, colon));
-    found.set(token, files);
-  }
-  return found;
-}
-
-/** Whether git would ignore `file` by pattern, tracked or not. */
-export function ignoredByPattern(root: string, file: string): boolean {
-  return gitQuiet(["check-ignore", "-q", "--no-index", file], root) !== undefined;
-}
-
 /** The subset of `files` whose `filter` attribute names this tool's driver. */
 export function managedFiles(root: string, files: string[]): string[] {
   if (!files.length) return [];
-  const fields = nulSeparated(git(["check-attr", "-z", "--stdin", "filter"], { cwd: root, input: files.join("\0") + "\0" }));
+  const input = files.join("\0") + "\0";
+  // NUL-separated triples: path, attribute name, value.
+  const fields = nulSeparated(git(["check-attr", "-z", "--stdin", "filter"], { cwd: root, input }));
   const managed: string[] = [];
-  for (let i = 0; i + 2 < fields.length; i += 3) if (fields[i + 2] === FILTER_DRIVER) managed.push(fields[i]!);
+  for (let i = 0; i + 2 < fields.length; i += 3) {
+    if (fields[i + 2] === FILTER_DRIVER) managed.push(fields[i]!);
+  }
   return managed;
 }
 

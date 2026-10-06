@@ -43,7 +43,8 @@ const USAGE = `usage: ${BRAND} <command>
   expand [files...]             place every comment in the working files
   collapse [files...]           remove the comments from the working files
   refresh                       in an agent worktree, place the comments of every file
-                                with a sidecar (the post-checkout, post-merge, post-commit hooks)
+                                with a sidecar (run by the post-checkout, post-merge,
+                                post-commit, and post-rewrite hooks)
   scan [--json] [--all] [files...]
                                 list likely AI comments; --all adds detectors that ship disabled
   scan --apply <review.json|->  convert the accepted comments of a reviewed \`scan --json\` list to

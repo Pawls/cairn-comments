@@ -103,7 +103,9 @@ function attributesChange(root: string, add: string[], remove: string[]): Change
   const missing = add.filter((l) => !present.has(l));
   if (!missing.length && kept.length === lines.length) return undefined;
   const body = kept.join("");
-  const next = body + (body && !body.endsWith("\n") && missing.length ? eol : "") + missing.map((l) => l + eol).join("");
+  // A last line without a terminator gets one before the added lines.
+  const separator = body && !body.endsWith("\n") && missing.length ? eol : "";
+  const next = body + separator + missing.map((l) => l + eol).join("");
   const removed = lines.length - kept.length;
   const parts = [missing.length && `add ${missing.length} line(s)`, removed && `remove ${removed} line(s)`].filter(Boolean);
   const empty = !next.trim();
@@ -178,12 +180,18 @@ function hookChange(root: string, name: string, script: string): Change | undefi
 const SNIPPET_BEGIN = `<!-- ${BRAND}:begin -->`;
 const SNIPPET_END = `<!-- ${BRAND}:end -->`;
 
+/** One name as it is, more as `a, b, and c` (two read `a, and b`). */
+function inProse(names: string[]): string {
+  if (names.length < 2) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")}, and ${names.at(-1)}`;
+}
+
 /** The sigil convention for an agent instruction file, between markers `init --agents-md` can find again. */
 export function agentsSnippet(): string {
   const sigils = [...new Set(LANGUAGES.map((l) => l.lineSigil))];
   const byLanguages = sigils.map((s) => {
     const names = [...new Set(LANGUAGES.filter((l) => l.lineSigil === s).map((l) => l.name))];
-    return `\`${s} text\` in ${names.length > 1 ? names.slice(0, -1).join(", ") + ", and " + names.at(-1) : names[0]}`;
+    return `\`${s} text\` in ${inProse(names)}`;
   });
   return [
     SNIPPET_BEGIN,
