@@ -74,6 +74,21 @@ class DelayedSmudges {
   }
 }
 
+/** Answers git's greeting and capability offer; returns the capabilities both sides support. */
+async function handshake(reader: PacketReader, output: Writable, smudge: boolean): Promise<string[]> {
+  const welcome = await reader.readList();
+  if (welcome?.[0] !== "git-filter-client" || !welcome.includes("version=2")) {
+    throw new Error(`unexpected filter protocol greeting ${JSON.stringify(welcome)}`);
+  }
+  await send(output, [textPacket("git-filter-server"), textPacket("version=2"), FLUSH]);
+
+  const offered = new Set(await reader.readList());
+  const wanted = smudge ? ["clean", "smudge", "delay"] : ["clean"];
+  const supported = wanted.filter((c) => offered.has(`capability=${c}`));
+  await send(output, [...supported.map((c) => textPacket(`capability=${c}`)), FLUSH]);
+  return supported;
+}
+
 /**
  * Git's long-running filter protocol, version 2 (gitattributes § Long Running Filter
  * Process). One process serves every file of a git command, so tree-sitter parsers stay
@@ -87,17 +102,7 @@ export async function serveFilterProcess(
   options: FilterProcessOptions,
 ): Promise<void> {
   const reader = new PacketReader(input);
-  const welcome = await reader.readList();
-  if (welcome?.[0] !== "git-filter-client" || !welcome.includes("version=2")) {
-    throw new Error(`unexpected filter protocol greeting ${JSON.stringify(welcome)}`);
-  }
-  await send(output, [textPacket("git-filter-server"), textPacket("version=2"), FLUSH]);
-
-  const offered = new Set(await reader.readList());
-  const supported = (options.smudge ? ["clean", "smudge", "delay"] : ["clean"]).filter((c) =>
-    offered.has(`capability=${c}`),
-  );
-  await send(output, [...supported.map((c) => textPacket(`capability=${c}`)), FLUSH]);
+  const supported = await handshake(reader, output, options.smudge);
   const session: Session = {
     supported,
     delayed: new DelayedSmudges(options),
