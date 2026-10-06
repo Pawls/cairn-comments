@@ -308,7 +308,14 @@ code action, which runs the CLI.
   deleted line whose text the same event inserted whole on exactly one row takes its
   comments there: VS Code's Alt+Up/Down moves a line by deleting the line it passes and
   inserting that line on the other side of the selection, so without this the passed
-  line's comments would vanish. Each document also keeps its text and sites from before
+  line's comments would vanish. An undo or redo can put back code whose comments tracking
+  already dropped: Ctrl+Z after a cut and paste brings the function back, but its comments
+  went with the cut. So after an undo or redo of the source, the next refresh places the
+  buffer from anchors, dirty or not, and adds each comment that placement finds and
+  tracking has lost; every comment tracking still has keeps its tracked site, so an
+  unsaved edit elsewhere does not turn its comments stale. An added comment is exact or
+  absent like any placement: where an unsaved edit changed its code, it shows what a save
+  would show (tagged stale, or nothing). Each document also keeps its text and sites from before
   the latest edit, for a cut (see "Copy and paste"). Placing a dirty buffer from anchors would
   mark every comment in a function stale on its first keystroke. A change event's
   `isDirty` still says false on a clean document's first edit (VS Code sends the dirty
@@ -713,7 +720,17 @@ suites.
   it (promote, demote, and a review's apply save the source; a paste does not). Undoing a
   promote is then a demote on disk, and undoing a delete, confirm, edit, or paste restores
   the stored entry without saving edits the owner had not saved. A sidecar open in a tab
-  is left to the user.
+  is left to the user. When the owner answers VS Code's prompt with "Undo this File", the
+  source changes and the sidecar does not, so nothing is saved and no entry is removed: a
+  comment missing from the buffer partway through an undo has not been deleted (§ Anchoring,
+  "Deleting"). A comment the undo brings back shows where the sidecar's anchors place it
+  in the restored text (§ Overlay rendering, "Live tracking"). Undoing a cut and paste
+  within one file this way brings its comments back on the original function, since the
+  anchors a whole-function move records still describe it there; a move that changed
+  them (into another class) leaves the comment unplaced and listed under Orphaned, its
+  entry kept, until a redo puts the moved code back. A move whose paste left the sidecar
+  unchanged has no sidecar step, so VS Code does not ask. No test answers the prompt: the
+  e2e window never shows it, and the native harness does not press it yet.
 
 ## Check
 

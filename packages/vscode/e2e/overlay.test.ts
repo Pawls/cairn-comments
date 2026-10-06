@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import * as vscode from "vscode";
 import type { TestApi } from "../src/extension.js";
@@ -112,6 +112,57 @@ async function reset(): Promise<void> {
     if (document.uri.scheme !== "file" || !existsSync(document.fileName)) continue;
     await waitFor(`${path.basename(document.fileName)} to reload`, () => document.getText() === readFileSync(document.fileName, "utf8"));
   }
+}
+
+/**
+ * Cuts `refund`'s five lines and pastes them at an empty cursor on `to`, which puts them
+ * above that line, as one edit that also carries the sidecar change (as a real paste lands).
+ */
+async function cutAndPasteRefund(api: TestApi, editor: vscode.TextEditor, to: number | "last line"): Promise<void> {
+  const document = editor.document;
+  const from = document.getText().split("\n").findIndex((l) => l.startsWith("def refund"));
+  const cut = new vscode.Range(from, 0, from + 5, 0);
+  const text = document.getText(cut);
+  const transfer = new vscode.DataTransfer();
+  await editor.edit((b) => b.delete(cut));
+  await api.paste.prepareDocumentPaste(document, [cut], transfer);
+  transfer.set("text/plain", new vscode.DataTransferItem(text));
+  const row = to === "last line" ? document.lineCount - 1 : to;
+  const edits = await api.paste.provideDocumentPasteEdits(document, [new vscode.Range(row, 0, row, 0)], transfer);
+  assert.equal(edits?.length, 1);
+  assert.equal(edits![0]!.insertText, "");
+  assert.ok(await vscode.workspace.applyEdit(edits![0]!.additionalEdit!));
+}
+
+/** Whether `refund`'s comment is rendered on its `return None`, wherever `refund` is. */
+async function refundCommentShown(api: TestApi, editor: vscode.TextEditor): Promise<boolean> {
+  const row = editor.document.getText().split("\n").findIndex((l) => l.startsWith("        return None"));
+  const placed = (await api.refresh(editor)).placed;
+  const lens = placed?.lenses.some((l) => l.line === row && l.title === LENSES[3]![1]);
+  return !!lens && api.placed.sites(editor.document).some((s) => s.id === "ewiw" && s.row === row);
+}
+
+/** Runs Ctrl+Z or Ctrl+Shift+Z in `editor`, then gives the extension time to see it, as a person pressing keys does. */
+async function undoStep(command: "undo" | "redo", editor: vscode.TextEditor): Promise<void> {
+  await vscode.window.showTextDocument(editor.document);
+  await vscode.commands.executeCommand(command);
+  await settle(500);
+  await vscode.window.showTextDocument(editor.document);
+}
+
+/**
+ * Moves `refund` to the end of the file and saves, so the sidecar holds anchors recorded
+ * by the tool rather than the fixture's hand-written ones. A later whole-function move
+ * then leaves the sidecar unchanged.
+ */
+async function recordRefundAnchors(api: TestApi, editor: vscode.TextEditor): Promise<void> {
+  const committed = sidecarText();
+  await cutAndPasteRefund(api, editor, "last line");
+  await sidecarSaved("the first move's anchors in the sidecar", (s) => s !== committed);
+  await editor.document.save();
+  await waitFor("refund's comment on the moved function", () => refundCommentShown(api, editor));
+  // A late file watcher event for that sidecar change would place the comments again.
+  await settle(1_500);
 }
 
 suite("overlay", () => {
@@ -500,6 +551,174 @@ suite("overlay", () => {
     assert.ok(document.isDirty);
     await waitFor("refund's comment on the pasted function, unsaved", refundLens(11));
     assert.equal(sidecarText(), recorded);
+  });
+
+  test("undoing a cut and paste in a dirty buffer shows the comment on the restored function", async () => {
+    const { api, editor } = await shown("codelens");
+    const document = editor.document;
+    await editor.edit((b) => b.insert(new vscode.Position(1, 0), "VERSION = 2\n"));
+    const beforeCut = document.getText();
+    const committed = sidecarText();
+    await cutAndPasteRefund(api, editor, "last line");
+    await sidecarSaved("the moved comment's anchors in the sidecar", (s) => s !== committed);
+    await waitFor("refund's comment on the pasted function", () => refundCommentShown(api, editor));
+
+    await undoStep("undo", editor);
+    await sidecarSaved("the sidecar back as committed", (s) => s === committed);
+    await settle(1_500); // the file watcher's event for that save
+    await api.refresh(editor);
+    await undoStep("undo", editor);
+    assert.equal(document.getText(), beforeCut);
+    assert.ok(document.isDirty);
+    await waitFor("refund's comment on the restored function", () => refundCommentShown(api, editor));
+  });
+
+  test("undoing a cut and paste back to the saved text shows the comment on the restored function", async () => {
+    const { api, editor } = await shown("codelens");
+    const document = editor.document;
+    const beforeCut = document.getText();
+    const committed = sidecarText();
+    await cutAndPasteRefund(api, editor, "last line");
+    await sidecarSaved("the moved comment's anchors in the sidecar", (s) => s !== committed);
+    await waitFor("refund's comment on the pasted function", () => refundCommentShown(api, editor));
+
+    await undoStep("undo", editor);
+    await sidecarSaved("the sidecar back as committed", (s) => s === committed);
+    await settle(1_500);
+    await api.refresh(editor);
+    await undoStep("undo", editor);
+    assert.equal(document.getText(), beforeCut);
+    assert.ok(!document.isDirty);
+    await waitFor("refund's comment on the restored function", () => refundCommentShown(api, editor));
+  });
+
+  test("undoing a cut and paste that left the sidecar unchanged, in a dirty buffer, shows the comment on the restored function", async () => {
+    const { api, editor } = await shown("codelens");
+    const document = editor.document;
+    await recordRefundAnchors(api, editor);
+    const recorded = sidecarText();
+    await editor.edit((b) => b.insert(new vscode.Position(1, 0), "VERSION = 2\n"));
+    const beforeCut = document.getText();
+    const audit = document.getText().split("\n").findIndex((l) => l.startsWith("def audit"));
+    await cutAndPasteRefund(api, editor, audit - 2);
+    await waitFor("refund's comment on the pasted function", () => refundCommentShown(api, editor));
+    assert.equal(sidecarText(), recorded);
+
+    await undoStep("undo", editor);
+    await api.refresh(editor);
+    await undoStep("undo", editor);
+    assert.equal(document.getText(), beforeCut);
+    assert.ok(document.isDirty);
+    await waitFor("refund's comment on the restored function", () => refundCommentShown(api, editor));
+  });
+
+  test("redoing an undone cut and paste that left the sidecar unchanged shows the comment on the moved function", async () => {
+    const { api, editor } = await shown("codelens");
+    const document = editor.document;
+    await recordRefundAnchors(api, editor);
+    const recorded = sidecarText();
+    await editor.edit((b) => b.insert(new vscode.Position(1, 0), "VERSION = 2\n"));
+    const beforeCut = document.getText();
+    const audit = document.getText().split("\n").findIndex((l) => l.startsWith("def audit"));
+    await cutAndPasteRefund(api, editor, audit - 2);
+    const afterPaste = document.getText();
+    await waitFor("refund's comment on the pasted function", () => refundCommentShown(api, editor));
+
+    await undoStep("undo", editor);
+    await api.refresh(editor);
+    await undoStep("undo", editor);
+    assert.equal(document.getText(), beforeCut);
+    await api.refresh(editor);
+    await undoStep("redo", editor);
+    await api.refresh(editor);
+    await undoStep("redo", editor);
+    assert.equal(document.getText(), afterPaste);
+    assert.equal(sidecarText(), recorded);
+    await waitFor("refund's comment on the moved function", () => refundCommentShown(api, editor));
+  });
+
+  test("undo and redo of a cut and paste write neither the sidecar nor the seen record", async () => {
+    const { api, editor } = await shown("codelens");
+    const document = editor.document;
+    await recordRefundAnchors(api, editor);
+    // The CLI's record of the ids it last wrote into this worktree's files (design.md § Anchoring, "Deleting").
+    const seenDir = path.join(repo(), ".git", "cairn", "seen");
+    const seenRecord = () => (existsSync(seenDir) ? readdirSync(seenDir).map((f) => f + readFileSync(path.join(seenDir, f), "utf8")) : []);
+    const recorded = { sidecar: readFileSync(sidecarPath()), seen: seenRecord() };
+    const unchanged = (step: string) => {
+      assert.ok(readFileSync(sidecarPath()).equals(recorded.sidecar), `the sidecar changed on disk after ${step}`);
+      assert.deepEqual(seenRecord(), recorded.seen, `the seen record changed after ${step}`);
+    };
+    await editor.edit((b) => b.insert(new vscode.Position(1, 0), "VERSION = 2\n"));
+    const audit = document.getText().split("\n").findIndex((l) => l.startsWith("def audit"));
+    await cutAndPasteRefund(api, editor, audit - 2);
+    await api.refresh(editor);
+    unchanged("the paste");
+
+    for (const [i, step] of (["undo", "undo", "redo", "redo"] as const).entries()) {
+      await undoStep(step, editor);
+      await api.refresh(editor);
+      unchanged(`${step} ${i + 1}`);
+    }
+  });
+
+  test("an undo leaves the comments of a function with unsaved edits where tracking put them, not stale", async () => {
+    const { api, editor } = await shown("codelens");
+    const document = editor.document;
+    // A late file watcher event for the previous test's sidecar reset would place the dirty buffer from anchors.
+    await settle(1_500);
+    // Inside `settle`, between its commented lines: placed from anchors, its comments would turn stale.
+    await editor.edit((b) => b.insert(new vscode.Position(5, 0), "    log(order)\n"));
+    const tracked = (await api.refresh(editor)).placed;
+    const trackedSites = api.placed.sites(document);
+    assert.ok(tracked?.lenses.some((l) => l.line === 7 && l.title === LENSES[2]![1]), "ip6u moved down with its line, not stale");
+
+    await editor.edit((b) => b.insert(new vscode.Position(0, 0), "VERSION = 2\n"));
+    await api.refresh(editor);
+    await undoStep("undo", editor);
+    assert.equal(document.lineAt(0).text, "import ledger");
+    assert.deepEqual((await api.refresh(editor)).placed, tracked);
+    assert.deepEqual(api.placed.sites(document), trackedSites);
+  });
+
+  test("two refreshes at once after an undo both keep the tracked comments as tracked", async () => {
+    const { api, editor } = await shown("codelens");
+    const document = editor.document;
+    // As above: a late watcher event from an earlier sidecar reset would place from anchors.
+    await settle(1_500);
+    await editor.edit((b) => b.insert(new vscode.Position(5, 0), "    log(order)\n"));
+    const tracked = (await api.refresh(editor)).placed;
+    const trackedSites = api.placed.sites(document);
+    await editor.edit((b) => b.insert(new vscode.Position(0, 0), "VERSION = 2\n"));
+    await api.refresh(editor);
+
+    await vscode.window.showTextDocument(document);
+    await vscode.commands.executeCommand("undo");
+    assert.equal(document.lineAt(0).text, "import ledger");
+    // The debounced refresh after an edit can run while another refresh is still placing.
+    const both = await Promise.all([api.refresh(editor), api.refresh(editor)]);
+    assert.deepEqual(both.map((applied) => applied.placed), [tracked, tracked]);
+    assert.deepEqual(api.placed.sites(document), trackedSites);
+    assert.deepEqual((await api.refresh(editor)).placed, tracked);
+  });
+
+  test("a save after undoing or redoing a cut and paste shows the comment where refund is", async () => {
+    const { api, editor } = await shown("codelens");
+    const document = editor.document;
+    await recordRefundAnchors(api, editor);
+    await editor.edit((b) => b.insert(new vscode.Position(1, 0), "VERSION = 2\n"));
+    const audit = document.getText().split("\n").findIndex((l) => l.startsWith("def audit"));
+    await cutAndPasteRefund(api, editor, audit - 2);
+    await waitFor("refund's comment on the pasted function", () => refundCommentShown(api, editor));
+
+    await undoStep("undo", editor);
+    await undoStep("undo", editor);
+    await document.save();
+    await waitFor("refund's comment on the restored function after a save", () => refundCommentShown(api, editor));
+    await undoStep("redo", editor);
+    await undoStep("redo", editor);
+    await document.save();
+    await waitFor("refund's comment on the moved function after a save", () => refundCommentShown(api, editor));
   });
 
   test("a highlighted line, whatever whitespace the highlight leaves out, pastes like a whole-line copy", async () => {
