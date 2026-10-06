@@ -105,6 +105,22 @@ describe("installCli", () => {
     expect(readdirSync(home).filter((f) => f.startsWith("0.1.0-")).sort()).toEqual(["0.1.0-2", "0.1.0-3"]);
   });
 
+  it("reports the installed version when the incoming one is not newer", () => {
+    installCli(bundle("a", "0.2.0", 5), home);
+    expect(installCli(bundle("b", "0.1.0", 1), home)).toEqual({ installed: false, version: { version: "0.2.0", build: 5 } });
+  });
+
+  it("drops only older version copies, not other folders or an installer's copy in progress", () => {
+    installCli(bundle("a", "0.1.0", 1), home);
+    mkdirSync(path.join(home, "notes"));
+    const inProgress = path.join(home, "0.0.1-1.tmp-99999");
+    mkdirSync(inProgress);
+    writeFileSync(path.join(inProgress, "version.json"), JSON.stringify({ version: "0.0.1", build: 1 }));
+    installCli(bundle("b", "0.1.0", 2), home);
+    installCli(bundle("c", "0.1.0", 3), home);
+    expect(readdirSync(home).sort()).toEqual(["0.0.1-1.tmp-99999", "0.1.0-2", "0.1.0-3", "main.js", "notes", "version.json"]);
+  });
+
   it("refuses a source without a version file", () => {
     const source = bundle("a", "0.1.0", 1);
     rmSync(path.join(source, "version.json"));

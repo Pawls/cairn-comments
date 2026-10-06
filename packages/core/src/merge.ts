@@ -17,6 +17,11 @@ function placementOf(meta: ReadonlyMap<string, string>): string {
   return JSON.stringify([...meta].filter(([k]) => isPlacementKey(k)));
 }
 
+/** A side that changed the value wins; when both did, ours does. */
+function mergeValue(base: string | undefined, ours: string | undefined, theirs: string | undefined): string | undefined {
+  return ours === base ? theirs : ours;
+}
+
 /**
  * Per key: a side that changed it wins; when both changed it differently, ours does. The
  * placement keys are one unit, taken whole from one side: a scope from one recording and a
@@ -26,26 +31,49 @@ function mergeMeta(base: ReadonlyMap<string, string>, ours: ReadonlyMap<string, 
   const placement = placementOf(ours) === placementOf(base) ? theirs : ours;
   const merged = new Map<string, string>();
   for (const key of new Set([...ours.keys(), ...theirs.keys(), ...base.keys()])) {
-    const o = ours.get(key);
-    // Placement keys come from one side together; any other key takes the side that changed it.
-    let value = o === base.get(key) ? theirs.get(key) : o;
-    if (isPlacementKey(key)) value = placement.get(key);
+    const value = isPlacementKey(key) ? placement.get(key) : mergeValue(base.get(key), ours.get(key), theirs.get(key));
     if (value !== undefined) merged.set(key, value);
   }
   return merged;
 }
 
-const copy = (e: SidecarEntry): SidecarEntry => ({ ...e, meta: new Map(e.meta) });
+const copyEntry = (e: SidecarEntry): SidecarEntry => ({ ...e, meta: new Map(e.meta) });
 
 function mergeEntry(base: SidecarEntry | undefined, ours: SidecarEntry, theirs: SidecarEntry): { entry: SidecarEntry; conflict: boolean } {
   const baseBody = base?.body;
   // Provenance and anchor describe the body they were written with, so they travel with it.
   if (ours.body !== theirs.body) {
-    if (theirs.body === baseBody) return { entry: copy(ours), conflict: false };
-    if (ours.body === baseBody) return { entry: copy(theirs), conflict: false };
+    if (theirs.body === baseBody) return { entry: copyEntry(ours), conflict: false };
+    if (ours.body === baseBody) return { entry: copyEntry(theirs), conflict: false };
     return { entry: { id: ours.id, meta: new Map(ours.meta), body: conflictText(ours.body, theirs.body) }, conflict: true };
   }
   return { entry: { id: ours.id, meta: mergeMeta(base?.meta ?? new Map(), ours.meta, theirs.meta), body: ours.body }, conflict: false };
+}
+
+const entriesById = (sidecar: Sidecar) => new Map(sidecar.entries.map((e) => [e.id, e]));
+
+/** Ours' entries in ours' order, each merged with theirs' copy of it. */
+function mergeOurEntries(base: Map<string, SidecarEntry>, ours: Sidecar, theirs: Map<string, SidecarEntry>): { entries: SidecarEntry[]; conflicts: string[] } {
+  const entries: SidecarEntry[] = [];
+  const conflicts: string[] = [];
+  for (const entry of ours.entries) {
+    const other = theirs.get(entry.id);
+    const was = base.get(entry.id);
+    if (!other) {
+      // Theirs deleted it, unless ours added it: ours keeps it only if its body differs from the base's.
+      if (was?.body !== entry.body) entries.push(copyEntry(entry));
+      continue;
+    }
+    const merged = mergeEntry(was, entry, other);
+    entries.push(merged.entry);
+    if (merged.conflict) conflicts.push(entry.id);
+  }
+  return { entries, conflicts };
+}
+
+/** Theirs' entries that ours lacks, except those ours deleted and theirs left as the base had them. */
+function theirNewEntries(base: Map<string, SidecarEntry>, ours: Map<string, SidecarEntry>, theirs: Sidecar): SidecarEntry[] {
+  return theirs.entries.filter((e) => !ours.has(e.id) && base.get(e.id)?.body !== e.body).map(copyEntry);
 }
 
 /**
@@ -55,34 +83,12 @@ function mergeEntry(base: SidecarEntry | undefined, ours: SidecarEntry, theirs: 
  * changed differently is written with conflict markers so the user resolves it in place.
  */
 export function mergeSidecars(base: Sidecar, ours: Sidecar, theirs: Sidecar): MergeResult {
-  const byId = (s: Sidecar) => new Map(s.entries.map((e) => [e.id, e]));
-  const b = byId(base);
-  const o = byId(ours);
-  const t = byId(theirs);
-  const entries: SidecarEntry[] = [];
-  const conflicts: string[] = [];
-
-  for (const entry of ours.entries) {
-    const other = t.get(entry.id);
-    const was = b.get(entry.id);
-    if (!other) {
-      // Theirs deleted it: keep ours only if ours edited it since the base.
-      if (was?.body !== entry.body) entries.push(copy(entry));
-      continue;
-    }
-    const merged = mergeEntry(was, entry, other);
-    entries.push(merged.entry);
-    if (merged.conflict) conflicts.push(entry.id);
-  }
-  for (const entry of theirs.entries) {
-    if (o.has(entry.id)) continue;
-    const was = b.get(entry.id);
-    if (was?.body !== entry.body) entries.push(copy(entry));
-  }
-
+  const baseById = entriesById(base);
+  const merged = mergeOurEntries(baseById, ours, entriesById(theirs));
+  const additions = theirNewEntries(baseById, entriesById(ours), theirs);
   const preamble = mergePreamble(base.preamble, ours.preamble, theirs.preamble);
-  if (preamble.conflict) conflicts.push("(preamble)");
-  return { sidecar: { preamble: preamble.text, entries }, conflicts };
+  const conflicts = preamble.conflict ? [...merged.conflicts, "(preamble)"] : merged.conflicts;
+  return { sidecar: { preamble: preamble.text, entries: [...merged.entries, ...additions] }, conflicts };
 }
 
 /** One side's change wins; two different changes are written with conflict markers. */
