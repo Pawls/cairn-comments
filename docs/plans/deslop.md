@@ -12,9 +12,9 @@
 > runs `npm run bench` within noise of the recorded 3,182 ms; the PR body carries the
 > before/after metrics from § Baseline, including any that got worse and why.
 >
-> **Next:** D9, pin and fix the lost comments on undo after a cut and paste; then D6.
+> **Next:** D6, deslop the extension e2e suite, the native harness, and the scripts.
 > **Branch:** `deslop-<slice>` per lane (e.g. `deslop-d1`), each off `main` as its own PR.
-> **Lanes:** E: D9→D6 · G: D10
+> **Lanes:** E: D6 · G: D10
 
 - [~~D1 — Core placement~~ — SHIPPED 2026-10-06](#d1)
 - [~~D2 — Core scan, detectors, literals, markers~~ — SHIPPED 2026-10-06](#d2)
@@ -24,7 +24,7 @@
 - [D6 — Extension e2e, native harness, scripts](#d6)
 - [~~D7 — Design doc journal voice~~ — SHIPPED 2026-10-06](#d7)
 - [~~D8 — Unterminated file loses a blank line between comment blocks~~ — SHIPPED 2026-10-06](#d8)
-- [D9 — Undo after a cut and paste loses the moved comments](#d9)
+- [~~D9 — Undo after a cut and paste loses the moved comments~~ — SHIPPED 2026-10-06](#d9)
 - [D10 — Promoting a string comment turns its neighbors stale](#d10)
 
 ## Traps
@@ -192,7 +192,15 @@ suite against that rate, not against zero: 20 WSL runs before and 20 after.
 **Note (from D5):** the review e2e repository has no `.vscode/settings.json`, so VS Code's built-in git
 extension is on there, while the overlay fixture sets `"git.enabled": false`. Make them consistent in a commit
 of its own; it is a test-environment change, not a refactor.
-**Note (from D5):** run `test:native` on `main`'s head first; it last ran before the D4, D7, and D8 merges.
+**Note (from D9):** `reset()` returns before the file watcher reports its `git checkout` of the sidecar; the
+late `sidecarChanged` forgets every document's state partway through the next test. An in-memory event log
+caught it 9 ms after an undo (console logging hid it: 0 failures in 18 logged runs against 3 in 20). It is
+the likely cause of the known 1-in-20 undo-save timeouts; a reset that waits for the watcher would fix it
+suite-wide. D9's two tracking tests carry `await settle(1_500)` as a guard that such a reset makes unneeded.
+**Note (from D9):** the new cases share four helpers above `suite("overlay")` (`cutAndPasteRefund`,
+`refundCommentShown`, `undoStep`, `recordRefundAnchors`); `cutAndPasteRefund` overlaps the `moveRefund`
+closure in "a cut function whose entry the paste leaves unchanged", so the split can merge them.
+**Note (from D9):** `test:native` passed 3 of 3 at f476961, which is `main` plus D9; that is the before-state.
 **Touches:** `packages/vscode/{e2e,native}/*.ts`, `packages/vscode/esbuild.mjs`, `scripts/*.ts`, `scripts/*.mjs`.
 **After:** D5, D9 (D9 adds a case to `overlay.test.ts`, which this slice splits).
 
@@ -253,29 +261,30 @@ round-trip rule changes.
 
 Cancel if the fix would change the cleaned form of a file that round-trips today; report the case instead.
 
-### D9 — Undo after a cut and paste loses the moved comments · Opus 5.5 / high {#d9}
+### ~~D9 — Undo after a cut and paste loses the moved comments~~ · Opus 5.5 / high — SHIPPED 2026-10-06 {#d9}
 
-**Status:** Not started. Found by the owner's overlay check of D5 (2026-10-06): cut a commented method, paste
-it elsewhere (the comments move), undo until the method is back, with no save in between; the method is back
-without its comments on screen. A read of the code says D5 did not cause it: the path makes the same calls in
-the same order before and after PR #13, and the old code already renders stale tracked sites when the buffer
-is still dirty after the undo (`isCurrent` in `placed.ts`; nothing restores sites for text an undo re-inserts).
-That reading is unverified; the first box settles it. No test undoes a cut in either harness. The owner then
-saw the same with redo (Ctrl+Shift+Z): the function moved again and its comments did not. The owner's buffer
-probably had unsaved changes, which fits the reading.
+**Status:** Shipped in PR #14. Found by the owner's overlay check of D5: cut a commented method, paste it
+elsewhere, undo until it is back (or redo), with no save in between, and the comments were not shown on it.
+The tests showed the fault identical on ed03167 and `main` (5 of 5 each), so PR #13 did not cause it. The rule
+is in design.md: after an undo or redo the next refresh places from anchors even in a dirty buffer, adding only
+the comments tracking lost; comments tracking still holds keep their site and stale flag; nothing is written.
+"Undo this File" keeps the sidecar and shows a restored comment where its anchors place it; it is not pinned
+by a test. A latent race (two refreshes overlapping after an undo) got its own red test and fix. 490 tests on
+Windows and WSL; WSL e2e 19 of 20 clean, the same as `main`; `test:vscode` 35 + 7; `test:native` 3 of 3; the
+owner confirmed undo and redo in the installed build.
 **Touches:** `packages/vscode/src/{placed,tracking,saves,controller}.ts`; one new case in
 `packages/vscode/e2e/overlay.test.ts`; `packages/vscode/native/run.ts` if real undo grouping needs pinning;
 `docs/design.md` § Overlay rendering, "Live tracking" and § Promote and demote, "Undo".
 **After:** D5.
 
-- [ ] A failing e2e test for the owner's steps (dirty buffer, cut, paste, undo twice, assert the comment is
+- [x] A failing e2e test for the owner's steps (dirty buffer, cut, paste, undo twice, assert the comment is
       rendered on the original method), committed red; a clean-buffer variant beside it; and a redo case
       (redo twice after the undo, assert the comment is rendered on the moved method)
-- [ ] Both tests run on a build of ed03167 (before PR #13) and of `main`, to say whether D5 changed anything
-- [ ] The rule written into design.md before the fix: what an undo of a cut shows in a dirty buffer, and what
+- [x] Both tests run on a build of ed03167 (before PR #13) and of `main`, to say whether D5 changed anything
+- [x] The rule written into design.md before the fix: what an undo of a cut shows in a dirty buffer, and what
       happens to the sidecar when the owner undoes "this file only"
-- [ ] The fix; placement stays exact or refused, with no best-guess site for re-inserted text
-- [ ] Verify: lint, `npm test` on Windows and WSL, e2e 20 runs in WSL against `main`'s flake rate,
+- [x] The fix; placement stays exact or refused, with no best-guess site for re-inserted text
+- [x] Verify: lint, `npm test` on Windows and WSL, e2e 20 runs in WSL against `main`'s flake rate,
       `test:vscode` and `test:native` on Windows, then the owner repeats the steps in the installed build
 
 Cancel the fix, keep the tests, and record a known gap if the only way to restore the display is a guess.
