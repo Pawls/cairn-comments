@@ -21,8 +21,13 @@ export interface CliVersion {
 export function cliHome(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform, homedir = os.homedir()): string {
   const override = env[CLI_HOME_ENV];
   if (override) return override;
-  const data = platform === "win32" ? (env.LOCALAPPDATA ?? path.join(homedir, "AppData", "Local")) : (env.XDG_DATA_HOME ?? path.join(homedir, ".local", "share"));
-  return path.join(data, BRAND, "cli");
+  return path.join(dataFolder(env, platform, homedir), BRAND, "cli");
+}
+
+/** The per-user data folder: `LOCALAPPDATA` on Windows, `XDG_DATA_HOME` elsewhere, else under the home directory. */
+function dataFolder(env: NodeJS.ProcessEnv, platform: NodeJS.Platform, homedir: string): string {
+  if (platform === "win32") return env.LOCALAPPDATA ?? path.join(homedir, "AppData", "Local");
+  return env.XDG_DATA_HOME ?? path.join(homedir, ".local", "share");
 }
 
 /** How git and the hooks invoke the home's CLI: by absolute path, so nothing depends on PATH. */
@@ -56,7 +61,7 @@ function installedVersion(home: string): CliVersion | undefined {
   return installed && existsSync(path.join(home, copyName(installed), "main.js")) ? installed : undefined;
 }
 
-/** The version `installCli` would install from `source`, or undefined when the home already has it or something newer. */
+/** The version `installCli` would install from `source`, or undefined when `home` has it or a newer one. */
 export function pendingInstall(source: string, home: string): CliVersion | undefined {
   const incoming = readVersion(source);
   if (!incoming) throw new Error(`${path.join(source, VERSION_FILE)} is missing; this CLI is not a built bundle`);
@@ -76,33 +81,21 @@ export interface InstallResult {
   version: CliVersion;
 }
 
-/**
- * Copies the bundle in `source` into `home` when it is newer than the installed one. Each
- * version gets its own folder, copied under a temporary name and renamed whole; only then
- * does the home's `main.js`, a one-line import of that folder, switch to it. A git filter
- * starting mid-install therefore loads the old copy or the new one, never a mix. The copy
- * just replaced stays, for a filter that read the old `main.js` but has not imported yet.
- */
-export function installCli(source: string, home: string): InstallResult {
-  const incoming = pendingInstall(source, home);
-  if (!incoming) return { installed: false, version: installedVersion(home)! };
-  const previous = installedVersion(home);
-  const name = copyName(incoming);
-  const target = path.join(home, name);
-  if (!existsSync(path.join(target, "main.js"))) {
-    const temporary = `${target}.tmp-${process.pid}`;
+/** Copies the bundle in `source` to `target` through a temporary name, so `target` is never half copied. */
+function copyBundle(source: string, target: string): void {
+  const temporary = `${target}.tmp-${process.pid}`;
+  rmSync(temporary, { recursive: true, force: true });
+  mkdirSync(temporary, { recursive: true });
+  try {
+    for (const file of [...BUNDLE_FILES, VERSION_FILE]) cpSync(path.join(source, file), path.join(temporary, file), { recursive: true });
+    renameSync(temporary, target);
+  } finally {
     rmSync(temporary, { recursive: true, force: true });
-    mkdirSync(temporary, { recursive: true });
-    try {
-      for (const file of [...BUNDLE_FILES, VERSION_FILE]) cpSync(path.join(source, file), path.join(temporary, file), { recursive: true });
-      renameSync(temporary, target);
-    } finally {
-      rmSync(temporary, { recursive: true, force: true });
-    }
   }
-  replaceFile(path.join(home, "main.js"), `import "./${name}/main.js";\n`);
-  replaceFile(path.join(home, VERSION_FILE), JSON.stringify(incoming) + "\n");
-  const keep = new Set([name, previous && copyName(previous)]);
+}
+
+/** Removes the version copies in `home` other than those named in `keep`. */
+function removeOldCopies(home: string, keep: ReadonlySet<string | undefined>): void {
   for (const entry of readdirSync(home, { withFileTypes: true })) {
     // A `.tmp-` folder may be another installer's copy in progress.
     if (!entry.isDirectory() || keep.has(entry.name) || entry.name.includes(".tmp-") || !readVersion(path.join(home, entry.name))) continue;
@@ -112,5 +105,24 @@ export function installCli(source: string, home: string): InstallResult {
       // A copy some process still holds open on Windows goes on the next install.
     }
   }
+}
+
+/**
+ * Copies the bundle in `source` into `home` when it is newer than the installed one. Each
+ * version gets its own folder, copied under a temporary name and renamed whole; only then
+ * does the home's `main.js`, a one-line import of that folder, switch to it. A git filter
+ * starting mid-install therefore loads the old copy or the new one, never a mix. The copy
+ * just replaced stays, for a filter that read the old `main.js` but has not imported yet.
+ */
+export function installCli(source: string, home: string): InstallResult {
+  const incoming = pendingInstall(source, home);
+  const previous = installedVersion(home);
+  if (!incoming) return { installed: false, version: previous! };
+  const name = copyName(incoming);
+  const target = path.join(home, name);
+  if (!existsSync(path.join(target, "main.js"))) copyBundle(source, target);
+  replaceFile(path.join(home, "main.js"), `import "./${name}/main.js";\n`);
+  replaceFile(path.join(home, VERSION_FILE), JSON.stringify(incoming) + "\n");
+  removeOldCopies(home, new Set([name, previous && copyName(previous)]));
   return { installed: true, version: incoming };
 }

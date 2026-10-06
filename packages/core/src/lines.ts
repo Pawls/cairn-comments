@@ -7,6 +7,7 @@ export interface Line {
   end: number;
 }
 
+/** The lines of `source`, ended by `\n` or `\r\n`; a lone `\r` does not end one. */
 export function splitLines(source: string): Line[] {
   const lines: Line[] = [];
   let start = 0;
@@ -63,7 +64,10 @@ export interface Splice {
   text: string;
 }
 
-/** Applies non-overlapping replacements; everything outside them is copied untouched. */
+/**
+ * Applies non-overlapping replacements, in order of `start` (splices at one offset keep
+ * their given order); everything outside them is copied untouched.
+ */
 export function applySplices(source: string, splices: Splice[]): string {
   const ordered = [...splices].sort((a, b) => a.start - b.start);
   let out = "";
