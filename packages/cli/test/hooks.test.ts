@@ -1,9 +1,9 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Sandbox } from "./harness.js";
 
-// Spike finding 4: a global core.hooksPath silently disables .git/hooks.
+// A global core.hooksPath silently disables .git/hooks (design.md § Git behavior, item 4).
 describe("init with a global-style core.hooksPath", () => {
   let box: Sandbox;
   let repo: string;
@@ -170,5 +170,31 @@ describe("an unparseable harness settings file", () => {
     const result = box.cliResult(repo, "init", "--hooks", "claude-code");
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("is not valid JSON");
+  });
+});
+
+describe("the refresh usage text", () => {
+  let box: Sandbox;
+  let repo: string;
+
+  beforeAll(() => {
+    box = new Sandbox({ autocrlf: false });
+    repo = box.path("repo");
+    box.git(box.dir, "init", "-q", "repo");
+    box.cli(repo, "init");
+  });
+  afterAll(() => box.dispose());
+
+  it("names exactly the hooks init installs to run refresh", () => {
+    const usage = box.cli(repo, "help");
+    // The refresh entry runs from its line to the next command's line.
+    const entry = /^ {2}refresh .*\n(?: {4,}.*\n)*/m.exec(usage)?.[0] ?? "";
+    const named = [...new Set(entry.match(/\bpost-[a-z]+/g))].sort();
+    const hooksDir = path.join(repo, ".git", "hooks");
+    const installed = readdirSync(hooksDir)
+      .filter((name) => readFileSync(path.join(hooksDir, name), "utf8").includes(" refresh "))
+      .sort();
+    expect(installed.length).toBeGreaterThan(0);
+    expect(named).toEqual(installed);
   });
 });
