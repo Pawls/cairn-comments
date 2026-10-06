@@ -4,6 +4,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import * as vscode from "vscode";
 import type { TestApi } from "../src/extension.js";
+import { cairnActions } from "./actions.js";
 import { screenshot } from "./capture.js";
 import { settle } from "./wait.js";
 
@@ -31,16 +32,6 @@ async function api(): Promise<TestApi> {
 }
 
 const listing = (a: TestApi) => a.review.files().map((f) => [f.file, f.comments.map((c) => [c.line, c.decision ?? null])]);
-
-/** The code actions from this extension on `line` of `uri`. */
-async function cairnActions(uri: vscode.Uri, line: number): Promise<vscode.CodeAction[]> {
-  const found = await vscode.commands.executeCommand<vscode.CodeAction[]>(
-    "vscode.executeCodeActionProvider",
-    uri,
-    new vscode.Range(line, 0, line, 0),
-  );
-  return found.filter((action) => action.command?.command.startsWith("cairn."));
-}
 
 async function runAction(action: vscode.CodeAction): Promise<string> {
   const { command, arguments: args = [] } = action.command!;
