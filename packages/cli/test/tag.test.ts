@@ -8,7 +8,8 @@ import { Sandbox } from "./harness.js";
 
 const FIXTURES = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "fixtures/hooks");
 const BASE = "def total(items):\n    # sum of line prices\n    return sum(i.price for i in items)\n";
-const EDITED = "def total(items):\n    # sum of line prices\n    # Prices are already tax-inclusive\n    return sum(i.price for i in items)\n";
+const EDITED =
+  "def total(items):\n    # sum of line prices\n    # Prices are already tax-inclusive\n    return sum(i.price for i in items)\n";
 
 /** A recorded (claude-code) or documented (codex, cursor) payload, pointed at `root` and `file`. */
 function payload(harness: string, root: string, file: string): string {
@@ -38,7 +39,8 @@ describe.each([false, true])("tag and hook adapters (autocrlf=%s)", (autocrlf) =
     box = new Sandbox({ autocrlf });
     main = box.path("main");
     box.git(box.dir, "init", "-q", "main");
-    for (const f of ["src/app.py", "src/claude-code.py", "src/codex.py", "src/cursor.py"]) box.write(box.path("main", f), BASE);
+    for (const f of ["src/app.py", "src/claude-code.py", "src/codex.py", "src/cursor.py"])
+      box.write(box.path("main", f), BASE);
     box.cli(main, "init");
     box.git(main, "add", "-A");
     box.git(main, "commit", "-qm", "base");
@@ -59,7 +61,9 @@ describe.each([false, true])("tag and hook adapters (autocrlf=%s)", (autocrlf) =
     expect([...entry!.meta.keys()].slice(0, 5)).toEqual(["by", "model", "session", "at", "pos"]);
     expect(entry!.meta.get("by")).toBe("manual");
     expect(entry!.meta.get("at")).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
-    expect(read("main", ".agents/comments/src/app.py.md")).toMatch(/<!-- by=manual model=m-1 session=s-1 at=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z pos=before scope=total /);
+    expect(read("main", ".agents/comments/src/app.py.md")).toMatch(
+      /<!-- by=manual model=m-1 session=s-1 at=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z pos=before scope=total /,
+    );
     // A second run finds nothing new; app.py reads as committed again, so only the new file is changed.
     expect(box.cli(main, "tag", "--changed")).toBe("tagged 0 comment(s); synced 1 file(s)\n");
     if (autocrlf) expect(readFileSync(box.path("main", "src/app.py"), "utf8")).not.toMatch(/[^\r]\n/);
@@ -77,7 +81,11 @@ describe.each([false, true])("tag and hook adapters (autocrlf=%s)", (autocrlf) =
     expect(box.git(wt, "diff", "--no-color", file)).toBe("");
     const meta = Object.fromEntries(entries("wt", file)[0]!.meta);
     const expected = {
-      "claude-code": { by: "claude-code", model: "claude-haiku-4-5-20251001", session: "4f5ee155-6738-4fd8-b6bc-110299f93d24" },
+      "claude-code": {
+        by: "claude-code",
+        model: "claude-haiku-4-5-20251001",
+        session: "4f5ee155-6738-4fd8-b6bc-110299f93d24",
+      },
       codex: { by: "codex", model: "gpt-5.5-codex", session: "019a6f2c-7d1e-7b30-9c4a-3f5d2e8b1a60" },
       cursor: { by: "cursor", model: "claude-sonnet-5", session: "5c1d9a4e-2b7f-4e61-a3d8-0f9e6b2c7a14" },
     }[harness];
@@ -103,15 +111,23 @@ describe.each([false, true])("tag and hook adapters (autocrlf=%s)", (autocrlf) =
     const claude = JSON.parse(readFileSync(settings, "utf8"));
     expect(claude.permissions).toEqual({ allow: ["Bash(ls)"] });
     expect(claude.hooks.PostToolUse).toEqual([
-      { matcher: "Edit|Write|MultiEdit", hooks: [{ type: "command", command: expect.stringMatching(/main\.js" hook claude-code$/) }] },
+      {
+        matcher: "Edit|Write|MultiEdit",
+        hooks: [{ type: "command", command: expect.stringMatching(/main\.js" hook claude-code$/) }],
+      },
     ]);
     const cursor = JSON.parse(read("main", ".cursor/hooks.json"));
-    expect(cursor).toEqual({ version: 1, hooks: { afterFileEdit: [{ command: expect.stringMatching(/ hook cursor$/) }] } });
+    expect(cursor).toEqual({
+      version: 1,
+      hooks: { afterFileEdit: [{ command: expect.stringMatching(/ hook cursor$/) }] },
+    });
     expect(JSON.parse(read("main", ".codex/hooks.json")).hooks.PostToolUse[0].matcher).toBe("apply_patch|Edit|Write");
 
     expect(box.cli(main, "init", "--hooks", "claude-code")).toBe("nothing to change\n");
     box.cli(main, "init", "--hooks", "cursor", "--command", "cairn");
-    expect(JSON.parse(read("main", ".cursor/hooks.json")).hooks.afterFileEdit).toEqual([{ command: "cairn hook cursor" }]);
+    expect(JSON.parse(read("main", ".cursor/hooks.json")).hooks.afterFileEdit).toEqual([
+      { command: "cairn hook cursor" },
+    ]);
     expect(() => box.cli(main, "init", "--hooks", "vim")).toThrow(/unknown harness "vim"/);
   });
 
@@ -141,12 +157,54 @@ describe("AGENTS.md edits by init --agents-md and uninstall", () => {
 
   // Each row: AGENTS.md before init (undefined: no file), init's report and result, uninstall's report and result.
   it.each([
-    ["no file", undefined, "create with the sigil convention", snippet, "delete (only the sigil convention was in it)", undefined],
-    ["no final line break", "# A", "add the sigil convention", `# A\n\n${snippet}`, "remove the sigil convention", "# A\n"],
-    ["one final line break", "# A\n", "add the sigil convention", `# A\n\n${snippet}`, "remove the sigil convention", "# A\n"],
-    ["a blank last line", "# A\n\n", "add the sigil convention", `# A\n\n${snippet}`, "remove the sigil convention", "# A\n"],
-    ["CRLF", "# A\r\n", "add the sigil convention", `# A\r\n\r\n${crlfSnippet}`, "remove the sigil convention", "# A\r\n"],
-    ["text after the snippet", `# A\n\n${snippet}tail\n`, undefined, `# A\n\n${snippet}tail\n`, "remove the sigil convention", "# A\n\ntail\n"],
+    [
+      "no file",
+      undefined,
+      "create with the sigil convention",
+      snippet,
+      "delete (only the sigil convention was in it)",
+      undefined,
+    ],
+    [
+      "no final line break",
+      "# A",
+      "add the sigil convention",
+      `# A\n\n${snippet}`,
+      "remove the sigil convention",
+      "# A\n",
+    ],
+    [
+      "one final line break",
+      "# A\n",
+      "add the sigil convention",
+      `# A\n\n${snippet}`,
+      "remove the sigil convention",
+      "# A\n",
+    ],
+    [
+      "a blank last line",
+      "# A\n\n",
+      "add the sigil convention",
+      `# A\n\n${snippet}`,
+      "remove the sigil convention",
+      "# A\n",
+    ],
+    [
+      "CRLF",
+      "# A\r\n",
+      "add the sigil convention",
+      `# A\r\n\r\n${crlfSnippet}`,
+      "remove the sigil convention",
+      "# A\r\n",
+    ],
+    [
+      "text after the snippet",
+      `# A\n\n${snippet}tail\n`,
+      undefined,
+      `# A\n\n${snippet}tail\n`,
+      "remove the sigil convention",
+      "# A\n\ntail\n",
+    ],
   ])("%s", (name, before, initWhat, afterInit, uninstallWhat, afterUninstall) => {
     const repo = box.path(name.replaceAll(" ", "-"));
     box.git(box.dir, "init", "-q", repo);

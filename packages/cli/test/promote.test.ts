@@ -37,9 +37,13 @@ describe.each([true, false])("promote and demote through git (autocrlf=%s)", (au
   const ids = (file: string) => [...box.read(file).matchAll(/^## ([0-9a-z]{4})$/gm)].map((m) => m[1]!);
 
   it("demote moves the comments into the sidecar and out of the code", () => {
-    expect(box.cli(main, "demote", `${SOURCE}:3`, `${SOURCE}:4`, `${SOURCE}:2`)).toBe("demoted 2 comment(s) in 1 file(s)\n");
+    expect(box.cli(main, "demote", `${SOURCE}:3`, `${SOURCE}:4`, `${SOURCE}:2`)).toBe(
+      "demoted 2 comment(s) in 1 file(s)\n",
+    );
     const [own, trailing] = ids(box.path("main", SIDECAR));
-    expect(box.read(box.path("main", SOURCE))).toBe("def pay(order):\n    charge(order)\n    # noqa: E501\n    return order\n");
+    expect(box.read(box.path("main", SOURCE))).toBe(
+      "def pay(order):\n    charge(order)\n    # noqa: E501\n    return order\n",
+    );
     expect(box.read(box.path("main", SIDECAR))).toMatch(
       new RegExp(
         `^## ${own}\\n<!-- pos=before scope=pay [^\\n]*-->\\nthe gateway retries on 502, so this must stay idempotent\\n {1}\\(see the ledger contract\\)\\n\\n` +
@@ -51,7 +55,10 @@ describe.each([true, false])("promote and demote through git (autocrlf=%s)", (au
 
   it("demote refuses a pragma, a line without a comment, and an AI comment, writing nothing", () => {
     const before = readFileSync(box.path("main", SOURCE));
-    expect(box.cliResult(main, "demote", `${SOURCE}:3`)).toMatchObject({ status: 1, stderr: `cairn: ${SOURCE}:3: a pragma comment stays in the code\n` });
+    expect(box.cliResult(main, "demote", `${SOURCE}:3`)).toMatchObject({
+      status: 1,
+      stderr: `cairn: ${SOURCE}:3: a pragma comment stays in the code\n`,
+    });
     expect(box.cliResult(main, "demote", `${SOURCE}:2`).stderr).toBe(`cairn: ${SOURCE}:2: no comment on this line\n`);
     expect(box.cliResult(main, "demote", SOURCE).stderr).toBe(`cairn: expected <file>:<line>, got ${SOURCE}\n`);
     expect(readFileSync(box.path("main", SOURCE))).toEqual(before);
@@ -73,7 +80,9 @@ describe.each([true, false])("promote and demote through git (autocrlf=%s)", (au
 
   it("promoting every comment restores the committed bytes and removes the sidecar", () => {
     const found = ids(box.path("main", SIDECAR));
-    expect(box.cli(main, "promote", ...found.map((id) => `${SOURCE}:${id}`))).toBe(`promoted ${found.join(", ")} in ${SOURCE}\n`);
+    expect(box.cli(main, "promote", ...found.map((id) => `${SOURCE}:${id}`))).toBe(
+      `promoted ${found.join(", ")} in ${SOURCE}\n`,
+    );
     expect(readFileSync(box.path("main", SOURCE))).toEqual(committed);
     expect(existsSync(box.path("main", SIDECAR))).toBe(false);
     expect(box.status(main)).toBe(` D ${SIDECAR}\n M ${SOURCE}\n`);
@@ -96,7 +105,10 @@ describe.each([true, false])("--print reports the rewrite instead of writing it 
     box = new Sandbox({ autocrlf });
     main = box.path("main");
     box.write(box.path("main", SOURCE), ORIGINAL);
-    box.write(box.path("main", REVIEWED), "def total(items):\n    # Step 1: add up the prices\n    s = sum(items)  # 🚀 fast sum\n    return s\n");
+    box.write(
+      box.path("main", REVIEWED),
+      "def total(items):\n    # Step 1: add up the prices\n    s = sum(items)  # 🚀 fast sum\n    return s\n",
+    );
     box.git(box.dir, "init", "-q", "main");
     box.cli(main, "init");
     box.git(main, "add", "-A");
@@ -105,7 +117,10 @@ describe.each([true, false])("--print reports the rewrite instead of writing it 
   afterAll(() => box.dispose());
 
   it("demote --print names each file's new contents and writes nothing", () => {
-    const printed = JSON.parse(box.cli(main, "demote", "--print", `${SOURCE}:2`)) as { report: string; files: Record<string, string | null> };
+    const printed = JSON.parse(box.cli(main, "demote", "--print", `${SOURCE}:2`)) as {
+      report: string;
+      files: Record<string, string | null>;
+    };
     expect(box.status(main)).toBe("");
     expect(printed.report).toBe("demoted 1 comment(s) in 1 file(s)\n");
     expect(Object.keys(printed.files).sort()).toEqual([SIDECAR, SOURCE]);
@@ -118,19 +133,29 @@ describe.each([true, false])("--print reports the rewrite instead of writing it 
   });
 
   it("scan --apply --print covers the sources, their sidecars, and the ignore file", () => {
-    const review = JSON.parse(box.cli(main, "scan", "--json", REVIEWED)) as { comments: { line: number; accept: boolean }[] };
+    const review = JSON.parse(box.cli(main, "scan", "--json", REVIEWED)) as {
+      comments: { line: number; accept: boolean }[];
+    };
     const own = review.comments.find((c) => c.line === 2)!;
     const trailing = review.comments.find((c) => c.line === 3)!;
     own.accept = true;
     trailing.accept = false;
     const input = JSON.stringify({ version: 1, comments: [own, trailing] });
-    const printed = JSON.parse(box.cliWithInput(main, input, "scan", "--apply", "-", "--print")) as { report: string; files: Record<string, string | null> };
+    const printed = JSON.parse(box.cliWithInput(main, input, "scan", "--apply", "-", "--print")) as {
+      report: string;
+      files: Record<string, string | null>;
+    };
     expect(box.status(main)).toBe("");
     expect(printed.report).toBe("converted 1 comment(s) in 1 file(s)\nignored 1 comment(s) in .agents/scan-ignore\n");
-    expect(Object.keys(printed.files).sort()).toEqual([".agents/comments/src/total.py.md", ".agents/scan-ignore", REVIEWED]);
+    expect(Object.keys(printed.files).sort()).toEqual([
+      ".agents/comments/src/total.py.md",
+      ".agents/scan-ignore",
+      REVIEWED,
+    ]);
 
     expect(box.cliWithInput(main, input, "scan", "--apply", "-")).toBe(printed.report);
-    for (const [file, text] of Object.entries(printed.files)) expect(readFileSync(box.path("main", file), "utf8")).toBe(text);
+    for (const [file, text] of Object.entries(printed.files))
+      expect(readFileSync(box.path("main", file), "utf8")).toBe(text);
   });
 });
 
@@ -163,12 +188,17 @@ describe.each([true, false])("demoting a Python string through git (autocrlf=%s)
   afterAll(() => box.dispose());
 
   it("refuses the docstring", () => {
-    expect(box.cliResult(repo, "demote", `${NOTED}:2`)).toMatchObject({ status: 1, stderr: `cairn: ${NOTED}:2: a docstring stays in the code\n` });
+    expect(box.cliResult(repo, "demote", `${NOTED}:2`)).toMatchObject({
+      status: 1,
+      stderr: `cairn: ${NOTED}:2: a docstring stays in the code\n`,
+    });
   });
 
   it("demote takes the string out of the file and records its quotes", () => {
     expect(box.cli(repo, "demote", `${NOTED}:4`)).toBe("demoted 1 comment(s) in 1 file(s)\n");
-    expect(box.read(box.path("main", NOTED))).toBe('def settle(order):\n    """Settle one order."""\n    ledger.write(order.id)\n    notify(order)\n');
+    expect(box.read(box.path("main", NOTED))).toBe(
+      'def settle(order):\n    """Settle one order."""\n    ledger.write(order.id)\n    notify(order)\n',
+    );
     const sidecar = box.read(box.path("main", NOTED_SIDECAR));
     expect(sidecar).toMatch(/literal=triple-double\b/);
     expect(sidecar).toContain("\nIdempotent: the ledger is keyed on order.id.\n");

@@ -30,8 +30,12 @@ describe.each([true, false])("staleness through git (autocrlf=%s)", (autocrlf) =
   const check = (cwd: string, ...args: string[]) => box.cliResult(cwd, "check", "--stale", ...args);
 
   it("records where the comment goes when the body is written", () => {
-    expect(box.read(box.path("main", SOURCE))).toBe("def settle(order):\n    ledger.write(order.id)\n    notify(order)\n");
-    expect(readFileSync(box.path("main", SIDECAR), "utf8")).toMatch(new RegExp(`^## ${id}\\n<!-- pos=before scope=settle body=[0-9a-f]{8} [^\\n]*-->\\n${NOTE}\\n$`));
+    expect(box.read(box.path("main", SOURCE))).toBe(
+      "def settle(order):\n    ledger.write(order.id)\n    notify(order)\n",
+    );
+    expect(readFileSync(box.path("main", SIDECAR), "utf8")).toMatch(
+      new RegExp(`^## ${id}\\n<!-- pos=before scope=settle body=[0-9a-f]{8} [^\\n]*-->\\n${NOTE}\\n$`),
+    );
     expect(check(main)).toMatchObject({ status: 0, stdout: "" });
   });
 
@@ -56,14 +60,18 @@ describe.each([true, false])("staleness through git (autocrlf=%s)", (autocrlf) =
 
   it("an agent worktree shows the tag, and git still sees a clean tree", () => {
     box.cli(main, "worktree", "add", wt);
-    expect(box.read(box.path("wt", SOURCE))).toBe(`def settle(order):\n    #~${id} [stale?] ${NOTE}\n    ledger.write(order.id)\n    notify(order, now)\n`);
+    expect(box.read(box.path("wt", SOURCE))).toBe(
+      `def settle(order):\n    #~${id} [stale?] ${NOTE}\n    ledger.write(order.id)\n    notify(order, now)\n`,
+    );
     expect(box.status(wt)).toBe("");
     expect(box.git(wt, "show", `HEAD:${SOURCE}`)).not.toContain("[stale?]");
   });
 
   it("confirm clears the flag, removes the tag, and changes only the sidecar", () => {
     expect(box.cli(wt, "confirm", id)).toBe(`confirmed ${id} in ${SOURCE}\n`);
-    expect(box.read(box.path("wt", SOURCE))).toBe(`def settle(order):\n    #~${id} ${NOTE}\n    ledger.write(order.id)\n    notify(order, now)\n`);
+    expect(box.read(box.path("wt", SOURCE))).toBe(
+      `def settle(order):\n    #~${id} ${NOTE}\n    ledger.write(order.id)\n    notify(order, now)\n`,
+    );
     expect(box.status(wt)).toBe(` M ${SIDECAR}\n`);
     expect(check(wt)).toMatchObject({ status: 0, stdout: "" });
     expect(box.cliResult(wt, "confirm", "zz99")).toMatchObject({ status: 1, stderr: "cairn: no comment zz99\n" });

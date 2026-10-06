@@ -1,9 +1,9 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Sandbox } from "./harness.js";
 
-// Spike finding 4: a global core.hooksPath silently disables .git/hooks.
+// A global core.hooksPath silently disables .git/hooks (design.md § Git behavior, item 4).
 describe("init with a global-style core.hooksPath", () => {
   let box: Sandbox;
   let repo: string;
@@ -13,7 +13,10 @@ describe("init with a global-style core.hooksPath", () => {
     box = new Sandbox({ autocrlf: false });
     hooks = box.path("global-hooks").replaceAll("\\", "/");
     mkdirSync(hooks);
-    writeFileSync(`${hooks}/pre-commit`, '#!/bin/sh\necho ran >> "$(git rev-parse --show-toplevel)/../previous-hook.log"\n');
+    writeFileSync(
+      `${hooks}/pre-commit`,
+      '#!/bin/sh\necho ran >> "$(git rev-parse --show-toplevel)/../previous-hook.log"\n',
+    );
     chmodSync(`${hooks}/pre-commit`, 0o755);
     repo = box.path("repo");
     box.git(box.dir, "init", "-q", "repo");
@@ -31,7 +34,9 @@ describe("init with a global-style core.hooksPath", () => {
     box.write(box.path("repo", "a.py"), "x = 1  #~ why one\n");
     box.git(repo, "add", "-A");
     box.git(repo, "commit", "-qm", "with a comment");
-    expect(box.git(repo, "show", "HEAD:.agents/comments/a.py.md")).toMatch(/^## [0-9a-z]{4}\n<!-- pos=trail [^\n]*-->\nwhy one\n$/);
+    expect(box.git(repo, "show", "HEAD:.agents/comments/a.py.md")).toMatch(
+      /^## [0-9a-z]{4}\n<!-- pos=trail [^\n]*-->\nwhy one\n$/,
+    );
     expect(box.git(repo, "show", "HEAD:a.py")).toBe("x = 1\n");
     expect(readFileSync(box.path("previous-hook.log"), "utf8").trim()).toBe("ran");
     expect(box.status(repo)).toBe("");
@@ -74,7 +79,9 @@ describe("uninstall with a shared hooks directory", () => {
   afterAll(() => box.dispose());
 
   it("init says the hook directory is shared", () => {
-    expect(box.cli(box.path("one"), "init")).toContain("pre-commit: install (a shared hooks directory from core.hooksPath");
+    expect(box.cli(box.path("one"), "init")).toContain(
+      "pre-commit: install (a shared hooks directory from core.hooksPath",
+    );
     box.cli(box.path("two"), "init");
   });
 
@@ -163,5 +170,31 @@ describe("an unparseable harness settings file", () => {
     const result = box.cliResult(repo, "init", "--hooks", "claude-code");
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("is not valid JSON");
+  });
+});
+
+describe("the refresh usage text", () => {
+  let box: Sandbox;
+  let repo: string;
+
+  beforeAll(() => {
+    box = new Sandbox({ autocrlf: false });
+    repo = box.path("repo");
+    box.git(box.dir, "init", "-q", "repo");
+    box.cli(repo, "init");
+  });
+  afterAll(() => box.dispose());
+
+  it("names exactly the hooks init installs to run refresh", () => {
+    const usage = box.cli(repo, "help");
+    // The refresh entry runs from its line to the next command's line.
+    const entry = /^ {2}refresh .*\n(?: {4,}.*\n)*/m.exec(usage)?.[0] ?? "";
+    const named = [...new Set(entry.match(/\bpost-[a-z]+/g))].sort();
+    const hooksDir = path.join(repo, ".git", "hooks");
+    const installed = readdirSync(hooksDir)
+      .filter((name) => readFileSync(path.join(hooksDir, name), "utf8").includes(" refresh "))
+      .sort();
+    expect(installed.length).toBeGreaterThan(0);
+    expect(named).toEqual(installed);
   });
 });
