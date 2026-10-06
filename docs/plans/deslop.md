@@ -20,7 +20,7 @@
 - [~~D2 — Core scan, detectors, literals, markers~~ — SHIPPED 2026-10-06](#d2)
 - [~~D3 — Core remainder~~ — SHIPPED 2026-10-06](#d3)
 - [~~D4 — CLI~~ — SHIPPED 2026-10-06](#d4)
-- [D5 — VS Code extension source](#d5)
+- [~~D5 — VS Code extension source~~ — SHIPPED 2026-10-06](#d5)
 - [D6 — Extension e2e, native harness, scripts](#d6)
 - [~~D7 — Design doc journal voice~~ — SHIPPED 2026-10-06](#d7)
 - [~~D8 — Unterminated file loses a blank line between comment blocks~~ — SHIPPED 2026-10-06](#d8)
@@ -160,9 +160,9 @@ unreferenced `git.ts` exports (`grepTokens`, `ignoredByPattern`) are removed. `r
       or `git.ts` changed; WSL run
 - [x] `## Skill notes` and `## Plan notes` in the PR body
 
-### D5 — VS Code extension source · Opus 5.5 / high {#d5}
+### ~~D5 — VS Code extension source~~ · Opus 5.5 / high — SHIPPED 2026-10-06 {#d5}
 
-**Status:** Merged in PR #13 on 2026-10-06; one box is open. `activate` went from 243 lines to 49
+**Status:** Shipped in PR #13. `activate` went from 243 lines to 49
 (`OverlayController`, `PasteSaves`/`UndoSaves`, a sidecar lookup), `registerReviewTree` became a `ReviewTree`
 class, worst score 14; source lines rose from 2,034 to 2,282. 490 tests pass on Windows and WSL at 172e654.
 One review-suite test failed once on Windows (promote returned `undefined`, at 4ed8cf5) and never again: 0 of
@@ -176,11 +176,11 @@ tree clears its model one microtask later, on a path no test reaches.
 - [x] `activate` (243 lines of closures over shared state) split by phase with state passed
       explicitly (rules 4, 36); `registerReviewTree` (187) likewise
 - [x] Comment pass as in D1; `TestApi` shape unchanged, or D6's Touches updated
-- [ ] Verify: lint, `npm test`, `npm run test:vscode` (tell the user first on Windows),
+- [x] Verify: lint, `npm test`, `npm run test:vscode` (tell the user first on Windows),
       `npm run test:native` (the user stays off the machine), then rebuild and install the
-      `.vsix` and open one Python file with the overlay on. Open: the owner's overlay check in the installed
-      build; `test:native` passed 3 of 3 at 4ed8cf5 and was not repeated after the D4, D7, and D8 merges
-      (D6 runs it on `main`'s head).
+      `.vsix` and open one Python file with the overlay on. The owner's check in the installed build found
+      the undo fault that became D9 (present before this slice too) and the stale tag that became D10;
+      `test:native` passed 3 of 3 at 4ed8cf5 and again on D9's branch, which contains every later merge.
 - [x] `## Skill notes` and `## Plan notes` in the PR body
 
 ### D6 — Extension e2e, native harness, scripts · Sonnet 5.5 / high {#d6}
