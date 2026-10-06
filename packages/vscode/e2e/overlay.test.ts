@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import * as vscode from "vscode";
 import type { TestApi } from "../src/extension.js";
@@ -635,6 +635,48 @@ suite("overlay", () => {
     assert.equal(document.getText(), afterPaste);
     assert.equal(sidecarText(), recorded);
     await waitFor("refund's comment on the moved function", () => refundCommentShown(api, editor));
+  });
+
+  test("undo and redo of a cut and paste write neither the sidecar nor the seen record", async () => {
+    const { api, editor } = await shown("codelens");
+    const document = editor.document;
+    await recordRefundAnchors(api, editor);
+    // The CLI's record of the ids it last wrote into this worktree's files (design.md § Anchoring, "Deleting").
+    const seenDir = path.join(repo(), ".git", "cairn", "seen");
+    const seenRecord = () => (existsSync(seenDir) ? readdirSync(seenDir).map((f) => f + readFileSync(path.join(seenDir, f), "utf8")) : []);
+    const recorded = { sidecar: readFileSync(sidecarPath()), seen: seenRecord() };
+    const unchanged = (step: string) => {
+      assert.ok(readFileSync(sidecarPath()).equals(recorded.sidecar), `the sidecar changed on disk after ${step}`);
+      assert.deepEqual(seenRecord(), recorded.seen, `the seen record changed after ${step}`);
+    };
+    await editor.edit((b) => b.insert(new vscode.Position(1, 0), "VERSION = 2\n"));
+    const audit = document.getText().split("\n").findIndex((l) => l.startsWith("def audit"));
+    await cutAndPasteRefund(api, editor, audit - 2);
+    await api.refresh(editor);
+    unchanged("the paste");
+
+    for (const [i, step] of (["undo", "undo", "redo", "redo"] as const).entries()) {
+      await undoStep(step, editor);
+      await api.refresh(editor);
+      unchanged(`${step} ${i + 1}`);
+    }
+  });
+
+  test("an undo leaves the comments of a function with unsaved edits where tracking put them, not stale", async () => {
+    const { api, editor } = await shown("codelens");
+    const document = editor.document;
+    // Inside `settle`, between its commented lines: placed from anchors, its comments would turn stale.
+    await editor.edit((b) => b.insert(new vscode.Position(5, 0), "    log(order)\n"));
+    const tracked = (await api.refresh(editor)).placed;
+    const trackedSites = api.placed.sites(document);
+    assert.ok(tracked?.lenses.some((l) => l.line === 7 && l.title === LENSES[2]![1]), "ip6u moved down with its line, not stale");
+
+    await editor.edit((b) => b.insert(new vscode.Position(0, 0), "VERSION = 2\n"));
+    await api.refresh(editor);
+    await undoStep("undo", editor);
+    assert.equal(document.lineAt(0).text, "import ledger");
+    assert.deepEqual((await api.refresh(editor)).placed, tracked);
+    assert.deepEqual(api.placed.sites(document), trackedSites);
   });
 
   test("a save after undoing or redoing a cut and paste shows the comment where refund is", async () => {
