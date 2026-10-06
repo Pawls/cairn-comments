@@ -4,7 +4,7 @@
 // `reconcile` no longer places anywhere.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import * as vscode from "vscode";
 import type { TestApi } from "../src/extension.js";
@@ -195,11 +195,56 @@ async function waitForReload(): Promise<void> {
   }
 }
 
+/** The sidecar files under the repository, by absolute path, with their bytes. */
+function sidecarSnapshot(): Map<string, Buffer> {
+  const root = path.join(repo(), ".agents/comments");
+  const files = new Map<string, Buffer>();
+  if (!existsSync(root)) return files;
+  for (const relative of readdirSync(root, { recursive: true, encoding: "utf8" })) {
+    const file = path.join(root, relative);
+    if (file.endsWith(".md") && statSync(file).isFile()) files.set(file, readFileSync(file));
+  }
+  return files;
+}
+
+const sameBytes = (a: Buffer | undefined, b: Buffer | undefined) => (a && b ? a.equals(b) : a === b);
+
+/** The sidecar files that differ between two snapshots, including ones created or removed. */
+function changedSidecars(before: Map<string, Buffer>, after: Map<string, Buffer>): string[] {
+  const files = new Set([...before.keys(), ...after.keys()]);
+  return [...files].filter((file) => !sameBytes(before.get(file), after.get(file)));
+}
+
+/**
+ * Restores the committed files, and returns once the extension has been told about every sidecar
+ * that changed. A late watcher event for the restore would otherwise land in the next test and
+ * make the overlay forget its tracked comments. This watcher is created after the extension's,
+ * so VS Code delivers each event to the extension's first.
+ */
+async function checkoutCommitted(): Promise<void> {
+  const reported = new Set<string>();
+  const watcher = vscode.workspace.createFileSystemWatcher("**/.agents/comments/**/*.md");
+  const report = (uri: vscode.Uri) => reported.add(uri.fsPath);
+  watcher.onDidChange(report);
+  watcher.onDidCreate(report);
+  watcher.onDidDelete(report);
+  try {
+    const before = sidecarSnapshot();
+    execFileSync("git", ["checkout", "--", "."], { cwd: repo() });
+    const changed = changedSidecars(before, sidecarSnapshot());
+    await waitFor("the file watcher to report the restored sidecars", () =>
+      changed.every((file) => reported.has(file)),
+    );
+  } finally {
+    watcher.dispose();
+  }
+}
+
 /** Discards the buffer and puts the repository back as committed. */
 export async function reset(): Promise<void> {
   await revertDirtyDocuments();
   await closeSidecarTabs();
-  execFileSync("git", ["checkout", "--", "."], { cwd: repo() });
+  await checkoutCommitted();
   await waitForReload();
 }
 

@@ -581,8 +581,6 @@ suite("overlay", () => {
     test("an undo leaves the comments of a function with unsaved edits where tracking put them, not stale", async () => {
       const { api, editor } = await shown("codelens");
       const document = editor.document;
-      // A late file watcher event for the previous test's sidecar reset would place the dirty buffer from anchors.
-      await settle(1_500);
       // Inside `settle`, between its commented lines: placed from anchors, its comments would turn stale.
       await editor.edit((b) => b.insert(new vscode.Position(5, 0), "    log(order)\n"));
       const tracked = (await api.refresh(editor)).placed;
@@ -603,8 +601,6 @@ suite("overlay", () => {
     test("two refreshes at once after an undo both keep the tracked comments as tracked", async () => {
       const { api, editor } = await shown("codelens");
       const document = editor.document;
-      // As above: a late watcher event from an earlier sidecar reset would place from anchors.
-      await settle(1_500);
       await editor.edit((b) => b.insert(new vscode.Position(5, 0), "    log(order)\n"));
       const tracked = (await api.refresh(editor)).placed;
       const trackedSites = api.placed.sites(document);
