@@ -13,7 +13,8 @@ export function textPacket(line: string): Buffer {
 /** Content split into maximal packets; empty content is zero packets. */
 export function contentPackets(content: Buffer): Buffer[] {
   const packets: Buffer[] = [];
-  for (let i = 0; i < content.length; i += MAX_PACKET_DATA) packets.push(packet(content.subarray(i, i + MAX_PACKET_DATA)));
+  for (let i = 0; i < content.length; i += MAX_PACKET_DATA)
+    packets.push(packet(content.subarray(i, i + MAX_PACKET_DATA)));
   return packets;
 }
 

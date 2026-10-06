@@ -1,8 +1,9 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { SIDECAR_ROOT, convertComments, languageForPath, newComments } from "@cairn-comments/core";
+import { convertComments, newComments } from "@cairn-comments/core";
 import { collapseFiles, decodeExact, syncFiles } from "./files.js";
 import { changedFiles, indexBlob, managedFiles, smudges } from "./git.js";
+import { isScannable } from "./scan.js";
 
 /** Who wrote a comment, recorded on the sidecar entry's metadata line. */
 export interface Provenance {
@@ -17,7 +18,12 @@ export interface Provenance {
 /** Metadata keys in a fixed order, empty values left out. */
 export function provenanceMeta(p: Provenance): Map<string, string> {
   const at = p.at ?? new Date().toISOString().replace(/\.\d+Z$/, "Z");
-  const pairs: [string, string | undefined][] = [["by", p.by], ["model", p.model], ["session", p.session], ["at", at]];
+  const pairs: [string, string | undefined][] = [
+    ["by", p.by],
+    ["model", p.model],
+    ["session", p.session],
+    ["at", at],
+  ];
   return new Map(pairs.filter((kv): kv is [string, string] => !!kv[1]));
 }
 
@@ -34,9 +40,10 @@ export interface TagReport {
  * Files outside the filter are skipped, so a harness hook can call this for any edit.
  */
 export async function tag(root: string, files: string[], provenance: Provenance = {}): Promise<TagReport> {
-  const toolDir = `${path.posix.dirname(SIDECAR_ROOT)}/`;
-  const candidates = [...new Set(files)].filter((f) => languageForPath(f) && !f.startsWith(toolDir) && existsSync(path.join(root, f)));
-  const targets = managedFiles(root, candidates);
+  const targets = managedFiles(
+    root,
+    [...new Set(files)].filter((f) => isScannable(root, f)),
+  );
   let tagged = 0;
   for (const file of targets) {
     const absolute = path.join(root, file);
