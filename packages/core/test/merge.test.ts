@@ -59,6 +59,26 @@ describe("sidecar merge", () => {
     expect(merge(BASE, edited, withoutAb12).text).toBe(edited);
   });
 
+  it("merges metadata other than the placement per key, and ours wins a key both sides changed", () => {
+    const base = "## ab12\n<!-- by=codex model=a -->\nbody\n";
+    const ours = "## ab12\n<!-- by=cursor model=a -->\nbody\n";
+    const theirs = "## ab12\n<!-- by=claude model=b session=s1 -->\nbody\n";
+    expect(merge(base, ours, theirs).text).toBe("## ab12\n<!-- by=cursor model=b session=s1 -->\nbody\n");
+    const dropped = "## ab12\n<!-- by=codex -->\nbody\n";
+    expect(merge(base, base, dropped).text).toBe(dropped);
+  });
+
+  it("merges the preamble: one side's edit wins, two different edits conflict", () => {
+    const base = `note\n\n${BASE}`;
+    const ours = base.replace("note", "ours note");
+    const theirs = base.replace("note", "theirs note");
+    expect(merge(base, ours, base)).toEqual({ text: ours, conflicts: [] });
+    expect(merge(base, base, theirs)).toEqual({ text: theirs, conflicts: [] });
+    const both = merge(base, ours, theirs);
+    expect(both.conflicts).toEqual(["(preamble)"]);
+    expect(both.text.startsWith("<<<<<<< ours\nours note\n=======\ntheirs note\n>>>>>>> theirs\n")).toBe(true);
+  });
+
   it("an entry both sides added with one id merges when the bodies agree", () => {
     const added = BASE + "\n## zz11\n<!-- by=codex -->\nsame text\n";
     const addedToo = BASE + "\n## zz11\n<!-- by=cursor -->\nsame text\n";
