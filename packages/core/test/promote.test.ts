@@ -3,6 +3,7 @@ import {
   analyzeSource,
   convertDemoted,
   demoteTarget,
+  placeComments,
   promotePlaced,
   recordComments,
   recordLiterals,
@@ -127,5 +128,41 @@ describe("demote then promote", () => {
   it("brings a block comment back as line comments", async () => {
     const demoted = await demote("a.ts", "/* two\n   lines */\nf();\n", 1);
     expect((await promote("a.ts", demoted)).source).toBe("// two\n// lines\nf();\n");
+  });
+});
+
+describe("a string comment moved in or out of a function", () => {
+  const METHOD = 'class C:\n    def m(self):\n        x = 1\n        """Note about y."""\n        y = 2\n        return y\n';
+  const WITH_TRAILING = METHOD.replace("y = 2\n", "y = 2  #~ trailing note\n");
+
+  /** Records the trailing comment in `source` (the agent's file) into a fresh sidecar. */
+  async function recordTrailing(source: string): Promise<Sidecar> {
+    return (await recordComments("a.py", source, empty)).sidecar;
+  }
+
+  it("leaves a neighbor recorded before the demote exact", async () => {
+    const sidecar = await recordTrailing(WITH_TRAILING);
+    // The owner's checkout shows no AI comments, so the demote records only the string.
+    const demoted = await demote("a.py", METHOD, 4, sidecar);
+    const placed = await placeComments("a.py", demoted.source, demoted.sidecar);
+    expect(placed.placed).toContain(sidecar.entries[0]!.id);
+    expect(placed.stale).toEqual([]);
+  });
+
+  it("leaves a neighbor recorded while the string was demoted exact once it is promoted", async () => {
+    const demoted = await demote("a.py", METHOD, 4);
+    // The trailing comment is written on another branch, where the string is still in the sidecar.
+    const trailing = await recordTrailing(demoted.source.replace("y = 2\n", "y = 2  #~ trailing note\n"));
+    const promoted = await promote("a.py", demoted);
+    const placed = await placeComments("a.py", promoted.source, trailing);
+    expect(placed.placed).toEqual([trailing.entries[0]!.id]);
+    expect(placed.stale).toEqual([]);
+  });
+
+  it("re-records the neighbors a promote can see", async () => {
+    const demoted = await demote("a.py", METHOD, 4, await recordTrailing(WITH_TRAILING));
+    const promoted = await promote("a.py", demoted);
+    expect(promoted.source).toBe(METHOD);
+    expect((await placeComments("a.py", promoted.source, promoted.sidecar)).stale).toEqual([]);
   });
 });
