@@ -128,7 +128,7 @@ export interface CarryResult {
   ids: string[];
 }
 
-/** A copy gets a new id, so it never shares one with its original; a moved comment keeps its own unless `taken` has it. */
+/** A copy gets a new id; a moved comment keeps its own unless `taken` has it. */
 function idFor(path: string, comment: CarriedComment, taken: Set<string>): string {
   if (!comment.moved || taken.has(comment.from)) return freshId(path, comment.body, taken);
   taken.add(comment.from);

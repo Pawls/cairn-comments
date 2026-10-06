@@ -24,7 +24,7 @@ export function cliHome(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.P
   return path.join(dataFolder(env, platform, homedir), BRAND, "cli");
 }
 
-/** The per-user data folder: `%LOCALAPPDATA%` on Windows, `$XDG_DATA_HOME` elsewhere, each defaulting under the home directory. */
+/** The per-user data folder: `LOCALAPPDATA` on Windows, `XDG_DATA_HOME` elsewhere, else under the home directory. */
 function dataFolder(env: NodeJS.ProcessEnv, platform: NodeJS.Platform, homedir: string): string {
   if (platform === "win32") return env.LOCALAPPDATA ?? path.join(homedir, "AppData", "Local");
   return env.XDG_DATA_HOME ?? path.join(homedir, ".local", "share");
@@ -61,7 +61,7 @@ function installedVersion(home: string): CliVersion | undefined {
   return installed && existsSync(path.join(home, copyName(installed), "main.js")) ? installed : undefined;
 }
 
-/** The version `installCli` would install from `source`, or undefined when the home already has it or something newer. */
+/** The version `installCli` would install from `source`, or undefined when `home` has it or a newer one. */
 export function pendingInstall(source: string, home: string): CliVersion | undefined {
   const incoming = readVersion(source);
   if (!incoming) throw new Error(`${path.join(source, VERSION_FILE)} is missing; this CLI is not a built bundle`);
@@ -81,7 +81,7 @@ export interface InstallResult {
   version: CliVersion;
 }
 
-/** Copies the bundle in `source` to `target` under a temporary name and renames it into place, so `target` is never half there. */
+/** Copies the bundle in `source` to `target` through a temporary name, so `target` is never half copied. */
 function copyBundle(source: string, target: string): void {
   const temporary = `${target}.tmp-${process.pid}`;
   rmSync(temporary, { recursive: true, force: true });

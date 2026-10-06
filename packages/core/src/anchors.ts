@@ -54,7 +54,7 @@ function declarationBodies(anchor: Node): Set<number> {
   return skipped;
 }
 
-/** An arrow function whose body is not a block, or a Kotlin function whose body starts with something other than a block. */
+/** An arrow function whose body is not a block, or a Kotlin function whose body does not start with one. */
 function isExpressionBody(declaration: Node, body: Node): boolean {
   if (declaration.type === "arrow_function") return body.type !== "statement_block";
   return body.type === "function_body" && body.namedChild(0)?.type !== "block";
@@ -89,7 +89,7 @@ function isCloser(node: Node | null): boolean {
   return !!node && !node.isNamed && (node.type === ")" || node.type === "]" || node.type === "}");
 }
 
-/** A lone identifier parameter of an arrow function, serialized without its parentheses so `(x) => …` and `x => …` match. */
+/** A lone identifier parameter of an arrow function, without its parentheses, so `(x) => …` and `x => …` match. */
 function loneArrowParameter(node: Node, children: Node[]): string | undefined {
   if (node.type !== "formal_parameters" || node.parent?.type !== "arrow_function") return undefined;
   const named = children.filter((c) => c.isNamed);
