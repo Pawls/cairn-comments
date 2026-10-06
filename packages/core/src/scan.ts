@@ -3,7 +3,7 @@ import { DETECTORS, type Detector, type DetectorInput } from "./detectors.js";
 import { languageForPath, type LanguageSpec } from "./languages.js";
 import { applySplices, dominantEol, lineIndexAt, splitLines, type Line, type Splice } from "./lines.js";
 import { freshId } from "./ids.js";
-import { LITERAL_KEY, stringStatementAt } from "./literals.js";
+import { LITERAL_KEY, stringStatementAt, type StringStatement } from "./literals.js";
 import { ID_PATTERN, escapeRegExp } from "./markers.js";
 import { findComments, parsesCleanly, type CommentNode } from "./parser.js";
 import { normalizeBody, type Sidecar } from "./sidecar.js";
@@ -342,6 +342,48 @@ function runsOf(flags: boolean[]): number[][] {
   return runs;
 }
 
+/** How many times each unit occurs across `comments`. */
+function unitCounts(comments: ScannedComment[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const c of comments) {
+    for (const unit of unitsOf(c)) counts.set(unit, (counts.get(unit) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/** Whether `counts` still holds a copy of `unit`; that copy is used up. */
+function takeUnit(counts: Map<string, number>, unit: string): boolean {
+  const n = counts.get(unit) ?? 0;
+  if (n) counts.set(unit, n - 1);
+  return n > 0;
+}
+
+/**
+ * Each run of `fresh` lines in the line-comment group `c` as a comment of its own. Blank
+ * lines at a run's ends stay out, and a run of only blank lines is dropped.
+ */
+function freshRuns(c: ScannedComment, fresh: boolean[]): ScannedComment[] {
+  const lines = c.text.split("\n");
+  const out: ScannedComment[] = [];
+  for (const run of runsOf(fresh)) {
+    const rows = trimBlankEnds(run, (i) => !lines[i]);
+    if (!rows.length) continue;
+    const text = rows.map((i) => lines[i]).join("\n");
+    const spans = rows.map((i) => c.spans[i]!);
+    out.push({
+      ...c,
+      start: spans[0]!.start,
+      end: spans.at(-1)!.end,
+      line: c.line + rows[0]!,
+      endLine: c.line + rows.at(-1)!,
+      text,
+      fingerprint: fingerprintOf(text),
+      spans,
+    });
+  }
+  return out;
+}
+
 /**
  * Unprotected comments in `source` that `baseline` (the same file as last staged) does
  * not have: what `tag` turns into sigil comments. A line comment is matched line by line,
@@ -350,42 +392,14 @@ function runsOf(flags: boolean[]): number[][] {
  * duplicated comment is new once.
  */
 export async function newComments(path: string, source: string, baseline: string): Promise<ScannedComment[]> {
-  const known = new Map<string, number>();
-  for (const c of await analyzeSource(path, baseline, { detectors: [] })) {
-    for (const unit of unitsOf(c)) known.set(unit, (known.get(unit) ?? 0) + 1);
-  }
-  const seen = (unit: string): boolean => {
-    const n = known.get(unit) ?? 0;
-    if (n) known.set(unit, n - 1);
-    return n > 0;
-  };
-
+  const known = unitCounts(await analyzeSource(path, baseline, { detectors: [] }));
   const out: ScannedComment[] = [];
   for (const c of await analyzeSource(path, source, { detectors: [] })) {
-    const fresh = unitsOf(c).map((u) => !seen(u));
+    // Every unit takes its copy, a protected comment's included, before the comment is judged.
+    const fresh = unitsOf(c).map((u) => !takeUnit(known, u));
     if (c.protected || !fresh.some(Boolean)) continue;
-    if (fresh.every(Boolean)) {
-      out.push(c);
-      continue;
-    }
-    // Runs of new lines inside an existing group become comments of their own.
-    const lines = c.text.split("\n");
-    for (const run of runsOf(fresh)) {
-      const rows = trimBlankEnds(run, (i) => !lines[i]);
-      if (!rows.length) continue;
-      const text = rows.map((i) => lines[i]).join("\n");
-      const spans = rows.map((i) => c.spans[i]!);
-      out.push({
-        ...c,
-        start: spans[0]!.start,
-        end: spans.at(-1)!.end,
-        line: c.line + rows[0]!,
-        endLine: c.line + rows.at(-1)!,
-        text,
-        fingerprint: fingerprintOf(text),
-        spans,
-      });
-    }
+    if (fresh.every(Boolean)) out.push(c);
+    else out.push(...freshRuns(c, fresh));
   }
   return out;
 }
@@ -393,50 +407,54 @@ export async function newComments(path: string, source: string, baseline: string
 /** Classes that only keep scan from proposing a comment; an explicit demote overrides them. */
 const SCAN_ONLY_PROTECTION = new Set<ProtectedClass>(["ticketed-todo", "commented-out-code"]);
 
+/** A demotable Python string statement as the comment a demote converts. */
+function stringComment(string: StringStatement): ScannedComment {
+  const text = string.lines.join("\n");
+  return {
+    start: string.start,
+    end: string.end,
+    line: string.row + 1,
+    endLine: string.endRow + 1,
+    placement: "own-line",
+    style: "string",
+    literal: string.literal,
+    text: normalizeBody(text),
+    fingerprint: fingerprintOf(text),
+    protected: undefined,
+    findings: [],
+    score: 0,
+    spans: [{ start: string.start, end: string.end }],
+    indent: string.indent,
+  };
+}
+
 /**
- * The comment an explicit demote of 1-based `line` would convert, or why there is none:
- * no comment there, a sigil comment already, or a class whose meaning depends on staying
- * in the code (doc, pragma, license, a docstring) or that has no line-sigil form. A Python
- * string statement that is not a docstring counts as a comment here.
+ * The comment an explicit demote of 1-based `line` would convert, or why there is none,
+ * such as no comment there, a sigil comment already, or a class whose meaning depends on
+ * staying in the code (doc, pragma, license, a docstring) or that has no line-sigil form.
+ * A Python string statement that is not a docstring counts as a comment here.
  */
 export async function demoteTarget(path: string, source: string, line: number): Promise<ScannedComment | string> {
   const spec = languageForPath(path);
   if (!spec) return "not a supported language";
   const found = (await analyzeSource(path, source, { detectors: [] })).find((c) => c.line <= line && line <= c.endLine);
-  if (!found) {
-    const string = await stringStatementAt(spec, source, line - 1);
-    if (typeof string === "string") return string;
-    if (string) {
-      const text = string.lines.join("\n");
-      return {
-        start: string.start,
-        end: string.end,
-        line: string.row + 1,
-        endLine: string.endRow + 1,
-        placement: "own-line",
-        style: "string",
-        literal: string.literal,
-        text: normalizeBody(text),
-        fingerprint: fingerprintOf(text),
-        protected: undefined,
-        findings: [],
-        score: 0,
-        spans: [{ start: string.start, end: string.end }],
-        indent: string.indent,
-      };
-    }
-    const row = splitLines(source)[line - 1];
-    const text = row ? source.slice(row.start, row.contentEnd) : "";
-    return text.includes(spec.lineSigil) ? "already an AI comment" : "no comment on this line";
+  if (found) {
+    if (found.protected && !SCAN_ONLY_PROTECTION.has(found.protected)) return `a ${found.protected} comment stays in the code`;
+    return { ...found, protected: undefined };
   }
-  if (found.protected && !SCAN_ONLY_PROTECTION.has(found.protected)) return `a ${found.protected} comment stays in the code`;
-  return { ...found, protected: undefined };
+  const string = await stringStatementAt(spec, source, line - 1);
+  if (typeof string === "string") return string;
+  if (string) return stringComment(string);
+  const row = splitLines(source)[line - 1];
+  const text = row ? source.slice(row.start, row.contentEnd) : "";
+  return text.includes(spec.lineSigil) ? "already an AI comment" : "no comment on this line";
 }
 
 /**
  * Rewrites `comments` as new sigil comments (`<sigil> text`), which `sync` then stamps
- * with ids. Every byte outside the rewritten tokens, including each terminator, is kept;
- * a block comment becomes one sigil line per text line at the block's indent.
+ * with ids. Every byte outside the rewritten tokens, including each terminator, is kept.
+ * An own-line block comment becomes one sigil line per text line at the block's indent; a
+ * trailing one becomes one sigil comment with its lines joined.
  */
 export function convertComments(path: string, source: string, comments: readonly ScannedComment[]): string {
   return convert(path, source, comments, () => {
@@ -450,15 +468,21 @@ export interface DemoteConversion {
   literals: Map<string, string>;
 }
 
+/** Every id written after a sigil in `source`, matched as text, so one inside a string counts too. */
+function sigilIdsIn(path: string, source: string): string[] {
+  const spec = languageForPath(path);
+  if (!spec) return [];
+  const sigilId = new RegExp(`${escapeRegExp(spec.lineSigil)}(${ID_PATTERN})`, "g");
+  return [...source.matchAll(sigilId)].map((m) => m[1]!);
+}
+
 /**
  * `convertComments` for an explicit demote, which can include Python string statements. A
  * string becomes a sigil block stamped with a fresh id (not in `taken`, the sidecar's ids,
  * nor in the source), so its quotes and layout can be recorded on the entry `sync` makes.
  */
 export function convertDemoted(path: string, source: string, comments: readonly ScannedComment[], taken: ReadonlySet<string>): DemoteConversion {
-  const spec = languageForPath(path);
-  const inSource = spec ? [...source.matchAll(new RegExp(`${escapeRegExp(spec.lineSigil)}(${ID_PATTERN})`, "g"))].map((m) => m[1]!) : [];
-  const used = new Set([...taken, ...inSource]);
+  const used = new Set([...taken, ...sigilIdsIn(path, source)]);
   const literals = new Map<string, string>();
   const converted = convert(path, source, comments, (c) => {
     const id = freshId(path, c.text, used);
