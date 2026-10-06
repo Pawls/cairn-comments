@@ -12,9 +12,9 @@
 > runs `npm run bench` within noise of the recorded 3,182 ms; the PR body carries the
 > before/after metrics from § Baseline, including any that got worse and why.
 >
-> **Next:** D8, fix the unterminated-file round trip, test first.
+> **Next:** D5, settle the one Windows `test:vscode` failure and ship; then D6.
 > **Branch:** `deslop-<slice>` per lane (e.g. `deslop-d1`), each off `main` as its own PR.
-> **Lanes:** A: D8 · E: D5→D6
+> **Lanes:** E: D5→D6
 
 - [~~D1 — Core placement~~ — SHIPPED 2026-10-06](#d1)
 - [~~D2 — Core scan, detectors, literals, markers~~ — SHIPPED 2026-10-06](#d2)
@@ -23,7 +23,7 @@
 - [D5 — VS Code extension source](#d5)
 - [D6 — Extension e2e, native harness, scripts](#d6)
 - [~~D7 — Design doc journal voice~~ — SHIPPED 2026-10-06](#d7)
-- [D8 — Unterminated file loses a blank line between comment blocks](#d8)
+- [~~D8 — Unterminated file loses a blank line between comment blocks~~ — SHIPPED 2026-10-06](#d8)
 
 ## Traps
 
@@ -214,21 +214,24 @@ bullet "The recorded CLI lives in a home the tool owns" (whose own text says "bu
 Out of scope: commit history. Slice-code commit subjects stay; rewriting merged history is
 not a cleanup.
 
-### D8 — Unterminated file loses a blank line between comment blocks · Opus 5.5 / high {#d8}
+### ~~D8 — Unterminated file loses a blank line between comment blocks~~ · Opus 5.5 / high — SHIPPED 2026-10-06 {#d8}
 
-**Status:** Not started. A bug D1 found and left alone: the fix changes what `clean` writes into blobs.
-`x = 1\n#~ first\n\n#~ second` (no final newline) strips to `x = 1\n`, because `stripComments` takes the kept
-blank line's terminator, and places back as `x = 1\n#~ first\n#~ second\n`: the blank line is lost and a final
-newline is added. The same file with a final newline round-trips.
+**Status:** Shipped in PR #12. A bug D1 found: `x = 1\n#~ first\n\n#~ second` (no final newline) stripped to
+`x = 1\n` and placed back without the blank line and with a final newline. `stripComments` now leaves an empty
+line's terminator alone, and the sidecar records `eof=none` when no terminator was taken. A build without the
+fix ignores `eof=none` and cleans these files as before, so mixed versions flip such a file under `git
+status`. Over 40,000 generated unterminated files, none that round-trips on the old code fails on the new;
+490 tests pass on Windows and WSL; bench 2,922 ms. Replay counts match `main`, which says little: replay never
+inserts a comment at a file's end.
 **Touches:** `packages/core/src/placement.ts`; `packages/core/test/placement.test.ts`; `docs/design.md` if a
 round-trip rule changes.
 **After:** D1.
 
-- [ ] A failing round-trip test for the unterminated case, committed before the fix, with the red run shown
-- [ ] The fix, keeping every other line's terminator (`applySplices`) and `clean` pure in (path, source)
-- [ ] The property tests and the `autocrlf=true` integration scenarios still pass; say in the PR whether any
+- [x] A failing round-trip test for the unterminated case, committed before the fix, with the red run shown
+- [x] The fix, keeping every other line's terminator (`applySplices`) and `clean` pure in (path, source)
+- [x] The property tests and the `autocrlf=true` integration scenarios still pass; say in the PR whether any
       existing blob's cleaned form changes, and for which inputs
-- [ ] Verify: lint, `npm test` on Windows and WSL, `npm run bench`, `npm run replay -- --repo <path>` with
+- [x] Verify: lint, `npm test` on Windows and WSL, `npm run bench`, `npm run replay -- --repo <path>` with
       counts compared to `main`
 
 Cancel if the fix would change the cleaned form of a file that round-trips today; report the case instead.
@@ -238,6 +241,10 @@ Cancel if the fix would change the cleaned form of a file that round-trips today
 - **`ScannedComment` as a union on `style`** (from D2). `literal` is set only when `style === "string"`; a
   union would remove the `c.literal!` in `convertDemoted`. It changes an exported type, so it waits until no
   lane is open.
+- **CRLF lost when the stripped file has no terminator at all** (from D8; on `main` before it too). With one
+  unterminated code line, or no code, placed comments fall back to LF: `#~ note\r\npass` comes back as
+  `#~ note\npass`. design.md § Known gaps covers only the comment-only file. The fix records the comment's own
+  terminator, which is new sidecar metadata, so it is a slice of its own, test first.
 - **A root `.prettierrc` (print width 120) and a format check** (from D4), so the wrapping holds. The owner
   decides; nothing is added until then.
 - **Stale lines in `docs/plans/v1.md`** (from D7 and its review): line 30 says `v1` carries every slice and
