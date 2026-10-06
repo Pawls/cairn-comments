@@ -869,8 +869,9 @@ heading and the second branch's `<!-- ... -->` metadata line read back as body t
   keeps no terminator, so placing it back uses LF. Any code line in the file avoids it.
 - **Comments on lines a formatter joins.** A comment anchored to a node that
   starts its own line inside an expression (an argument on its own line) does not place
-  once a formatter joins that line into the statement; the entry is kept. A14's
-  fallbacks cover it.
+  once a formatter joins that line into the statement; the entry is kept as an orphan.
+  The hashes ignore whitespace, so the function still matches its `body` and the
+  statement-diff fallback (§ Anchoring, "When it is placed") never runs.
 - **Comments in module-level callbacks orphan on any edit to the callback.**
   A test's `it("...", () => { ... })` is not a scope, so a comment inside it anchors at
   module level to a node inside the call, and the call's hash covers the whole callback
