@@ -12,13 +12,13 @@
 > runs `npm run bench` within noise of the recorded 3,182 ms; the PR body carries the
 > before/after metrics from § Baseline, including any that got worse and why.
 >
-> **Next:** D1, deslop `placement.ts` and its tests.
+> **Next:** D4, deslop the CLI.
 > **Branch:** `deslop-<slice>` per lane (e.g. `deslop-d1`), each off `main` as its own PR.
-> **Lanes:** A: D1 · B: D2 · C: D3 · D: D4 · E: D5→D6 · F: D7
+> **Lanes:** A: D1 · D: D4 · E: D5→D6 · F: D7
 
 - [D1 — Core placement](#d1)
-- [D2 — Core scan, detectors, literals, markers](#d2)
-- [D3 — Core remainder](#d3)
+- [~~D2 — Core scan, detectors, literals, markers~~ — SHIPPED 2026-10-06](#d2)
+- [~~D3 — Core remainder~~ — SHIPPED 2026-10-06](#d3)
 - [D4 — CLI](#d4)
 - [D5 — VS Code extension source](#d5)
 - [D6 — Extension e2e, native harness, scripts](#d6)
@@ -72,6 +72,8 @@ index; no plan-slice ids appear in code. Totals per slice, source / tests:
 ### D1 — Core placement · Opus 5.5 / high {#d1}
 
 **Status:** Not started. The largest module, and it runs inside `clean`.
+**Note (from D2):** `stringStatementAt`'s refusal reasons are mostly tested through `demoteTarget` in
+`promote.test.ts`; the two that had no test ("sharing its line", "empty string") are pinned in `scan.test.ts`.
 **Touches:** `packages/core/src/placement.ts`; `packages/core/test/{placement,tag,promote,normalization}.test.ts`.
 **After:** none.
 
@@ -88,35 +90,40 @@ index; no plan-slice ids appear in code. Totals per slice, source / tests:
 
 Cancel a split if its equivalence cannot be argued line by line; leave the code and say why.
 
-### D2 — Core scan, detectors, literals, markers · Opus 5.5 / medium {#d2}
+### ~~D2 — Core scan, detectors, literals, markers~~ · Opus 5.5 / medium — SHIPPED 2026-10-06 {#d2}
 
-**Status:** Not started. `scan.corpus.test.ts` pins each detector's score.
+**Status:** Shipped in PR #7. `newComments`, `demoteTarget`, and `stringStatementAt` are split by phase (worst
+remaining score 13, `convert`, unchanged); eleven long regexes are built from named lists, with `.source` and
+`.flags` shown identical. 446 tests pass on Windows and WSL, corpus scores did not move, bench 2,921 ms.
+`literals.ts` non-null assertions went from 12 to 13, because two phases each read `string.child(0)!`.
 **Touches:** `packages/core/src/{scan,detectors,literals,markers}.ts`; `packages/core/test/{scan,scan.corpus,markers,backtracking}.test.ts`.
 **After:** none.
 
-- [ ] Metrics re-run and recorded
-- [ ] Comment pass as in D1; the detector descriptions checked against the table in
+- [x] Metrics re-run and recorded
+- [x] Comment pass as in D1; the detector descriptions checked against the table in
       design.md § Scan detectors (rule 125)
-- [ ] `newComments` and `stringStatementAt` split by phase; the 40 non-null assertions
+- [x] `newComments` and `stringStatementAt` split by phase; the 40 non-null assertions
       reviewed (keep the ones `noUncheckedIndexedAccess` forces)
-- [ ] Verify: lint, `npm test` with `scan.corpus.test.ts` unchanged, `npm run bench`
+- [x] Verify: lint, `npm test` with `scan.corpus.test.ts` unchanged, `npm run bench`
       (`literals.ts` and `markers.ts` run in `clean`), the backtracking timing tests green
-- [ ] `## Skill notes` and `## Plan notes` in the PR body
+- [x] `## Skill notes` and `## Plan notes` in the PR body
 
 Cancel any change that moves a corpus score: that is a detector change, not a deslop.
 
-### D3 — Core remainder · Sonnet 5.5 / high {#d3}
+### ~~D3 — Core remainder~~ · Sonnet 5.5 / high — SHIPPED 2026-10-06 {#d3}
 
-**Status:** Not started. Small modules; the risk is `owner.ts` (deletion needs the seen record).
-**Touches:** `packages/core/src/{anchors,owner,merge,sidecar,ids,home,ignore,lines,languages,parser,index,brand}.ts`; `packages/core/test/{owner,merge,sidecar,home}.test.ts`.
+**Status:** Shipped in PR #8. `parseSidecar`, `mergeSidecars`, `carryComments`, `promoteShown`, and `installCli`
+are split by phase, every function scoring 9 or under; 29 pinning tests were added first. 472 tests pass on
+Windows and WSL. No bench: `lines.ts` changed in comments only. `index.ts` is untouched.
+**Touches:** `packages/core/src/{anchors,owner,merge,sidecar,ids,home,ignore,lines,languages,parser,index,brand}.ts`; `packages/core/test/{owner,merge,sidecar,home,ids,ignore}.test.ts` (`ids` and `ignore` are new).
 **After:** none.
 
-- [ ] Metrics re-run and recorded
-- [ ] Comment pass as in D1
-- [ ] `carryComments`, `parseSidecar`, `mergeSidecars` read for phase splits and rule 13
-- [ ] `index.ts` exports unchanged (Traps)
-- [ ] Verify: lint, `npm test`, `npm run bench` if `lines.ts` changed
-- [ ] `## Skill notes` and `## Plan notes` in the PR body
+- [x] Metrics re-run and recorded
+- [x] Comment pass as in D1
+- [x] `carryComments`, `parseSidecar`, `mergeSidecars` read for phase splits and rule 13
+- [x] `index.ts` exports unchanged (Traps)
+- [x] Verify: lint, `npm test`, `npm run bench` if `lines.ts` changed
+- [x] `## Skill notes` and `## Plan notes` in the PR body
 
 ### D4 — CLI · Opus 5.5 / medium {#d4}
 
@@ -170,6 +177,10 @@ Cancel any change that moves a corpus score: that is a detector change, not a de
 
 **Status:** Not started. `design.md` cites v1 slice ids seven times ("built in v1 A17",
 "the A7 normalization", "fired A14's kill criterion").
+**Note (from D2):** § Known gaps still says "A14's fallbacks".
+**Note (from D3):** core comments cite these titles, which stay or are repointed together: § Promote and
+demote; § Anchoring "Who saw it" and "Renames"; § Staleness "Normalization"; § Sidecar merges; § Packaging,
+bullet "The recorded CLI lives in a home the tool owns" (whose own text says "built in v1 A17"); § Naming.
 **Touches:** `docs/design.md`, `AGENTS.md`, `README.md`, `packages/*/README.md`.
 **After:** none.
 
@@ -177,9 +188,16 @@ Cancel any change that moves a corpus score: that is a detector change, not a de
       the point (a decision record); hedge words checked (rule 133)
 - [ ] Section titles unchanged unless every citation in code and docs is updated (Traps)
 - [ ] `deslop-prose` pass over the edited sections; claims unchanged
-- [ ] Verify: `git grep -n -E '\b[AB][0-9]{1,2}\b' docs/design.md AGENTS.md README.md` shows
+- [ ] Verify: `git grep -n -E '\b[AB][0-9]{1,2}\b' docs/design.md AGENTS.md README.md packages/*/README.md`
+      shows
       only intended hits; every `design.md §` citation in the tree resolves
 - [ ] `## Skill notes` and `## Plan notes` in the PR body
 
 Out of scope: commit history. Slice-code commit subjects stay; rewriting merged history is
 not a cleanup.
+
+## Follow-ups outside these slices
+
+- **`ScannedComment` as a union on `style`** (from D2). `literal` is set only when `style === "string"`; a
+  union would remove the `c.literal!` in `convertDemoted`. It changes an exported type, so it waits until no
+  lane is open.
