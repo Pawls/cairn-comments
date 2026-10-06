@@ -91,6 +91,13 @@ describe("sidecar", () => {
     expect(normalizeBody("\n \n")).toBe("");
   });
 
+  it("drops the metadata of the earlier copy of a duplicated heading, even when the later copy has none", () => {
+    const earlierHasMeta = parseSidecar("## a1b2\n<!-- by=codex -->\nours\n\n## a1b2\ntheirs\n");
+    expect(earlierHasMeta.entries).toEqual([{ id: "a1b2", meta: new Map(), body: "theirs" }]);
+    const laterHasMeta = parseSidecar("## a1b2\nours\n\n## a1b2\n<!-- by=cursor -->\ntheirs\n");
+    expect(laterHasMeta.entries).toEqual([{ id: "a1b2", meta: new Map([["by", "cursor"]]), body: "theirs" }]);
+  });
+
   it("keeps the later copy of a heading duplicated by a union merge, in the earlier position", () => {
     const sidecar = parseSidecar("## a1b2\nours\n\n## c3d4\nother\n\n## a1b2\ntheirs\n");
     expect(sidecar.entries.map((e) => [e.id, e.body])).toEqual([
