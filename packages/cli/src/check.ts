@@ -154,8 +154,11 @@ async function followGoneSources(root: string, index: Index, gone: string[], tra
   const renames = staged ? stagedRenames(root) : undefined;
   const indexed = new Set(tracked);
   // A rename target may already have a sidecar, because sync recorded the comments shown in
-  // its file; applying the fix merges the old entries into it.
-  const candidates = renames ? managedFiles(root, [...renames.values()]) : managedFiles(root, tracked).filter((f) => !indexed.has(sidecarPathFor(f)));
+  // its file; applying the fix merges the old entries into it. Outside a commit, the
+  // candidates are the files without a tracked sidecar.
+  const candidates = renames
+    ? managedFiles(root, [...renames.values()])
+    : managedFiles(root, tracked).filter((f) => !indexed.has(sidecarPathFor(f)));
   index.load(candidates);
   const report: CheckReport = { problems: [], fixes: [] };
   const claimed = new Set<string>();
@@ -180,9 +183,11 @@ function reportGone(report: CheckReport, sidecar: string, entries: SidecarEntry[
   }
 }
 
+type Unplaced = Extract<Problem, { kind: "unplaced" }>;
+
 /** Entries of `sidecars` that no longer place in their source's blob. */
-async function unplacedEntries(index: Index, sidecars: Iterable<string>): Promise<Extract<Problem, { kind: "unplaced" }>[]> {
-  const found: Extract<Problem, { kind: "unplaced" }>[] = [];
+async function unplacedEntries(index: Index, sidecars: Iterable<string>): Promise<Unplaced[]> {
+  const found: Unplaced[] = [];
   for (const sidecar of sidecars) {
     const source = sourceOf(sidecar);
     const text = index.text(source);
@@ -223,26 +228,27 @@ function sortProblems(problems: Problem[]): Problem[] {
   });
 }
 
+/** The working copy of `sidecar`, read once and then edited in `working`. */
+async function workingSidecar(root: string, working: Map<string, Sidecar>, sidecar: string): Promise<Sidecar> {
+  const cached = working.get(sidecar);
+  if (cached) return cached;
+  const read = await readSidecar(root, sourceOf(sidecar));
+  working.set(sidecar, read);
+  return read;
+}
+
 /** Edits the working sidecars (falling back to the staged entry) and stages every one it touched. */
 async function applyFixes(root: string, fixes: Fix[], staged: (sidecar: string) => Sidecar): Promise<void> {
   if (!fixes.length) return;
   const working = new Map<string, Sidecar>();
-  const get = async (sidecar: string) => {
-    let s = working.get(sidecar);
-    if (!s) {
-      s = await readSidecar(root, sourceOf(sidecar));
-      working.set(sidecar, s);
-    }
-    return s;
-  };
   for (const fix of fixes) {
-    const from = await get(fix.from);
+    const from = await workingSidecar(root, working, fix.from);
     const entry = from.entries.find((e) => e.id === fix.id) ?? staged(fix.from).entries.find((e) => e.id === fix.id);
     from.entries = from.entries.filter((e) => e.id !== fix.id);
-    if (fix.kind === "relocated" && entry) {
-      const to = await get(fix.to);
-      if (!to.entries.some((e) => e.id === fix.id && e.body)) to.entries = [...to.entries.filter((e) => e.id !== fix.id), entry];
-    }
+    if (fix.kind !== "relocated" || !entry) continue;
+    const to = await workingSidecar(root, working, fix.to);
+    // An entry the target's own sync already recorded with a body wins over the moved one.
+    if (!to.entries.some((e) => e.id === fix.id && e.body)) to.entries = [...to.entries.filter((e) => e.id !== fix.id), entry];
   }
   for (const [sidecar, content] of working) writeSidecar(root, sourceOf(sidecar), content);
   const tracked = new Set(trackedFiles(root));
