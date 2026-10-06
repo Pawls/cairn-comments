@@ -569,8 +569,8 @@ Implemented in `packages/core/src/placement.ts` (`stripComments` is the clean fi
 - **When it is placed.** Smudge (`placeComments`, through `locate`) places an entry
   exactly when its scope resolves, its node is found, and, in a function scope, the
   function hashes to `body`: moving the function, editing its siblings, or reformatting
-  the file (whitespace, quotes, redundant parentheses; § Staleness, "Normalization") keeps every
-  comment as it was. Otherwise, in order:
+  the file (whitespace, quotes, redundant parentheses; § Staleness, "Normalization")
+  keeps every comment as it was. Otherwise, in order:
   - the function changed: the recorded `stmts` are diffed against the current ones (a
     longest common subsequence). A comment whose statement is in an unchanged run goes
     back on its node, shown behind `[stale?]`: the declaration it lives in changed, so it
