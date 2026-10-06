@@ -515,9 +515,19 @@ placements and `confirmPlaced` (`packages/core/src/owner.ts`) clears them. The C
   `parenthesized_expression` is transparent), parentheses around a lone arrow-function
   parameter, quote style and string-prefix case (`U'q'` equals `"q"`), and number
   spelling (`0XAB`/`0xab`, `.5`/`0.5`, `1.50`/`1.5`). Seventeen formatter-only pairs
-  modeled on black, prettier, and dotnet format pin it, beside thirteen real changes;
+  modeled on black, prettier, and dotnet format pin it, beside eighteen real changes;
   neither formatter is installed here, so the pairs are hand-written from their
   documented rewrites.
+- **String statements.** In Python, a statement that is one string and nothing else
+  counts for nothing in a hash that contains it, docstrings included. An f-string still
+  counts, since it runs code, and so does a concatenation (`"a" "b"`). Demote and promote
+  move such strings in and out of a function (§ Promote and demote), and a docstring edit
+  leaves the code as it was, so neither turns the comments around them stale. The hashed
+  node itself still counts, so a comment right above a string tells one string from
+  another. Other languages keep every string statement: JavaScript's `"use strict"`
+  changes what the code does. Eight pairs in `normalization.test.ts` pin the rule. An
+  entry recorded before it, in a function holding a string statement, places stale once
+  and `confirm` clears it; the earlier hash is not accepted as well.
 - **The tag.** `placeComments` writes `[stale?]` and a space before a stale body.
   `findMarkers` strips the tag from any comment with an id, so `stripComments`, `sync`,
   and the id rules never see it; a new comment (no id) that starts with it keeps it as

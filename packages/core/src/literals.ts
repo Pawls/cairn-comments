@@ -71,6 +71,21 @@ function readLiteral(opener: string, content: string, indent: string): { lines: 
   return { lines: lines.map((l) => l.trimEnd()), literal: parts.join(",") };
 }
 
+/** Whether `string` is an f-string, whose replacement fields run code. */
+function isFString(string: Node): boolean {
+  return /f/i.test(string.child(0)!.text);
+}
+
+/**
+ * Whether `node` is a Python statement that is one string and does nothing: any but an
+ * f-string, docstrings included. The staleness hashes leave these out (design.md § Staleness).
+ */
+export function isInertStringStatement(node: Node): boolean {
+  if (node.type !== "expression_statement" || node.namedChildCount !== 1) return false;
+  const string = node.namedChild(0)!;
+  return string.type === "string" && !isFString(string);
+}
+
 /** The expression statement covering 0-based `row` that holds one string and nothing else. */
 function bareStringAt(root: Node, row: number): { statement: Node; string: Node } | undefined {
   const statement = root
@@ -85,7 +100,7 @@ function bareStringAt(root: Node, row: number): { statement: Node; string: Node 
 function statementRefusal(statement: Node, string: Node): string | undefined {
   const siblings = statementsOf(statement.parent!);
   if (isDocstring(statement, siblings)) return "a docstring stays in the code";
-  if (/f/i.test(string.child(0)!.text)) return "an f-string runs code, so it stays in the code";
+  if (isFString(string)) return "an f-string runs code, so it stays in the code";
   if (siblings.length === 1) return "the only statement in its block stays in the code";
   return undefined;
 }
