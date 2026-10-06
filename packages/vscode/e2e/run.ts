@@ -40,6 +40,9 @@ const REVIEW_FILES: Record<string, string> = {
     "",
   ].join("\n"),
   "src/util.ts": ["export function add(a: number, b: number) {", "  // 🚀 Add the numbers", "  return a + b;", "}", ""].join("\n"),
+  // Same as the overlay fixture: the tests drive git themselves, and VS Code's built-in git
+  // extension would otherwise watch and refresh the repository beside them.
+  ".vscode/settings.json": '{\n  "git.enabled": false\n}\n',
 };
 
 const writeReviewFiles = (repo: string) => {
