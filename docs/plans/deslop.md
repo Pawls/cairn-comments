@@ -12,14 +12,14 @@
 > runs `npm run bench` within noise of the recorded 3,182 ms; the PR body carries the
 > before/after metrics from § Baseline, including any that got worse and why.
 >
-> **Next:** D4, deslop the CLI.
+> **Next:** D8, fix the unterminated-file round trip, test first.
 > **Branch:** `deslop-<slice>` per lane (e.g. `deslop-d1`), each off `main` as its own PR.
-> **Lanes:** A: D8 · D: D4 · E: D5→D6 · F: D7
+> **Lanes:** A: D8 · E: D5→D6 · F: D7
 
 - [~~D1 — Core placement~~ — SHIPPED 2026-10-06](#d1)
 - [~~D2 — Core scan, detectors, literals, markers~~ — SHIPPED 2026-10-06](#d2)
 - [~~D3 — Core remainder~~ — SHIPPED 2026-10-06](#d3)
-- [D4 — CLI](#d4)
+- [~~D4 — CLI~~ — SHIPPED 2026-10-06](#d4)
 - [D5 — VS Code extension source](#d5)
 - [D6 — Extension e2e, native harness, scripts](#d6)
 - [D7 — Design doc journal voice](#d7)
@@ -40,6 +40,12 @@
   reads of the sidecar or the seen record is a behavior change, not a refactor.
 - **Untested code gets pinned before it moves** (test first). Commit the pin, then the
   refactor, so the diff shows the pin passing on the old code.
+- **The repository has no formatter.** D4 wrapped code at 120 characters with
+  `npx -y prettier@3 --print-width 120 --write <files>` and proved it changed no code by bundling each file
+  with `esbuild --minify --packages=external` before and after and comparing bytes. A lane that wraps does
+  the same, in a commit of its own. Expected-output strings and regex literals in tests stay on one line.
+- **Converting a `forEach` callback to a `for` loop can push the parent over the bar**, because the callback
+  was scored as its own function. Re-score after the change (D1 and D3 both hit this).
 
 ## Feeding the skill
 
@@ -129,23 +135,28 @@ Windows and WSL. No bench: `lines.ts` changed in comments only. `index.ts` is un
 - [x] Verify: lint, `npm test`, `npm run bench` if `lines.ts` changed
 - [x] `## Skill notes` and `## Plan notes` in the PR body
 
-### D4 — CLI · Opus 5.5 / medium {#d4}
+### ~~D4 — CLI~~ · Opus 5.5 / medium — SHIPPED 2026-10-06 {#d4}
 
-**Status:** Not started.
+**Status:** Shipped in PR #11. `applyReview` and the filter handshake are split by phase (worst score 13 to
+11); CLI code is wrapped at 120 characters, with minified bundles byte-identical before and after. 488 tests
+pass on Windows and WSL; bench 3,162 ms (process-to-off ratio 3.37, against 3.20 and 3.32 for D2 and D1).
+One behavior change, with its test: the `refresh` usage text now names all four hooks `init` installs. Two
+unreferenced `git.ts` exports (`grepTokens`, `ignoredByPattern`) are removed. `roundtrip.test.ts` and
+`process.test.ts` stay as they are: their `it` blocks share repository state, so none stands alone.
 **Touches:** `packages/cli/src/*.ts`; `packages/cli/test/*.ts` (harness included).
 **After:** none.
 
-- [ ] Metrics re-run and recorded
-- [ ] Comment pass as in D1; flags named in comments checked against the parser in `main.ts`
+- [x] Metrics re-run and recorded
+- [x] Comment pass as in D1; flags named in comments checked against the parser in `main.ts`
       (rule 107)
-- [ ] `main.ts` dispatch read against rule 11; `init.ts` (21 long lines), `check.ts`, and
+- [x] `main.ts` dispatch read against rule 11; `init.ts` (21 long lines), `check.ts`, and
       `scan.ts`'s `applyReview` read for phase splits
-- [ ] Long test bodies (`roundtrip.test.ts` 211 lines, `process.test.ts` 143) split into
+- [x] Long test bodies (`roundtrip.test.ts` 211 lines, `process.test.ts` 143) split into
       named `it` blocks only where each case stands alone; assertions unchanged
-- [ ] Every rewrite of a working file still ends with `restat` (AGENTS.md)
-- [ ] Verify: lint, `npm test` (bundle rebuilt), `npm run bench` if `process.ts`, `pktline.ts`,
+- [x] Every rewrite of a working file still ends with `restat` (AGENTS.md)
+- [x] Verify: lint, `npm test` (bundle rebuilt), `npm run bench` if `process.ts`, `pktline.ts`,
       or `git.ts` changed; WSL run
-- [ ] `## Skill notes` and `## Plan notes` in the PR body
+- [x] `## Skill notes` and `## Plan notes` in the PR body
 
 ### D5 — VS Code extension source · Opus 5.5 / high {#d5}
 
@@ -224,3 +235,10 @@ Cancel if the fix would change the cleaned form of a file that round-trips today
 - **`ScannedComment` as a union on `style`** (from D2). `literal` is set only when `style === "string"`; a
   union would remove the `c.literal!` in `convertDemoted`. It changes an exported type, so it waits until no
   lane is open.
+- **A root `.prettierrc` (print width 120) and a format check** (from D4), so the wrapping holds. The owner
+  decides; nothing is added until then.
+- **Stale lines in `docs/plans/v1.md`** (from D7 and its review): line 30 says `v1` carries every slice and
+  merges to `main` once, but v1 merged as PR #1 on 2026-09-30 and later slices landed by PR; "Next up" at
+  line 33 still lists A9 and A17; line 117 cites "design.md § Rules settled in A3" (now § Languages); line 358
+  cites "Hiding marker lines outright" (now "Rejected: hiding lines by folding"); line 547 cites "§ Scan"
+  (now § Scan detectors).
