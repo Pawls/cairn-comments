@@ -1,5 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { DETECTORS, analyzeSource, appendIgnore, convertComments, findMarkers, languageForPath, parseIgnore, scanSource } from "../src/index.js";
+import {
+  DETECTORS,
+  analyzeSource,
+  appendIgnore,
+  convertComments,
+  demoteTarget,
+  findMarkers,
+  fingerprintOf,
+  languageForPath,
+  newComments,
+  parseIgnore,
+  scanSource,
+} from "../src/index.js";
 
 const unprotected = async (path: string, source: string) => (await analyzeSource(path, source)).filter((c) => !c.protected);
 const convertAll = async (path: string, source: string) => convertComments(path, source, await unprotected(path, source));
@@ -77,6 +89,49 @@ describe("convertComments", () => {
     expect(await unprotected("a.js", source)).toEqual([]);
     const [doc] = await analyzeSource("a.js", source);
     expect(() => convertComments("a.js", source, [doc!])).toThrow(/protected comment \(doc\)/);
+  });
+});
+
+describe("newComments runs inside an existing group", () => {
+  it("drops a run of new blank lines and trims blank lines off each run's ends", async () => {
+    expect(await newComments("a.py", "# a\n#\n# b\n", "# a\n# b\n")).toEqual([]);
+
+    const source = "x = 1\n# a\n#\n# new one\n#\n# b\n# new two\n";
+    const found = await newComments("a.py", source, "x = 1\n# a\n# b\n");
+    expect(found.map((c) => ({ text: c.text, line: c.line, endLine: c.endLine, start: c.start, end: c.end, spans: c.spans }))).toEqual([
+      { text: "new one", line: 4, endLine: 4, start: 12, end: 21, spans: [{ start: 12, end: 21 }] },
+      { text: "new two", line: 7, endLine: 7, start: 28, end: 37, spans: [{ start: 28, end: 37 }] },
+    ]);
+    expect(found.map((c) => c.fingerprint)).toEqual([fingerprintOf("new one"), fingerprintOf("new two")]);
+  });
+});
+
+describe("demoteTarget on a Python string statement", () => {
+  it("describes the string as a comment with its quotes in `literal`", async () => {
+    const source = 'def f():\n    x = 1\n    r"""Note\n    about y."""\n    y = 2\n';
+    expect(await demoteTarget("a.py", source, 4)).toEqual({
+      start: 23,
+      end: 47,
+      line: 3,
+      endLine: 4,
+      placement: "own-line",
+      style: "string",
+      literal: "triple-double,prefix-r,first-line,last-line",
+      text: "Note\nabout y.",
+      fingerprint: fingerprintOf("Note\nabout y."),
+      protected: undefined,
+      findings: [],
+      score: 0,
+      spans: [{ start: 23, end: 47 }],
+      indent: "    ",
+    });
+  });
+
+  it("refuses a string that shares its line with code, and an empty one", async () => {
+    expect(await demoteTarget("a.py", 'def f():\n    x = 1\n    "a"; y = 2\n    z = 3\n', 3)).toBe(
+      "a string sharing its line with code or a comment stays in the code",
+    );
+    expect(await demoteTarget("a.py", 'def f():\n    x = 1\n    """   """\n    y = 2\n', 3)).toBe("an empty string has nothing to demote");
   });
 });
 
