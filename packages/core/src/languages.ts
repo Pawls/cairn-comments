@@ -24,6 +24,26 @@ export interface LanguageSpec {
   namespaceTypes: readonly string[];
 }
 
+/** The function node types the JavaScript, TypeScript, and TSX grammars share. */
+const ECMASCRIPT_FUNCTIONS = [
+  "function_declaration",
+  "generator_function_declaration",
+  "method_definition",
+  "function_expression",
+  "generator_function",
+  "arrow_function",
+];
+/** The scope-naming node types the TypeScript and TSX grammars share. */
+const TYPESCRIPT_NAMESPACES = [
+  "class_declaration",
+  "abstract_class_declaration",
+  "class",
+  "interface_declaration",
+  "enum_declaration",
+  "internal_module",
+  "module",
+];
+
 export const LANGUAGES: readonly LanguageSpec[] = [
   {
     id: "python",
@@ -42,8 +62,8 @@ export const LANGUAGES: readonly LanguageSpec[] = [
     lineSigil: "//~",
     commentTypes: ["comment"],
     wasm: "tree-sitter-typescript/tree-sitter-typescript.wasm",
-    functionTypes: ["function_declaration", "generator_function_declaration", "method_definition", "function_expression", "generator_function", "arrow_function"],
-    namespaceTypes: ["class_declaration", "abstract_class_declaration", "class", "interface_declaration", "enum_declaration", "internal_module", "module"],
+    functionTypes: ECMASCRIPT_FUNCTIONS,
+    namespaceTypes: TYPESCRIPT_NAMESPACES,
   },
   {
     id: "tsx",
@@ -52,8 +72,8 @@ export const LANGUAGES: readonly LanguageSpec[] = [
     lineSigil: "//~",
     commentTypes: ["comment"],
     wasm: "tree-sitter-typescript/tree-sitter-tsx.wasm",
-    functionTypes: ["function_declaration", "generator_function_declaration", "method_definition", "function_expression", "generator_function", "arrow_function"],
-    namespaceTypes: ["class_declaration", "abstract_class_declaration", "class", "interface_declaration", "enum_declaration", "internal_module", "module"],
+    functionTypes: ECMASCRIPT_FUNCTIONS,
+    namespaceTypes: TYPESCRIPT_NAMESPACES,
   },
   {
     id: "javascript",
@@ -62,7 +82,7 @@ export const LANGUAGES: readonly LanguageSpec[] = [
     lineSigil: "//~",
     commentTypes: ["comment"],
     wasm: "tree-sitter-javascript/tree-sitter-javascript.wasm",
-    functionTypes: ["function_declaration", "generator_function_declaration", "method_definition", "function_expression", "generator_function", "arrow_function"],
+    functionTypes: ECMASCRIPT_FUNCTIONS,
     namespaceTypes: ["class_declaration", "class"],
   },
   {
@@ -99,8 +119,8 @@ export const LANGUAGES: readonly LanguageSpec[] = [
   },
 ];
 
-export function languageForPath(path: string): LanguageSpec | undefined {
-  const lower = path.toLowerCase();
+export function languageForPath(filePath: string): LanguageSpec | undefined {
+  const lower = filePath.toLowerCase();
   return LANGUAGES.find((l) => l.extensions.some((ext) => lower.endsWith(ext)));
 }
 
