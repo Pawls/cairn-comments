@@ -14,7 +14,7 @@
 >
 > **Next:** D9, pin and fix the lost comments on undo after a cut and paste; then D6.
 > **Branch:** `deslop-<slice>` per lane (e.g. `deslop-d1`), each off `main` as its own PR.
-> **Lanes:** E: D9→D6
+> **Lanes:** E: D9→D6 · G: D10
 
 - [~~D1 — Core placement~~ — SHIPPED 2026-10-06](#d1)
 - [~~D2 — Core scan, detectors, literals, markers~~ — SHIPPED 2026-10-06](#d2)
@@ -25,6 +25,7 @@
 - [~~D7 — Design doc journal voice~~ — SHIPPED 2026-10-06](#d7)
 - [~~D8 — Unterminated file loses a blank line between comment blocks~~ — SHIPPED 2026-10-06](#d8)
 - [D9 — Undo after a cut and paste loses the moved comments](#d9)
+- [D10 — Promoting a string comment turns its neighbors stale](#d10)
 
 ## Traps
 
@@ -278,6 +279,32 @@ probably had unsaved changes, which fits the reading.
       `test:vscode` and `test:native` on Windows, then the owner repeats the steps in the installed build
 
 Cancel the fix, keep the tests, and record a known gap if the only way to restore the display is a guess.
+
+### D10 — Promoting a string comment turns its neighbors stale · Opus 5.5 / high {#d10}
+
+**Status:** Not started. Found by the owner (2026-10-06): promoting a `'''` comment inside a method tagged a
+new end-of-line comment in the same method `[stale?]`. The staleness hashes skip comment nodes only
+(`packages/core/src/anchors.ts`), and a promoted Python string comment is a string statement, which is code to
+the hash. So promote, and demote in the other direction, change the function's `body` hash without changing
+what the code does. That cause is read from the code and the owner's steps, not yet shown by a test.
+**Touches:** `packages/core/src/anchors.ts` (and `literals.ts` if its string-statement test is shared);
+`packages/core/test/{normalization,placement,promote}.test.ts`; `docs/design.md` § Staleness.
+**After:** none.
+
+- [ ] A failing test, committed red: a function with a trailing comment and a string comment; promote the
+      string comment; the trailing comment is placed, not stale. The same for demote.
+- [ ] The rule written into design.md § Staleness before the fix, and agreed by the owner: which string
+      statements the hashes ignore (the bare ones promote and demote move; docstrings are a separate question,
+      since they are most functions' first statement) and for which languages
+- [ ] What happens to hashes already recorded: every sidecar entry in a function the rule touches would turn
+      stale on upgrade unless the old hash is still accepted or the entry is re-recorded. Measure how many
+      entries that is on one real repository and choose with the owner
+- [ ] The fix, with the formatter-only and real-change pairs in `normalization.test.ts` still passing and new
+      pairs for the string cases
+- [ ] Verify: lint, `npm test` on Windows and WSL, `npm run bench` (hashing runs on placement), `npm run
+      replay -- --repo <path>` with counts compared to `main` and every difference explained
+
+Cancel if no rule separates a string comment from a string the program uses without guessing.
 
 ## Follow-ups outside these slices
 
