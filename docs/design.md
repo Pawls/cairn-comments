@@ -37,7 +37,7 @@ Committed blob / owner checkout          Agent worktree (smudged)
 | Decision | Choice | Why |
 | --- | --- | --- |
 | Agent view | Real bytes on disk in agent worktrees | Agents touch files through Read, Grep, exact-string Edit, LSP, ast-grep, and shell. Virtualizing all of those per harness does not hold; an Edit whose `old_string` includes text that is not on disk fails. |
-| Anchoring | No markers in committed code; the sidecar records where each comment goes (§ Anchoring). Decided 2026-09-25; marker mode (a `#~a1b2` id left in the code) was removed in v1 A16. | The owner judged that id markers in committed code would stop serious developers from adopting the tool, overlay or not. The earlier reason to keep markers, that zero-trace anchoring meant fuzzy matching, no longer holds: placement is exact per declaration (§ Anchoring, "Rejected: scored fuzzy placement"). |
+| Anchoring | No markers in committed code; the sidecar records where each comment goes (§ Anchoring). Decided 2026-09-25; marker mode (a `#~a1b2` id left in the code) was removed on 2026-09-29. | The owner judged that id markers in committed code would stop serious developers from adopting the tool, overlay or not. The earlier reason to keep markers, that zero-trace anchoring meant fuzzy matching, no longer holds: placement is exact per declaration (§ Anchoring, "Rejected: scored fuzzy placement"). |
 | Pure pointer links (no filter) | Rejected | Every pointer costs tokens on every read, and using a comment costs an extra Read call plus the whole sidecar file. Strictly more tokens than inline whenever comments are used. |
 | Sidecar storage | Tracked markdown under `.agents/comments/`, mirroring source paths | Travels with clones, cloud agents, and PRs; human-readable. Users who want the comments kept on one machine can gitignore the folder; the committed code is the same either way. |
 | Human view | Virtual overlay in VS Code | Files on disk hold only the code. Each comment renders against the site placement reports: a CodeLens above its code line (a trailing one at the end of its line), and a native comment thread with provenance and actions (§ Overlay rendering). |
@@ -526,7 +526,8 @@ placements and `confirmPlaced` (`packages/core/src/owner.ts`) clears them. The C
   unsaved.
 ## Anchoring
 
-Built in v1 A12 for Python and A13 for the other v1 languages; the only model since A16.
+Built for every v1 language on 2026-09-25; the only model since marker mode was removed on
+2026-09-29.
 Implemented in `packages/core/src/placement.ts` (`stripComments` is the clean filter,
 `placeComments` the smudge, `recordComments` the sync). Tests:
 `packages/core/test/placement.test.ts` (including a round-trip property) and
@@ -568,7 +569,7 @@ Implemented in `packages/core/src/placement.ts` (`stripComments` is the clean fi
 - **When it is placed.** Smudge (`placeComments`, through `locate`) places an entry
   exactly when its scope resolves, its node is found, and, in a function scope, the
   function hashes to `body`: moving the function, editing its siblings, or reformatting
-  the file (whitespace, quotes, redundant parentheses; the A7 normalization) keeps every
+  the file (whitespace, quotes, redundant parentheses; § Staleness, "Normalization") keeps every
   comment as it was. Otherwise, in order:
   - the function changed: the recorded `stmts` are diffed against the current ones (a
     longest common subsequence). A comment whose statement is in an unchanged run goes
@@ -584,7 +585,7 @@ Implemented in `packages/core/src/placement.ts` (`stripComments` is the clean fi
   - anything else, including a comment whose own statement was replaced or deleted, is an
     orphan. It is kept in the sidecar, never dropped, and listed by `check --orphans`.
     Moving it to the start of the replacement was built and measured wrong a third of the
-    time ("Measured"), which fired A14's kill criterion.
+    time ("Measured"), so it was dropped.
 - **Renames.** A scope path that no longer resolves is looked for as a rename: the one
   function whose `body` is unchanged (the name is not hashed), else the function whose
   statement-hash set overlaps most by Jaccard index, at least 0.5 and with two statements
@@ -790,11 +791,11 @@ heading and the second branch's `<!-- ... -->` metadata line read back as body t
   empty project, and runs the quickstart with it. The e2e suite also passes against an
   unpacked `.vsix` (`CAIRN_E2E_EXTENSION`), which holds no `node_modules`.
 - **Node 22 or later.** Node 20 left maintenance in April 2026; CI tests 22 on Linux and Windows; 24 is checked locally.
-- **The recorded CLI lives in a home the tool owns** (decided 2026-09-26, built in v1 A17).
+- **The recorded CLI lives in a home the tool owns** (decided 2026-09-26, built 2026-09-29).
   `init` writes an absolute `node "<path>/main.js"` into the filter, merge driver, and
   hooks, and git runs it in every initialized repository whether or not an editor is
   open. A path that disappears makes every commit fail in the pre-commit hook and leaves
-  `status` and `diff` unfiltered. Before A17, `init` recorded wherever the running CLI sat,
+  `status` and `diff` unfiltered. Before that, `init` recorded wherever the running CLI sat,
   and none of the ways to run it gives a path that lasts:
   - The extension's own folder is versioned (`...-vscode-0.1.0`) and deleted on update.
   - `npx` runs from `~/.npm/_npx/<hash>`, a cache npm prunes. Recording `npx cairn-comments`
