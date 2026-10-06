@@ -58,6 +58,8 @@ interface DocState {
   stale: Set<string>;
   /** Whether edits moved the sites since they were placed. */
   tracked: boolean;
+  /** Whether an undo or redo changed the text since then, which can restore code whose comments tracking dropped. */
+  undone?: boolean;
   /** The text and sites before the latest edit, which a cut needs (see `beforeCut`). */
   previous?: { text: string; sites: CommentSite[]; changes: readonly vscode.TextDocumentContentChangeEvent[]; at: number };
   /** The sites a paste edit carries, added if the next edit leaves `text` (see `expectPaste`). */
@@ -82,6 +84,18 @@ interface WantedThread {
   stale: boolean;
   line: number;
   expanded: boolean;
+}
+
+/**
+ * `kept` with the comments placement found and tracking lost added. A tracked comment
+ * keeps its site and stale flag; an added one takes the placement's.
+ */
+function withLost(kept: DocState, placed: readonly CommentSite[], placedStale: ReadonlySet<string>): DocState {
+  const tracked = new Set(kept.sites.map((s) => s.id));
+  const lost = placed.filter((s) => !tracked.has(s.id));
+  const stale = new Set([...kept.stale].filter((id) => tracked.has(id)));
+  for (const site of lost) if (placedStale.has(site.id)) stale.add(site.id);
+  return { ...kept, sites: [...kept.sites, ...lost], stale, undone: false };
 }
 
 /** One end-of-line decoration per line with labels, in the warning color when any of them is stale. */
@@ -125,23 +139,33 @@ export class PlacedView implements vscode.CodeLensProvider, vscode.Disposable {
   /**
    * Whether `document` has sites for its current text. Sites moved by edits stop counting
    * once the document is clean again (saved, reverted, or reloaded after a change on disk):
-   * its text then matches what the anchors describe, so they are placed from those.
+   * its text then matches what the anchors describe, so they are placed from those. After
+   * an undo or redo they stop counting too, so `place` can add the comments tracking lost.
    */
   isCurrent(document: vscode.TextDocument): boolean {
     const state = this.states.get(document.uri.toString());
-    return state?.version === document.version && !(state.tracked && !document.isDirty);
+    return state?.version === document.version && !state.undone && !(state.tracked && !document.isDirty);
   }
 
   /**
    * Places `document`'s comments from their anchors. False when the document changed while
-   * placing, so the result would not describe it.
+   * placing, so the result would not describe it. In a dirty buffer after an undo or redo,
+   * the tracked sites stay and only the comments tracking lost are added (design.md
+   * § Overlay rendering, "Live tracking").
    */
   async place(document: vscode.TextDocument, file: string, sidecar: Sidecar): Promise<boolean> {
     const version = document.version;
     const text = document.getText();
     const placed = await placeComments(file, text, sidecar);
     if (document.version !== version || document.isClosed) return false;
-    this.states.set(document.uri.toString(), { version, text, sites: placed.sites, stale: new Set(placed.stale.map((s) => s.id)), tracked: false });
+    const uri = document.uri.toString();
+    const stale = new Set(placed.stale.map((s) => s.id));
+    const kept = this.states.get(uri);
+    if (kept?.undone && kept.version === version && document.isDirty) {
+      this.states.set(uri, withLost(kept, placed.sites, stale));
+    } else {
+      this.states.set(uri, { version, text, sites: placed.sites, stale, tracked: false });
+    }
     return true;
   }
 
@@ -163,6 +187,7 @@ export class PlacedView implements vscode.CodeLensProvider, vscode.Disposable {
     state.text = event.document.getText();
     state.version = event.document.version;
     state.tracked = true;
+    if (event.reason !== undefined) state.undone = true;
     const pasted = state.pasted;
     state.pasted = undefined;
     if (pasted?.text === state.text) {
