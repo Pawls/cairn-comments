@@ -10,7 +10,8 @@ export function changedSpan(before: string, after: string): { start: number; end
   let start = 0;
   while (start < before.length && start < after.length && before[start] === after[start]) start++;
   let tail = 0;
-  while (tail < before.length - start && tail < after.length - start && before[before.length - 1 - tail] === after[after.length - 1 - tail]) tail++;
+  const maxTail = Math.min(before.length, after.length) - start;
+  while (tail < maxTail && before[before.length - 1 - tail] === after[after.length - 1 - tail]) tail++;
   return { start, end: before.length - tail, text: after.slice(start, after.length - tail) };
 }
 
