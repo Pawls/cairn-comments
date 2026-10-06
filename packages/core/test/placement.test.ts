@@ -95,6 +95,13 @@ describe("stripComments", () => {
   it("takes the terminator before a comment on an unterminated last line", async () => {
     expect(await stripComments("a.py", "x = 1\n#~ end")).toBe("x = 1");
   });
+
+  it("keeps a blank line's terminator when the comment run after it ends an unterminated file", async () => {
+    // Taking it would leave an empty unterminated last line, which is no line at all.
+    expect(await stripComments("a.py", "x = 1\n#~ first\n\n#~ second")).toBe("x = 1\n\n");
+    expect(await stripComments("a.py", "x = 1\r\n\r\n#~ end")).toBe("x = 1\r\n\r\n");
+    expect(await stripComments("a.py", "x = 1\n    \n#~ end")).toBe("x = 1\n    ");
+  });
 });
 
 describe("placeComments after recordComments", () => {
@@ -107,6 +114,22 @@ describe("placeComments after recordComments", () => {
     await expectExact("a.py", "x = 1\n#~ end");
     await expectExact("a.py", "x = 1\r\n#~ end");
     await expectExact("a.py", "x = 1\r\n#~ first\r\n#~a1b2 second\r\n#~c3d4 third");
+  });
+
+  it("restores an unterminated last comment that follows a blank line", async () => {
+    for (const eol of ["\n", "\r\n"]) {
+      const file = (...lines: string[]) => lines.join(eol);
+      await expectExact("a.py", file("x = 1", "#~ first", "", "#~ second"));
+      await expectExact("a.py", file("x = 1", "", "#~ end"));
+      await expectExact("a.py", file("x = 1", "", "", "#~ end"));
+      await expectExact("a.py", file("x = 1", "", "#~ first", "#~ same block"));
+      await expectExact("a.py", file("x = 1", "#~ a", "", "#~ b", "", "#~ c"));
+      await expectExact("a.py", file("x = 1", "# human", "", "#~ end"));
+      await expectExact("a.py", file("x = 1", "    ", "#~ end"));
+      await expectExact("a.py", file("def f():", "    #~ a", "", "    #~ b"));
+      await expectExact("a.py", file("", "#~ only"));
+      await expectExact("a.py", file("#~ a", "", "#~ b"));
+    }
   });
 
   it("keeps the order of blocks that land on one line", async () => {
@@ -653,9 +676,9 @@ describe("round trip property", () => {
 
   it("placeComments(stripComments(x)) restores x after recordComments", async () => {
     await fc.assert(
-      fc.asyncProperty(fc.array(top, { minLength: 1, maxLength: 6 }), fc.constantFrom("\n", "\r\n"), async (blocks, eol) => {
+      fc.asyncProperty(fc.array(top, { minLength: 1, maxLength: 6 }), fc.constantFrom("\n", "\r\n"), fc.boolean(), async (blocks, eol, terminated) => {
         // A file of nothing but AI comments strips to empty, which cannot keep CRLF (design.md § Anchoring).
-        const working = ["import os", ...blocks.flat()].join(eol) + eol;
+        const working = ["import os", ...blocks.flat()].join(eol) + (terminated ? eol : "");
         const { recorded, stripped, placed } = await roundTrip("p.py", working);
         expect(stripped).not.toMatch(/#~ (note|another|trailing)/);
         expect(placed.source).toBe(recorded.source);
