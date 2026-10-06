@@ -228,7 +228,7 @@ describe("changed declarations", () => {
     expect(stale).toEqual(["the write is idempotent", "keyed on order.id"]);
   });
 
-  // Moving it to the start of the replacement was measured wrong a third of the time (design.md § Anchoring).
+  // Moving it to the start of the replacement was wrong in 34% and 38% of replayed moves (design.md § Anchoring).
   it("orphans a comment whose statement was replaced, and keeps the rest of the function's", async () => {
     const { placed, unplaced, stale } = await change(SETTLE_F, (s) => s.replace("ledger.write(order)", "ledger.put(order)"));
     expect(unplaced).toEqual(["the write is idempotent", "keyed on order.id"]);
@@ -610,7 +610,8 @@ describe("anchoring in every language", () => {
     expect(placed.source).toMatch(/export const refund = async \(order: Order\) => \{\n {2}\/\/~[0-9a-z]{4} reverse before notifying\n/);
   });
 
-  // Formatter pairs as in normalization.test.ts, inside a function, so its body hash must survive them too.
+  // Formatter pairs as in normalization.test.ts; the C#, Java, and Kotlin ones sit inside a method, whose body hash
+  // must survive them too.
   const FORMATTER_PAIRS: [string, string, string][] = [
     ["a.ts", "//~ why\nconst f = y => y\n", "const f = (y) => y;\n"],
     ["a.ts", "//~ why\nconst o = {a:1,b:[1,2,],}\n", "const o = { a: 1, b: [1, 2] };\n"],
@@ -664,7 +665,7 @@ describe("round trip property", () => {
   });
 });
 
-describe("edge cases found in review", () => {
+describe("edge cases", () => {
   it("keeps the line break when a stale tag is all that is left of a comment", async () => {
     const { recorded, stripped } = await roundTrip("a.py", "def f():\n    #~ note\n    a()\n    b()\n");
     const placed = await placeComments("a.py", stripped.replace("b()\n", "b()\n    c()\n"), recorded.sidecar);
