@@ -145,4 +145,21 @@ describe.each([false, true])("scan (autocrlf=%s)", (autocrlf) => {
     expect(read("wt", "src/new.py")).toMatch(/^def f\(\):\n {4}#~[0-9a-z]{4} Now we iterate over each row\n/);
     expect(read("wt", ".agents/comments/src/new.py.md")).toMatch(/^## [0-9a-z]{4}\n<!-- pos=before scope=f [^\n]*-->\nNow we iterate over each row\n$/);
   });
+
+  it("apply tells identical comments apart by line and skips an entry that no longer matches", () => {
+    const twin = "src/twin.py";
+    const body = (name: string) => `def ${name}():\n    # Now we iterate over each row\n    pass\n`;
+    box.write(box.path("main", twin), `${body("a")}\n\n${body("b")}`);
+    box.git(main, "add", twin);
+    const [first, second] = scanJson(main, twin);
+    expect([first!.line, second!.line]).toEqual([2, 7]);
+    const gone = { ...first!, line: 4, fingerprint: "00000000" };
+    const review = box.path("review-twin.json");
+    writeFileSync(review, JSON.stringify({ version: 1, comments: [{ ...second!, accept: false }, first, gone] }));
+    expect(box.cli(main, "scan", "--apply", review)).toBe(
+      "converted 1 comment(s) in 1 file(s)\nignored 1 comment(s) in .agents/scan-ignore\n" +
+        "skipped src/twin.py:4: no longer matches the reviewed text\n",
+    );
+    expect(read("main", twin)).toBe(`def a():\n    pass\n\n\n${body("b")}`);
+  });
 });
