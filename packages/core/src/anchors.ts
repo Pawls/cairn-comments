@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Node } from "web-tree-sitter";
 import type { LanguageSpec } from "./languages.js";
+import { isInertStringStatement } from "./literals.js";
 
 // Hashes of the code a comment describes, blind to what formatters change (design.md
 // § Staleness, "Normalization").
@@ -12,7 +13,8 @@ function digest(text: string): string {
 /** Hash of a node's normalized tokens: a declaration contributes its signature only, unless `withBodies`. */
 export function nodeHash(spec: LanguageSpec, node: Node, withBodies = false): string {
   const skipped = withBodies ? new Set<number>() : declarationBodies(node);
-  return digest(serialize({ spec, range: { start: node.startIndex, end: node.endIndex }, skipped }, node));
+  const range = { start: node.startIndex, end: node.endIndex };
+  return digest(serialize({ spec, root: node.id, range, skipped }, node));
 }
 
 /**
@@ -22,7 +24,7 @@ export function nodeHash(spec: LanguageSpec, node: Node, withBodies = false): st
 export function bodyHash(spec: LanguageSpec, declaration: Node): string {
   const name = declaration.childForFieldName("name");
   const range = { start: declaration.startIndex, end: declaration.endIndex };
-  return digest(serialize({ spec, range, skipped: new Set(name ? [name.id] : []) }, declaration));
+  return digest(serialize({ spec, root: declaration.id, range, skipped: new Set(name ? [name.id] : []) }, declaration));
 }
 
 const DECLARATION = /function|method|class|interface|struct|enum|namespace|internal_module|constructor|record|property|object_declaration|companion_object/;
@@ -108,6 +110,8 @@ function isFormatterToken(node: Node, children: Node[], i: number): boolean {
 /** What one serialization walk shares: the grammar, the offsets it covers, and the nodes left out. */
 interface Walk {
   spec: LanguageSpec;
+  /** The hashed node's id: it counts even when it is a string statement. */
+  root: number;
   range: { start: number; end: number };
   skipped: ReadonlySet<number>;
 }
@@ -136,13 +140,15 @@ function serializeChildren(walk: Walk, node: Node, children: Node[]): string[] {
 /**
  * Tokens and structure of the nodes overlapping the walk's range, blind to whatever a
  * formatter changes: whitespace, comments, semicolons, trailing commas, redundant
- * parentheses, and the parentheses around a lone arrow-function parameter. A named node
+ * parentheses, and the parentheses around a lone arrow-function parameter. Python string
+ * statements other than the hashed node count for nothing, since they do nothing. A named node
  * wholly inside the range contributes its type, so `(a + b) * c` and `a + b * c` still differ.
  */
 function serialize(walk: Walk, node: Node): string {
   const { spec, range } = walk;
   if (node.endIndex <= range.start || node.startIndex >= range.end) return "";
   if (walk.skipped.has(node.id) || spec.commentTypes.includes(node.type)) return "";
+  if (spec.id === "python" && node.id !== walk.root && isInertStringStatement(node)) return "";
   if (node.childCount === 0) {
     if (!node.text || node.type === ";") return "";
     return normalizeLeaf(node);
