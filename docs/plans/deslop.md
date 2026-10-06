@@ -12,9 +12,9 @@
 > runs `npm run bench` within noise of the recorded 3,182 ms; the PR body carries the
 > before/after metrics from § Baseline, including any that got worse and why.
 >
-> **Next:** D6, deslop the extension e2e suite, the native harness, and the scripts.
+> **Next:** D9, pin and fix the lost comments on undo after a cut and paste; then D6.
 > **Branch:** `deslop-<slice>` per lane (e.g. `deslop-d1`), each off `main` as its own PR.
-> **Lanes:** E: D6
+> **Lanes:** E: D9→D6
 
 - [~~D1 — Core placement~~ — SHIPPED 2026-10-06](#d1)
 - [~~D2 — Core scan, detectors, literals, markers~~ — SHIPPED 2026-10-06](#d2)
@@ -24,6 +24,7 @@
 - [D6 — Extension e2e, native harness, scripts](#d6)
 - [~~D7 — Design doc journal voice~~ — SHIPPED 2026-10-06](#d7)
 - [~~D8 — Unterminated file loses a blank line between comment blocks~~ — SHIPPED 2026-10-06](#d8)
+- [D9 — Undo after a cut and paste loses the moved comments](#d9)
 
 ## Traps
 
@@ -192,7 +193,7 @@ extension is on there, while the overlay fixture sets `"git.enabled": false`. Ma
 of its own; it is a test-environment change, not a refactor.
 **Note (from D5):** run `test:native` on `main`'s head first; it last ran before the D4, D7, and D8 merges.
 **Touches:** `packages/vscode/{e2e,native}/*.ts`, `packages/vscode/esbuild.mjs`, `scripts/*.ts`, `scripts/*.mjs`.
-**After:** D5.
+**After:** D5, D9 (D9 adds a case to `overlay.test.ts`, which this slice splits).
 
 - [ ] Metrics re-run and recorded
 - [ ] `overlay.test.ts` (one 542-line `describe` body, 88 of the 109 non-null assertions) split into
@@ -250,6 +251,30 @@ round-trip rule changes.
       counts compared to `main`
 
 Cancel if the fix would change the cleaned form of a file that round-trips today; report the case instead.
+
+### D9 — Undo after a cut and paste loses the moved comments · Opus 5.5 / high {#d9}
+
+**Status:** Not started. Found by the owner's overlay check of D5 (2026-10-06): cut a commented method, paste
+it elsewhere (the comments move), undo until the method is back, with no save in between; the method is back
+without its comments on screen. A read of the code says D5 did not cause it: the path makes the same calls in
+the same order before and after PR #13, and the old code already renders stale tracked sites when the buffer
+is still dirty after the undo (`isCurrent` in `placed.ts`; nothing restores sites for text an undo re-inserts).
+That reading is unverified; the first box settles it. No test undoes a cut in either harness.
+**Touches:** `packages/vscode/src/{placed,tracking,saves,controller}.ts`; one new case in
+`packages/vscode/e2e/overlay.test.ts`; `packages/vscode/native/run.ts` if real undo grouping needs pinning;
+`docs/design.md` § Overlay rendering, "Live tracking" and § Promote and demote, "Undo".
+**After:** D5.
+
+- [ ] A failing e2e test for the owner's steps (dirty buffer, cut, paste, undo twice, assert the comment is
+      rendered on the original method), committed red; a clean-buffer variant beside it
+- [ ] Both tests run on a build of ed03167 (before PR #13) and of `main`, to say whether D5 changed anything
+- [ ] The rule written into design.md before the fix: what an undo of a cut shows in a dirty buffer, and what
+      happens to the sidecar when the owner undoes "this file only"
+- [ ] The fix; placement stays exact or refused, with no best-guess site for re-inserted text
+- [ ] Verify: lint, `npm test` on Windows and WSL, e2e 20 runs in WSL against `main`'s flake rate,
+      `test:vscode` and `test:native` on Windows, then the owner repeats the steps in the installed build
+
+Cancel the fix, keep the tests, and record a known gap if the only way to restore the display is a guess.
 
 ## Follow-ups outside these slices
 
