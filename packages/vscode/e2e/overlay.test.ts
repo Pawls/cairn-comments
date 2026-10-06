@@ -616,6 +616,7 @@ suite("overlay", () => {
     const { api, editor } = await shown("codelens");
     const document = editor.document;
     await recordRefundAnchors(api, editor);
+    const recorded = sidecarText();
     await editor.edit((b) => b.insert(new vscode.Position(1, 0), "VERSION = 2\n"));
     const beforeCut = document.getText();
     const audit = document.getText().split("\n").findIndex((l) => l.startsWith("def audit"));
@@ -632,7 +633,27 @@ suite("overlay", () => {
     await api.refresh(editor);
     await undoStep("redo", editor);
     assert.equal(document.getText(), afterPaste);
+    assert.equal(sidecarText(), recorded);
     await waitFor("refund's comment on the moved function", () => refundCommentShown(api, editor));
+  });
+
+  test("a save after undoing or redoing a cut and paste shows the comment where refund is", async () => {
+    const { api, editor } = await shown("codelens");
+    const document = editor.document;
+    await recordRefundAnchors(api, editor);
+    await editor.edit((b) => b.insert(new vscode.Position(1, 0), "VERSION = 2\n"));
+    const audit = document.getText().split("\n").findIndex((l) => l.startsWith("def audit"));
+    await cutAndPasteRefund(api, editor, audit - 2);
+    await waitFor("refund's comment on the pasted function", () => refundCommentShown(api, editor));
+
+    await undoStep("undo", editor);
+    await undoStep("undo", editor);
+    await document.save();
+    await waitFor("refund's comment on the restored function after a save", () => refundCommentShown(api, editor));
+    await undoStep("redo", editor);
+    await undoStep("redo", editor);
+    await document.save();
+    await waitFor("refund's comment on the moved function after a save", () => refundCommentShown(api, editor));
   });
 
   test("a highlighted line, whatever whitespace the highlight leaves out, pastes like a whole-line copy", async () => {
