@@ -1,12 +1,19 @@
 // Scratch git repositories for the test runners (e2e/run.ts, native/run.ts).
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CLI_HOME_ENV } from "@cairn-comments/core";
 
-const cli = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../cli/bundle/main.js");
+const here = path.dirname(fileURLToPath(import.meta.url));
+const cli = path.resolve(here, "../../../cli/bundle/main.js");
+
+/** The extension package; this file sits two levels below it, in out/e2e. */
+export const packageRoot = path.resolve(here, "../..");
+/** The extension under test: this package, or an unpacked .vsix's `extension/` folder. */
+export const extensionPath = process.env.CAIRN_E2E_EXTENSION ? path.resolve(process.env.CAIRN_E2E_EXTENSION) : packageRoot;
+export const fixtureDir = path.join(packageRoot, "e2e/fixture");
 
 export interface ScratchRepo {
   dir: string;
@@ -42,3 +49,6 @@ export function scratchRepo(populate: (repo: string) => void): ScratchRepo {
   execFileSync("git", ["commit", "-qm", "base"], opts);
   return { dir, repo, env };
 }
+
+/** A scratch repository holding a copy of e2e/fixture. */
+export const fixtureRepo = () => scratchRepo((repo) => cpSync(fixtureDir, repo, { recursive: true }));
