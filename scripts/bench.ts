@@ -25,7 +25,13 @@ const { values: args } = parseArgs({
 const FILES = Number(args.files);
 const RUNS = Number(args.runs);
 const ONE_SHOT_RUNS = Number(args["one-shot-runs"]);
-const COMMENTS_PER_FILE = 6;
+/** Each generated file holds this many functions, each with an own-line comment block and a trailing comment. */
+const FUNCTIONS_PER_FILE = 3;
+const COMMENTS_PER_FILE = FUNCTIONS_PER_FILE * 2;
+/** Warm status is the median of this many `git status` runs. */
+const WARM_STATUS_RUNS = 3;
+/** Longer than the one-second mtime granularity of git's index (design.md § Filter process, "Racy entries"). */
+const RACY_WAIT_MS = 1100;
 
 const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../packages/cli/bundle/main.js");
 const dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "cairn-bench-")));
@@ -54,25 +60,28 @@ function timed(fn: () => void): number {
   return Number(process.hrtime.bigint() - start) / 1e6;
 }
 
+const sleepSync = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
 const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
+
+/** One function of a generated file: an own-line block of two comment lines, and a trailing comment. */
+function functionLines(python: boolean, fileIndex: number, step: number): string[] {
+  const sigil = python ? "#~" : "//~";
+  const why = `${sigil} why step ${step} of file ${fileIndex} runs before the next one`;
+  const more = `${sigil} and what breaks if it does not`;
+  const trailing = `${sigil} the value ${step} is load-bearing`;
+  if (python) {
+    return [`def step_${step}(x):`, `    ${why}`, `    ${more}`, `    y = x + ${step}`, `    return y  ${trailing}`, "", ""];
+  }
+  return [`export function step${step}(x: number): number {`, `  ${why}`, `  ${more}`, `  const y = x + ${step};`, `  return y; ${trailing}`, "}", ""];
+}
 
 /** Sources without their comments plus the sidecars `sync` records, as they sit in blobs; half Python, half TypeScript. */
 async function generate(root: string): Promise<void> {
   for (let i = 0; i < FILES; i++) {
     const python = i % 2 === 0;
-    const sigil = python ? "#~" : "//~";
     const file = `src/m${Math.floor(i / 100)}/f${i}.${python ? "py" : "ts"}`;
-    const lines: string[] = [];
-    for (let j = 0; j < COMMENTS_PER_FILE / 2; j++) {
-      const why = `${sigil} why step ${j} of file ${i} runs before the next one`;
-      const more = `${sigil} and what breaks if it does not`;
-      const trailing = `${sigil} the value ${j} is load-bearing`;
-      if (python) {
-        lines.push(`def step_${j}(x):`, `    ${why}`, `    ${more}`, `    y = x + ${j}`, `    return y  ${trailing}`, "", "");
-      } else {
-        lines.push(`export function step${j}(x: number): number {`, `  ${why}`, `  ${more}`, `  const y = x + ${j};`, `  return y; ${trailing}`, "}", "");
-      }
-    }
+    const lines = Array.from({ length: FUNCTIONS_PER_FILE }, (_, step) => functionLines(python, i, step)).flat();
     const recorded = await recordComments(file, lines.join("\n"), { preamble: "", entries: [] });
     mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
     writeFileSync(path.join(root, file), await stripComments(file, recorded.source));
@@ -105,6 +114,58 @@ function checkout(repo: string, mode: Mode, name: string): { wt: string; ms: num
   return { wt, ms };
 }
 
+/** Milliseconds per run of each measurement, and in process mode what `git grep` found in the first checkout. */
+interface Timings {
+  checkout: number[];
+  firstStatus: number[];
+  warmStatus: number[];
+  expanded?: string;
+}
+
+const emptyTimings = (): Timings => ({ checkout: [], firstStatus: [], warmStatus: [] });
+
+/** One checkout and the status runs after it, recorded into `into`; the worktree is removed afterwards. */
+function measureRun(repo: string, mode: Mode, runIndex: number, into: Timings): void {
+  const { wt, ms } = checkout(repo, mode, `${mode}-${runIndex}`);
+  into.checkout.push(ms);
+  // The first status after a checkout re-cleans racily clean entries and refreshes the
+  // index. Entries stay racy while the index shares their mtime second, so "warm" is
+  // measured after one more status issued a second later has settled them.
+  into.firstStatus.push(timed(() => git(wt, "status", "--porcelain")));
+  sleepSync(RACY_WAIT_MS);
+  git(wt, "status", "--porcelain");
+  const warm = Array.from({ length: WARM_STATUS_RUNS }, () => timed(() => git(wt, "status", "--porcelain")));
+  into.warmStatus.push(median(warm));
+  const dirty = git(wt, "status", "--porcelain");
+  if (dirty) throw new Error(`${mode}: worktree not clean after checkout:\n${dirty.slice(0, 500)}`);
+  if (mode === "process" && runIndex === 0) into.expanded = git(wt, "grep", "-c", "load-bearing", "--", "src/m0/f0.py").trim();
+  git(repo, "worktree", "remove", "--force", wt);
+}
+
+const fmt = (ms: number) => `${Math.round(ms)} ms`;
+
+function printReport(repo: string, results: Record<Mode, Timings>): void {
+  const off = { checkout: median(results.off.checkout), warm: median(results.off.warmStatus) };
+  const gitVersion = git(repo, "--version").trim().split(" ")[2];
+  console.log(
+    `\n${FILES} files, ${COMMENTS_PER_FILE} comments each, autocrlf=${args.autocrlf}, ${os.platform()} ${os.release()}, git ${gitVersion}, node ${process.version}`,
+  );
+  console.log("medians; runs: off/process " + RUNS + ", one-shot " + ONE_SHOT_RUNS + "\n");
+  console.log("| mode | checkout | vs off | first status | warm status | warm vs off |");
+  console.log("| --- | --- | --- | --- | --- | --- |");
+  for (const mode of ["off", "one-shot", "process"] as const) {
+    if (!results[mode].checkout.length) continue;
+    const c = median(results[mode].checkout);
+    const w = median(results[mode].warmStatus);
+    const pct = `${c >= off.checkout ? "+" : ""}${Math.round(((c - off.checkout) / off.checkout) * 100)}%`;
+    console.log(`| ${mode} | ${fmt(c)} | ${pct} | ${fmt(median(results[mode].firstStatus))} | ${fmt(w)} | +${fmt(w - off.warm)} |`);
+  }
+  const processCheckout = median(results.process.checkout);
+  const withinCheckout = processCheckout <= off.checkout * 1.2;
+  const withinStatus = median(results.process.warmStatus) - off.warm < 1000;
+  console.log(`\nbudget: checkout under +20%: ${withinCheckout ? "PASS" : "FAIL"}; warm status under +1 s: ${withinStatus ? "PASS" : "FAIL"}`);
+}
+
 const repo = path.join(dir, "repo");
 mkdirSync(repo);
 git(repo, "init", "-q");
@@ -113,51 +174,19 @@ cli(repo, "init");
 git(repo, "add", "-A");
 git(repo, "commit", "-qm", "generated");
 
-const results: Record<Mode, { checkout: number[]; firstStatus: number[]; warmStatus: number[] }> = {
-  off: { checkout: [], firstStatus: [], warmStatus: [] },
-  "one-shot": { checkout: [], firstStatus: [], warmStatus: [] },
-  process: { checkout: [], firstStatus: [], warmStatus: [] },
-};
-let expanded = "";
+const results: Record<Mode, Timings> = { off: emptyTimings(), "one-shot": emptyTimings(), process: emptyTimings() };
 for (const mode of ["off", "process", "one-shot"] as const) {
   configure(repo, mode);
   const runs = mode === "one-shot" ? ONE_SHOT_RUNS : RUNS;
-  for (let r = 0; r < runs; r++) {
-    const { wt, ms } = checkout(repo, mode, `${mode}-${r}`);
-    results[mode].checkout.push(ms);
-    // The first status after a checkout re-cleans racily clean entries and refreshes the
-    // index. Entries stay racy while the index shares their mtime second, so "warm" is
-    // measured after one more status issued a second later has settled them.
-    results[mode].firstStatus.push(timed(() => git(wt, "status", "--porcelain")));
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1100);
-    git(wt, "status", "--porcelain");
-    const warm = [0, 1, 2].map(() => timed(() => git(wt, "status", "--porcelain")));
-    results[mode].warmStatus.push(median(warm));
-    const dirty = git(wt, "status", "--porcelain");
-    if (dirty) throw new Error(`${mode}: worktree not clean after checkout:\n${dirty.slice(0, 500)}`);
-    if (mode === "process" && r === 0) expanded = git(wt, "grep", "-c", "load-bearing", "--", "src/m0/f0.py").trim();
-    git(repo, "worktree", "remove", "--force", wt);
-  }
+  for (let runIndex = 0; runIndex < runs; runIndex++) measureRun(repo, mode, runIndex, results[mode]);
 }
-if (!expanded.endsWith(":3")) throw new Error(`process mode did not place the comments (grep: ${JSON.stringify(expanded)})`);
+// Each function's trailing comment is the one `git grep` counts in the first process-mode checkout.
+const expanded = results.process.expanded ?? "";
+if (!expanded.endsWith(`:${FUNCTIONS_PER_FILE}`)) {
+  throw new Error(`process mode did not place the comments (grep: ${JSON.stringify(expanded)})`);
+}
 
-const fmt = (ms: number) => `${Math.round(ms)} ms`;
-const off = { checkout: median(results.off.checkout), warm: median(results.off.warmStatus) };
-console.log(`\n${FILES} files, ${COMMENTS_PER_FILE} comments each, autocrlf=${args.autocrlf}, ${os.platform()} ${os.release()}, git ${git(repo, "--version").trim().split(" ")[2]}, node ${process.version}`);
-console.log("medians; runs: off/process " + RUNS + ", one-shot " + ONE_SHOT_RUNS + "\n");
-console.log("| mode | checkout | vs off | first status | warm status | warm vs off |");
-console.log("| --- | --- | --- | --- | --- | --- |");
-for (const mode of ["off", "one-shot", "process"] as const) {
-  if (!results[mode].checkout.length) continue;
-  const c = median(results[mode].checkout);
-  const w = median(results[mode].warmStatus);
-  const pct = `${c >= off.checkout ? "+" : ""}${Math.round(((c - off.checkout) / off.checkout) * 100)}%`;
-  console.log(`| ${mode} | ${fmt(c)} | ${pct} | ${fmt(median(results[mode].firstStatus))} | ${fmt(w)} | +${fmt(w - off.warm)} |`);
-}
-const processCheckout = median(results.process.checkout);
-const withinCheckout = processCheckout <= off.checkout * 1.2;
-const withinStatus = median(results.process.warmStatus) - off.warm < 1000;
-console.log(`\nbudget: checkout under +20%: ${withinCheckout ? "PASS" : "FAIL"}; warm status under +1 s: ${withinStatus ? "PASS" : "FAIL"}`);
+printReport(repo, results);
 
 if (args.keep) console.log(`kept ${dir}`);
 else rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
