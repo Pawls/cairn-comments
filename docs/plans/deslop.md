@@ -14,7 +14,7 @@
 >
 > **Next:** D8, fix the unterminated-file round trip, test first.
 > **Branch:** `deslop-<slice>` per lane (e.g. `deslop-d1`), each off `main` as its own PR.
-> **Lanes:** A: D8 · E: D5→D6 · F: D7
+> **Lanes:** A: D8 · E: D5→D6
 
 - [~~D1 — Core placement~~ — SHIPPED 2026-10-06](#d1)
 - [~~D2 — Core scan, detectors, literals, markers~~ — SHIPPED 2026-10-06](#d2)
@@ -22,7 +22,7 @@
 - [~~D4 — CLI~~ — SHIPPED 2026-10-06](#d4)
 - [D5 — VS Code extension source](#d5)
 - [D6 — Extension e2e, native harness, scripts](#d6)
-- [D7 — Design doc journal voice](#d7)
+- [~~D7 — Design doc journal voice~~ — SHIPPED 2026-10-06](#d7)
 - [D8 — Unterminated file loses a blank line between comment blocks](#d8)
 
 ## Traps
@@ -188,10 +188,13 @@ unreferenced `git.ts` exports (`grepTokens`, `ignoredByPattern`) are removed. `r
       same scenario list
 - [ ] `## Skill notes` and `## Plan notes` in the PR body
 
-### D7 — Design doc journal voice · Opus 5.5 / medium {#d7}
+### ~~D7 — Design doc journal voice~~ · Opus 5.5 / medium — SHIPPED 2026-10-06 {#d7}
 
-**Status:** Not started. `design.md` cites v1 slice ids seven times ("built in v1 A17",
-"the A7 normalization", "fired A14's kill criterion").
+**Status:** Shipped in PR #10. The seven slice ids in `design.md` are replaced by dates or by the rule; no
+section title changed. Three claims were wrong and are corrected, each in its own commit: `@n` marks each
+later declaration of a path counting from 1 (not the nth); a comment on a line a formatter joins is kept as
+an orphan (the fallbacks do not cover it, shown by a run); AGENTS.md no longer names a `v1` branch. Every
+`design.md §` citation resolves except three in `docs/plans/v1.md` (§ Follow-ups).
 **Note (from D2):** § Known gaps still says "A14's fallbacks".
 **Note (from D3):** core comments cite these titles, which stay or are repointed together: § Promote and
 demote; § Anchoring "Who saw it" and "Renames"; § Staleness "Normalization"; § Sidecar merges; § Packaging,
@@ -199,14 +202,14 @@ bullet "The recorded CLI lives in a home the tool owns" (whose own text says "bu
 **Touches:** `docs/design.md`, `AGENTS.md`, `README.md`, `packages/*/README.md`.
 **After:** none.
 
-- [ ] Each slice id replaced by the rule as it stands now, or by a date when the history is
+- [x] Each slice id replaced by the rule as it stands now, or by a date when the history is
       the point (a decision record); hedge words checked (rule 133)
-- [ ] Section titles unchanged unless every citation in code and docs is updated (Traps)
-- [ ] `deslop-prose` pass over the edited sections; claims unchanged
-- [ ] Verify: `git grep -n -E '\b[AB][0-9]{1,2}\b' docs/design.md AGENTS.md README.md packages/*/README.md`
+- [x] Section titles unchanged unless every citation in code and docs is updated (Traps)
+- [x] `deslop-prose` pass over the edited sections; claims unchanged
+- [x] Verify: `git grep -n -E '\b[AB][0-9]{1,2}\b' docs/design.md AGENTS.md README.md packages/*/README.md`
       shows
       only intended hits; every `design.md §` citation in the tree resolves
-- [ ] `## Skill notes` and `## Plan notes` in the PR body
+- [x] `## Skill notes` and `## Plan notes` in the PR body
 
 Out of scope: commit history. Slice-code commit subjects stay; rewriting merged history is
 not a cleanup.
