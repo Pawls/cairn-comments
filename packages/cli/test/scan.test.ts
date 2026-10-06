@@ -68,7 +68,9 @@ describe.each([false, true])("scan (autocrlf=%s)", (autocrlf) => {
       [APP, 15, ["hedging"]],
     ]);
     expect(comments.every((c) => c.accept)).toBe(true);
-    expect(box.cli(main, "scan")).toMatch(/^src\/app\.py:6 {2}0\.83 {2}narrates-steps {2}Step 1: Read the file contents\n/);
+    expect(box.cli(main, "scan")).toMatch(
+      /^src\/app\.py:6 {2}0\.83 {2}narrates-steps {2}Step 1: Read the file contents\n/,
+    );
     const review = box.path("review.json");
     writeFileSync(review, box.cli(main, "scan", "--json"));
     expect(() => box.cli(main, "scan", "--apply", review)).toThrow(/run `cairn init` first/);
@@ -87,18 +89,24 @@ describe.each([false, true])("scan (autocrlf=%s)", (autocrlf) => {
       "converted 2 comment(s) in 1 file(s)\nignored 1 comment(s) in .agents/scan-ignore\n",
     );
 
-    expect(box.git(main, "status", "--porcelain", "-uall").split("\n").filter(Boolean).sort()).toEqual([
-      "?? .agents/comments/src/app.py.md",
-      "?? .agents/scan-ignore",
-      " M src/app.py",
-    ].sort());
+    expect(box.git(main, "status", "--porcelain", "-uall").split("\n").filter(Boolean).sort()).toEqual(
+      ["?? .agents/comments/src/app.py.md", "?? .agents/scan-ignore", " M src/app.py"].sort(),
+    );
     // Only the two accepted comment lines changed: they left the code.
-    const changed = box.git(main, "diff", "--no-color", "-U0", APP).split("\n").filter((l) => /^[-+][^-+]/.test(l));
-    expect(changed).toEqual(["-    # Step 1: Read the file contents", "-    # In a real application, you would hash the password here"]);
+    const changed = box
+      .git(main, "diff", "--no-color", "-U0", APP)
+      .split("\n")
+      .filter((l) => /^[-+][^-+]/.test(l));
+    expect(changed).toEqual([
+      "-    # Step 1: Read the file contents",
+      "-    # In a real application, you would hash the password here",
+    ]);
     expect(read("main", ".agents/comments/src/app.py.md")).toMatch(
       /^## [0-9a-z]{4}\n<!-- pos=before scope=load [^\n]*-->\nStep 1: Read the file contents\n\n## [0-9a-z]{4}\n<!-- pos=before scope=save [^\n]*-->\nIn a real application, you would hash the password here\n$/,
     );
-    expect(read("main", ".agents/scan-ignore")).toMatch(/\nsrc\/app\.py\t[0-9a-f]{8}\tUpdated to return the raw text\n$/);
+    expect(read("main", ".agents/scan-ignore")).toMatch(
+      /\nsrc\/app\.py\t[0-9a-f]{8}\tUpdated to return the raw text\n$/,
+    );
     if (autocrlf) expect(readFileSync(box.path("main", APP), "utf8")).not.toMatch(/[^\r]\n/);
   });
 
@@ -123,8 +131,12 @@ describe.each([false, true])("scan (autocrlf=%s)", (autocrlf) => {
   it("mark-all converts every unprotected comment and leaves doc, pragma, and license comments", () => {
     expect(box.cli(main, "scan", "--mark-all", LIB)).toBe("converted 1 comment(s) in 1 file(s)\n");
     const lib = read("main", LIB);
-    expect(lib).toMatch(/^\/\*\* Adds two numbers\. \*\/\n.*\n {2}\/\/ eslint-disable-next-line no-console\n {2}console\.log\(a\);\n {2}return a \+ b;\n/);
-    expect(read("main", ".agents/comments/src/lib.ts.md")).toMatch(/^## [0-9a-z]{4}\n<!-- pos=before scope=add [^\n]*-->\nsum them\n$/);
+    expect(lib).toMatch(
+      /^\/\*\* Adds two numbers\. \*\/\n.*\n {2}\/\/ eslint-disable-next-line no-console\n {2}console\.log\(a\);\n {2}return a \+ b;\n/,
+    );
+    expect(read("main", ".agents/comments/src/lib.ts.md")).toMatch(
+      /^## [0-9a-z]{4}\n<!-- pos=before scope=add [^\n]*-->\nsum them\n$/,
+    );
     // Over the whole repo it still keeps the license header, the noqa pragma, and the ignored
     // comment; a group holding commented-out code stays whole, prose line included.
     expect(box.cli(main, "scan", "--mark-all")).toBe("converted 0 comment(s) in 0 file(s)\n");
@@ -143,6 +155,25 @@ describe.each([false, true])("scan (autocrlf=%s)", (autocrlf) => {
     writeFileSync(review, box.cli(wt, "scan", "--json", "src/new.py"));
     box.cli(wt, "scan", "--apply", review);
     expect(read("wt", "src/new.py")).toMatch(/^def f\(\):\n {4}#~[0-9a-z]{4} Now we iterate over each row\n/);
-    expect(read("wt", ".agents/comments/src/new.py.md")).toMatch(/^## [0-9a-z]{4}\n<!-- pos=before scope=f [^\n]*-->\nNow we iterate over each row\n$/);
+    expect(read("wt", ".agents/comments/src/new.py.md")).toMatch(
+      /^## [0-9a-z]{4}\n<!-- pos=before scope=f [^\n]*-->\nNow we iterate over each row\n$/,
+    );
+  });
+
+  it("apply tells identical comments apart by line and skips an entry that no longer matches", () => {
+    const twin = "src/twin.py";
+    const body = (name: string) => `def ${name}():\n    # Now we iterate over each row\n    pass\n`;
+    box.write(box.path("main", twin), `${body("a")}\n\n${body("b")}`);
+    box.git(main, "add", twin);
+    const [first, second] = scanJson(main, twin);
+    expect([first!.line, second!.line]).toEqual([2, 7]);
+    const gone = { ...first!, line: 4, fingerprint: "00000000" };
+    const review = box.path("review-twin.json");
+    writeFileSync(review, JSON.stringify({ version: 1, comments: [{ ...second!, accept: false }, first, gone] }));
+    expect(box.cli(main, "scan", "--apply", review)).toBe(
+      "converted 1 comment(s) in 1 file(s)\nignored 1 comment(s) in .agents/scan-ignore\n" +
+        "skipped src/twin.py:4: no longer matches the reviewed text\n",
+    );
+    expect(read("main", twin)).toBe(`def a():\n    pass\n\n\n${body("b")}`);
   });
 });

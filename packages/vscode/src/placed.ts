@@ -75,6 +75,33 @@ interface ThreadRecord {
   style: OwnLineStyle;
 }
 
+/** A comment's thread as `render` wants it: the line it is attached to, and whether it starts open. */
+interface WantedThread {
+  site: CommentSite;
+  entry: SidecarEntry;
+  stale: boolean;
+  line: number;
+  expanded: boolean;
+}
+
+/** One end-of-line decoration per line with labels, in the warning color when any of them is stale. */
+function labelDecorations(
+  document: vscode.TextDocument,
+  labels: PlacedRender["labels"],
+  color: string | vscode.ThemeColor,
+): vscode.DecorationOptions[] {
+  const byLine = new Map<number, PlacedRender["labels"]>();
+  for (const label of labels) byLine.set(label.line, [...(byLine.get(label.line) ?? []), label]);
+  const warn = new vscode.ThemeColor("editorWarning.foreground");
+  return [...byLine].map(([line, onLine]) => {
+    const end = document.lineAt(line).range.end;
+    const gap = document.lineAt(line).isEmptyOrWhitespace ? "" : "  ";
+    const text = gap + onLine.map((l) => l.text).join("  ·  ");
+    const stale = onLine.some((l) => l.stale);
+    return { range: new vscode.Range(end, end), renderOptions: { after: { contentText: text, color: stale ? warn : color, fontStyle: "italic" } } };
+  });
+}
+
 export class PlacedView implements vscode.CodeLensProvider, vscode.Disposable {
   private readonly labelType = vscode.window.createTextEditorDecorationType({});
   private readonly controller = vscode.comments.createCommentController(CONTROLLER_ID, "AI comments");
@@ -211,12 +238,17 @@ export class PlacedView implements vscode.CodeLensProvider, vscode.Disposable {
     this.disposeThreads(editor.document.uri.toString());
   }
 
-  render(editor: vscode.TextEditor, entries: ReadonlyMap<string, SidecarEntry>, style: OwnLineStyle, color: string | vscode.ThemeColor): PlacedRender {
+  render(
+    editor: vscode.TextEditor,
+    entries: ReadonlyMap<string, SidecarEntry>,
+    style: OwnLineStyle,
+    color: string | vscode.ThemeColor,
+  ): PlacedRender {
     const document = editor.document;
     const state = this.states.get(document.uri.toString());
     const shown = (state?.sites ?? []).flatMap((site) => {
       const entry = entries.get(site.id);
-      return entry ? [{ site, entry, stale: state!.stale.has(site.id) }] : [];
+      return state && entry ? [{ site, entry, stale: state.stale.has(site.id) }] : [];
     });
     const lastLine = document.lineCount - 1;
     // An own-line comment goes above `row`; past the last line it goes above nothing, so
@@ -226,41 +258,29 @@ export class PlacedView implements vscode.CodeLensProvider, vscode.Disposable {
     const title = (s: (typeof shown)[number]) => (s.stale ? `${STALE_TAG} ` : "") + labelFor(s.entry.body);
 
     const out: PlacedRender = { lenses: [], threads: [], labels: [] };
+    const codeLenses: vscode.CodeLens[] = [];
+    const threads: WantedThread[] = [];
     for (const s of shown) {
       const { row, kind, id } = s.site;
-      if (kind === "trail") out.labels.push({ line: row, text: title(s), stale: s.stale });
-      else if (style === "codelens") out.lenses.push({ line: anchorLine(row), title: title(s) });
-      else if (style === "eol") out.labels.push({ line: lineAbove(row), text: title(s), stale: s.stale });
+      if (kind === "trail") {
+        out.labels.push({ line: row, text: title(s), stale: s.stale });
+      } else if (style === "codelens") {
+        const lens = { line: anchorLine(row), title: title(s) };
+        out.lenses.push(lens);
+        const command = { title: `~ ${lens.title}`, command: SHOW_COMMENT, arguments: [document.uri, id] };
+        codeLenses.push(new vscode.CodeLens(document.lineAt(lens.line).range, command));
+      } else if (style === "eol") {
+        out.labels.push({ line: lineAbove(row), text: title(s), stale: s.stale });
+      }
       const expanded = kind === "own" && style === "thread";
-      out.threads.push({ line: expanded ? lineAbove(row) : anchorLine(row), id, expanded });
+      const line = expanded ? lineAbove(row) : anchorLine(row);
+      out.threads.push({ line, id, expanded });
+      threads.push({ ...s, line, expanded });
     }
 
-    const byLine = new Map<number, PlacedRender["labels"]>();
-    for (const l of out.labels) byLine.set(l.line, [...(byLine.get(l.line) ?? []), l]);
-    const warn = new vscode.ThemeColor("editorWarning.foreground");
-    editor.setDecorations(
-      this.labelType,
-      [...byLine].map(([line, labels]) => {
-        const end = document.lineAt(line).range.end;
-        const gap = document.lineAt(line).isEmptyOrWhitespace ? "" : "  ";
-        const text = gap + labels.map((l) => l.text).join("  ·  ");
-        const stale = labels.some((l) => l.stale);
-        return { range: new vscode.Range(end, end), renderOptions: { after: { contentText: text, color: stale ? warn : color, fontStyle: "italic" } } };
-      }),
-    );
-
-    const lensIds = shown.filter((s) => s.site.kind === "own").map((s) => s.site.id);
-    this.setLenses(
-      document,
-      out.lenses.map((l, i) => new vscode.CodeLens(document.lineAt(l.line).range, { title: `~ ${l.title}`, command: SHOW_COMMENT, arguments: [document.uri, lensIds[i]] })),
-    );
-
-    const threadOf = new Map(out.threads.map((t) => [t.id, t]));
-    this.setThreads(
-      document,
-      style,
-      shown.map((s) => ({ ...s, line: threadOf.get(s.site.id)!.line, expanded: threadOf.get(s.site.id)!.expanded })),
-    );
+    editor.setDecorations(this.labelType, labelDecorations(document, out.labels, color));
+    this.setLenses(document, codeLenses);
+    this.setThreads(document, style, threads);
     return out;
   }
 
@@ -276,11 +296,7 @@ export class PlacedView implements vscode.CodeLensProvider, vscode.Disposable {
    * Keeps one thread per comment: a moved comment's thread moves, a changed one is rebuilt,
    * and one in the middle of an edit is left alone.
    */
-  private setThreads(
-    document: vscode.TextDocument,
-    style: OwnLineStyle,
-    wanted: { site: CommentSite; entry: SidecarEntry; stale: boolean; line: number; expanded: boolean }[],
-  ): void {
+  private setThreads(document: vscode.TextDocument, style: OwnLineStyle, wanted: readonly WantedThread[]): void {
     const uri = document.uri.toString();
     const records = this.threads.get(uri) ?? new Map<string, ThreadRecord>();
     this.threads.set(uri, records);

@@ -3,8 +3,10 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CLI, Sandbox } from "./harness.js";
 
-const bundleVersion = () => JSON.parse(readFileSync(path.join(path.dirname(CLI), "version.json"), "utf8")) as { version: string; build: number };
-const packageVersion = () => (JSON.parse(readFileSync(path.join(path.dirname(CLI), "..", "package.json"), "utf8")) as { version: string }).version;
+const bundleVersion = () =>
+  JSON.parse(readFileSync(path.join(path.dirname(CLI), "version.json"), "utf8")) as { version: string; build: number };
+const packageVersion = () =>
+  (JSON.parse(readFileSync(path.join(path.dirname(CLI), "..", "package.json"), "utf8")) as { version: string }).version;
 
 describe("the CLI home", () => {
   let box: Sandbox;

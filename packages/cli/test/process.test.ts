@@ -30,6 +30,11 @@ function session(options: { root: string; delayBudget?: number }) {
     log,
     reader,
     send: (packets: Buffer[]) => input.write(Buffer.concat(packets)),
+    /** Reads past the server's greeting and capability lists. */
+    async skipHandshake() {
+      await reader.readList();
+      await reader.readList();
+    },
     async finish() {
       input.end();
       await done;
@@ -44,6 +49,15 @@ async function sidecarRoot(): Promise<string> {
   const { sidecar } = await recordComments("src/a.py", SHOWN, { preamble: "", entries: [] });
   writeFileSync(path.join(root, ".agents/comments/src/a.py.md"), serializeSidecar(sidecar));
   return root;
+}
+
+/** Runs `body` against `root`, then deletes `root`. */
+async function removingAfter(root: string, body: (root: string) => Promise<void>): Promise<void> {
+  try {
+    await body(root);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 }
 
 const SHOWN = "x = 1  #~ab12 why one\n";
@@ -139,19 +153,18 @@ describe("filter process protocol", () => {
   });
 
   it("smudges from the sidecar under the worktree root", async () => {
-    const root = await sidecarRoot();
-    try {
-      const { responses } = await serve([...GREETING, ...OFFER, ...request("smudge", "src/a.py", "x = 1\n")], { smudge: true, root });
+    await removingAfter(await sidecarRoot(), async (root) => {
+      const { responses } = await serve([...GREETING, ...OFFER, ...request("smudge", "src/a.py", "x = 1\n")], {
+        smudge: true,
+        root,
+      });
       expect(responses).toEqual([{ status: "status=success", content: Buffer.from(SHOWN) }]);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+    });
   });
 
   it("delays a smudge git allows to wait, lists it once ready, and hands it over on the re-request", async () => {
-    const root = await sidecarRoot();
-    const s = session({ root });
-    try {
+    await removingAfter(await sidecarRoot(), async (root) => {
+      const s = session({ root });
       s.send([...GREETING, ...OFFER]);
       await s.reader.readList();
       expect(await s.reader.readList()).toEqual(["capability=clean", "capability=smudge", "capability=delay"]);
@@ -174,35 +187,28 @@ describe("filter process protocol", () => {
       expect(await s.reader.readList()).toEqual([]);
       expect(await s.reader.readList()).toEqual(["status=success"]);
       await s.finish();
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+    });
   });
 
   it("answers in line once delayed content would exceed the byte budget", async () => {
-    const root = await sidecarRoot();
-    const s = session({ root, delayBudget: 0 });
-    try {
+    await removingAfter(await sidecarRoot(), async (root) => {
+      const s = session({ root, delayBudget: 0 });
       s.send([...GREETING, ...OFFER, ...request("smudge", "src/a.py", "x = 1\n", ["can-delay=1"])]);
-      await s.reader.readList();
-      await s.reader.readList();
+      await s.skipHandshake();
       expect(await s.reader.readList()).toEqual(["status=success"]);
       expect((await s.reader.readContent()).toString()).toBe(SHOWN);
       await s.finish();
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+    });
   });
 
   it("hands back the unfiltered blob when a delayed smudge fails, since git would drop the file", async () => {
     const root = mkdtempSync(path.join(os.tmpdir(), "cairn-proc-"));
     // A directory where the sidecar should be makes the read fail with something other than ENOENT.
     mkdirSync(path.join(root, ".agents/comments/a.py.md"), { recursive: true });
-    const s = session({ root });
-    try {
+    await removingAfter(root, async () => {
+      const s = session({ root });
       s.send([...GREETING, ...OFFER, ...request("smudge", "a.py", "x = 1\n", ["can-delay=1"]), ...LIST_AVAILABLE]);
-      await s.reader.readList();
-      await s.reader.readList();
+      await s.skipHandshake();
       expect(await s.reader.readList()).toEqual(["status=delayed"]);
       expect(await s.reader.readList()).toEqual(["pathname=a.py"]);
       expect(await s.reader.readList()).toEqual(["status=success"]);
@@ -211,9 +217,7 @@ describe("filter process protocol", () => {
       expect((await s.reader.readContent()).toString()).toBe("x = 1\n");
       expect(s.log).toEqual([expect.stringMatching(/^a\.py: .*; checked out unfiltered$/)]);
       await s.finish();
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+    });
   });
 
   it("answers an unadvertised command with status=error and keeps serving", async () => {
@@ -223,7 +227,10 @@ describe("filter process protocol", () => {
       ...request("smudge", "a.py", "x = 1\n"),
       ...request("clean", "a.py", "x = 1\n"),
     ]);
-    expect(responses).toEqual([{ status: "status=error" }, { status: "status=success", content: Buffer.from("x = 1\n") }]);
+    expect(responses).toEqual([
+      { status: "status=error" },
+      { status: "status=success", content: Buffer.from("x = 1\n") },
+    ]);
     expect(log).toEqual([expect.stringContaining("a.py: unsupported request")]);
   });
 
@@ -241,13 +248,15 @@ describe("filter process protocol", () => {
  */
 function writeCrashingFilter(file: string): void {
   // The tsc output, which keeps process.js a module of its own; the bundle does not.
-  const process_ = pathToFileURL(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../dist/process.js")).href;
+  const processModule = pathToFileURL(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../dist/process.js"),
+  ).href;
   writeFileSync(
     file,
     [
       'import { writeSync } from "node:fs";',
       'import { Writable } from "node:stream";',
-      `import { serveFilterProcess } from ${JSON.stringify(process_)};`,
+      `import { serveFilterProcess } from ${JSON.stringify(processModule)};`,
       "let writes = 0;",
       "const output = new Writable({",
       "  write(chunk, _encoding, callback) {",
@@ -263,6 +272,9 @@ function writeCrashingFilter(file: string): void {
     ].join("\n"),
   );
 }
+
+/** `f` as a smudged checkout shows it: its one line with the comment's id stamped. */
+const smudged = (f: string) => new RegExp(`^${f[0]} = 1 {2}#~[0-9a-z]{4} why ${f[0]}\\n$`);
 
 describe("a filter process crash mid-stream", () => {
   let box: Sandbox;
@@ -298,14 +310,14 @@ describe("a filter process crash mid-stream", () => {
       const file = box.path("wt", f);
       if (!existsSync(file)) continue;
       const text = box.read(file);
-      const whole = text === box.git(main, "show", `HEAD:${f}`) || new RegExp(`^${f[0]} = 1 {2}#~[0-9a-z]{4} why ${f[0]}\\n$`).test(text);
+      const whole = text === box.git(main, "show", `HEAD:${f}`) || smudged(f).test(text);
       expect(whole, `${f}: ${JSON.stringify(text)}`).toBe(true);
     }
 
     const real = box.git(main, "config", "--get", "filter.cairn.process").trim();
     box.git(wt, "config", "--worktree", "filter.cairn.process", `${real} --smudge`);
     box.git(wt, "reset", "--hard", "--quiet");
-    for (const f of FILES) expect(box.read(box.path("wt", f))).toMatch(new RegExp(`^${f[0]} = 1 {2}#~[0-9a-z]{4} why ${f[0]}\\n$`));
+    for (const f of FILES) expect(box.read(box.path("wt", f))).toMatch(smudged(f));
     expect(box.status(wt)).toBe("");
   });
 

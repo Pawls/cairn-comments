@@ -4,7 +4,7 @@ Cairn Comments keeps AI-written comments out of committed code: a git filter rem
 comments whole, and their bodies live in `.agents/comments/` with a record of where each
 goes (the anchor), from which agent worktrees get them back. Start with
 [docs/design.md](docs/design.md) (decisions and every settled rule) and
-[docs/plans/v1.md](docs/plans/v1.md) (vertical slices; all v1 work lands on branch `v1`).
+[docs/plans/v1.md](docs/plans/v1.md) (vertical slices; each lands on `main` through a pull request).
 
 ## Commands
 
