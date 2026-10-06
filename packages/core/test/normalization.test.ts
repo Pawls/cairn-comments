@@ -50,6 +50,23 @@ const REAL_CHANGES: [string, string, string][] = [
   ["a.java", "class C {\n  //~ note\n  @A void m() {}\n}\n", "class C {\n  //~ note\n  @B void m() {}\n}\n"],
   ["a.kt", "//~ note\nfun f(a: Int) = a + 1\n", "//~ note\nfun f(a: Int) = a + 2\n"],
   ["a.kt", "//~ note\nfun f(a: Int) {}\n", "//~ note\nfun f(a: Long) {}\n"],
+  ["a.py", '#~ note\ncall("""a""")\n', '#~ note\ncall("""b""")\n'],
+  ["a.py", "def f():\n    #~ note\n    x = 1\n    y = 2\n", 'def f():\n    #~ note\n    x = 1\n    f"{g()}"\n    y = 2\n'],
+  ["a.py", "def f():\n    #~ note\n    x = 1\n    y = 2\n", 'def f():\n    #~ note\n    x = 1\n    "a" "b"\n    y = 2\n'],
+  ["a.py", "#~ note\n'''A.'''\nx = 1\n", "#~ note\n'''B.'''\nx = 1\n"],
+  ["a.ts", "function f() {\n  //~ note\n  x();\n}\n", 'function f() {\n  "use strict";\n  //~ note\n  x();\n}\n'],
+];
+
+/** Each pair adds, removes, or edits a Python string statement, docstrings included (design.md § Staleness). */
+const STRING_STATEMENTS: [string, string, string][] = [
+  ["a.py", "def f():\n    #~ note\n    x = 1\n    y = 2\n", 'def f():\n    #~ note\n    x = 1\n    """Note about y."""\n    y = 2\n'],
+  ["a.py", "def f():\n    #~ note\n    x = 1\n    '''Note\n    about y.'''\n    y = 2\n", "def f():\n    #~ note\n    x = 1\n    y = 2\n"],
+  ["a.py", "#~ note\nif a:\n    b()\n", "#~ note\nif a:\n    b()\n    rb'note'\n"],
+  ["a.py", 'class C:\n    def m(self):\n        """Doc."""\n        #~ note\n        x = 1\n        return x\n', 'class C:\n    def m(self):\n        """Doc."""\n        #~ note\n        x = 1\n        """Note."""\n        return x\n'],
+  ["a.py", 'def f():\n    """Doc."""\n    #~ note\n    x = 1\n', 'def f():\n    """Other doc."""\n    #~ note\n    x = 1\n'],
+  ["a.py", "def f():\n    #~ note\n    x = 1\n", 'def f():\n    """Doc."""\n    #~ note\n    x = 1\n'],
+  ["a.py", "def __init__(self):\n    self.x = 1\n    #~ note\n    self.y = 2\n", 'def __init__(self):\n    self.x = 1\n    """About x."""\n    #~ note\n    self.y = 2\n'],
+  ["a.py", "#~ note\nif a:\n    'x'\n", "#~ note\nif a:\n    'y'\n"],
 ];
 
 describe("what counts as a change to the code a comment describes", () => {
@@ -59,6 +76,10 @@ describe("what counts as a change to the code a comment describes", () => {
 
   it.each(REAL_CHANGES)("sees a real change (%s: %j)", async (path, before, after) => {
     expect(await survives(path, before, after)).not.toBe("exact");
+  });
+
+  it.each(STRING_STATEMENTS)("ignores a string statement added, removed, or edited (%s: %j)", async (path, before, after) => {
+    expect(await survives(path, before, after)).toBe("exact");
   });
 
   it("tracks a declaration's signature, not its body", async () => {
