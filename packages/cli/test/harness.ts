@@ -16,6 +16,13 @@ export interface SandboxOptions {
   cli?: string;
 }
 
+/** A command run without throwing: its exit status and output. */
+export interface RunResult {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+}
+
 /**
  * A scratch directory with its own global git config, so a scenario behaves the same on
  * every machine and never reads or writes the developer's real config or hooks.
@@ -58,7 +65,7 @@ export class Sandbox {
   }
 
   /** Runs git without throwing, for scenarios where git is expected to report a failure. */
-  gitResult(cwd: string, ...args: string[]): { status: number | null; stdout: string; stderr: string } {
+  gitResult(cwd: string, ...args: string[]): RunResult {
     const { status, stdout, stderr } = spawnSync("git", args, { cwd, env: this.env, encoding: "utf8" });
     return { status, stdout, stderr };
   }
@@ -73,7 +80,7 @@ export class Sandbox {
   }
 
   /** Runs the CLI without throwing, for commands whose exit code is the result. */
-  cliResult(cwd: string, ...args: string[]): { status: number | null; stdout: string; stderr: string } {
+  cliResult(cwd: string, ...args: string[]): RunResult {
     const { status, stdout, stderr } = spawnSync(process.execPath, [this.cliPath, ...args], { cwd, env: this.env, encoding: "utf8" });
     return { status, stdout, stderr };
   }
