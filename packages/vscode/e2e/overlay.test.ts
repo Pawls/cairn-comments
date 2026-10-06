@@ -679,6 +679,25 @@ suite("overlay", () => {
     assert.deepEqual(api.placed.sites(document), trackedSites);
   });
 
+  test("two refreshes at once after an undo both keep the tracked comments as tracked", async () => {
+    const { api, editor } = await shown("codelens");
+    const document = editor.document;
+    await editor.edit((b) => b.insert(new vscode.Position(5, 0), "    log(order)\n"));
+    const tracked = (await api.refresh(editor)).placed;
+    const trackedSites = api.placed.sites(document);
+    await editor.edit((b) => b.insert(new vscode.Position(0, 0), "VERSION = 2\n"));
+    await api.refresh(editor);
+
+    await vscode.window.showTextDocument(document);
+    await vscode.commands.executeCommand("undo");
+    assert.equal(document.lineAt(0).text, "import ledger");
+    // The debounced refresh after an edit can run while another refresh is still placing.
+    const both = await Promise.all([api.refresh(editor), api.refresh(editor)]);
+    assert.deepEqual(both.map((applied) => applied.placed), [tracked, tracked]);
+    assert.deepEqual(api.placed.sites(document), trackedSites);
+    assert.deepEqual((await api.refresh(editor)).placed, tracked);
+  });
+
   test("a save after undoing or redoing a cut and paste shows the comment where refund is", async () => {
     const { api, editor } = await shown("codelens");
     const document = editor.document;
