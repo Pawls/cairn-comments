@@ -106,6 +106,7 @@ describe("placeComments after recordComments", () => {
     await expectExact("a.py", SETTLE.replaceAll("\n", "\r\n"));
     await expectExact("a.py", "x = 1\n#~ end");
     await expectExact("a.py", "x = 1\r\n#~ end");
+    await expectExact("a.py", "x = 1\r\n#~ first\r\n#~a1b2 second\r\n#~c3d4 third");
   });
 
   it("keeps the order of blocks that land on one line", async () => {
@@ -227,7 +228,7 @@ describe("changed declarations", () => {
     expect(stale).toEqual(["the write is idempotent", "keyed on order.id"]);
   });
 
-  // Moving it to the start of the replacement was measured wrong a third of the time (design.md § Anchoring).
+  // Moving it to the start of the replacement was wrong in 34% and 38% of replayed moves (design.md § Anchoring).
   it("orphans a comment whose statement was replaced, and keeps the rest of the function's", async () => {
     const { placed, unplaced, stale } = await change(SETTLE_F, (s) => s.replace("ledger.write(order)", "ledger.put(order)"));
     expect(unplaced).toEqual(["the write is idempotent", "keyed on order.id"]);
@@ -334,6 +335,16 @@ describe("recordComments", () => {
     const kept = await recordComments("a.py", withoutOne, recorded.sidecar, { seen: new Set([two!]) });
     expect(kept.deleted).toEqual([]);
     expect(kept.sidecar.entries.map((e) => e.body)).toEqual(["one", "two"]);
+  });
+
+  it("with knownOnly, ignores a comment whose id the sidecar lacks and still records new ones", async () => {
+    const { recorded } = await roundTrip("a.py", "#~ known\nx = 1\n");
+    const [known] = recorded.sidecar.entries.map((e) => e.id);
+    const working = `#~${known} known\nx = 1\n#~zz99 from another commit\ny = 2\n#~ fresh\nz = 3\n`;
+    const result = await recordComments("a.py", working, recorded.sidecar, { knownOnly: true });
+    expect(result.sidecar.entries.map((e) => e.body)).toEqual(["known", "fresh"]);
+    expect(result.ids).toEqual([known, result.sidecar.entries[1]!.id]);
+    expect(result.source).toContain("#~zz99 from another commit\n");
   });
 });
 
@@ -599,7 +610,8 @@ describe("anchoring in every language", () => {
     expect(placed.source).toMatch(/export const refund = async \(order: Order\) => \{\n {2}\/\/~[0-9a-z]{4} reverse before notifying\n/);
   });
 
-  // Formatter pairs as in normalization.test.ts, inside a function, so its body hash must survive them too.
+  // Formatter pairs as in normalization.test.ts; the C#, Java, and Kotlin ones sit inside a method, whose body hash
+  // must survive them too.
   const FORMATTER_PAIRS: [string, string, string][] = [
     ["a.ts", "//~ why\nconst f = y => y\n", "const f = (y) => y;\n"],
     ["a.ts", "//~ why\nconst o = {a:1,b:[1,2,],}\n", "const o = { a: 1, b: [1, 2] };\n"],
@@ -653,7 +665,7 @@ describe("round trip property", () => {
   });
 });
 
-describe("edge cases found in review", () => {
+describe("edge cases", () => {
   it("keeps the line break when a stale tag is all that is left of a comment", async () => {
     const { recorded, stripped } = await roundTrip("a.py", "def f():\n    #~ note\n    a()\n    b()\n");
     const placed = await placeComments("a.py", stripped.replace("b()\n", "b()\n    c()\n"), recorded.sidecar);
