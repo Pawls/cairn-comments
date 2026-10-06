@@ -12,16 +12,14 @@ import {
   demoteTarget,
   languageForPath,
   parseIgnore,
-  parseSidecar,
   recordLiterals,
   scanSource,
   serializeSidecar,
   sidecarPathFor,
   type IgnoreEntry,
   type ScannedComment,
-  type Sidecar,
 } from "@cairn-comments/core";
-import { collapseFiles, decodeExact, syncFiles } from "./files.js";
+import { collapseFiles, decodeExact, readSidecarSync, syncFiles } from "./files.js";
 import { readWorkFile, writeWorkFile } from "./workfiles.js";
 import { managedFiles, smudges, toRepoPath, trackedFiles } from "./git.js";
 
@@ -60,11 +58,17 @@ function readIgnore(root: string): Map<string, Set<string>> {
   return parseIgnore(readWorkFile(file)?.toString("utf8") ?? "");
 }
 
-/** Named files, or every tracked file in a scanned language outside the tool's own folder. */
-export function scanTargets(root: string, files: string[]): string[] {
+const TOOL_FOLDER = `${path.posix.dirname(SIDECAR_ROOT)}/`;
+
+/** Whether a repository path is a working file in a scanned language, outside the tool's own folder. */
+export function isScannable(root: string, file: string): boolean {
+  return !!languageForPath(file) && !file.startsWith(TOOL_FOLDER) && existsSync(path.join(root, file));
+}
+
+/** The named files, or every tracked file, narrowed to the scannable ones. */
+function scanTargets(root: string, files: string[]): string[] {
   const candidates = files.length ? files.map((f) => toRepoPath(root, f)) : trackedFiles(root);
-  const toolFolder = `${path.posix.dirname(SIDECAR_ROOT)}/`;
-  return candidates.filter((f) => languageForPath(f) && !f.startsWith(toolFolder) && existsSync(path.join(root, f)));
+  return candidates.filter((f) => isScannable(root, f));
 }
 
 function readSource(root: string, file: string): string | undefined {
@@ -129,10 +133,11 @@ async function convertAndSync(root: string, chosen: Map<string, ScannedComment[]
   const literals = new Map<string, Map<string, string>>();
   for (const [file, comments] of chosen) {
     if (!comments.length) continue;
-    const absolute = path.join(root, file);
+    // A file with picks was read when they were chosen.
     const source = readSource(root, file)!;
-    const converted = convertDemoted(file, source, comments, new Set(readSidecar(root, file).entries.map((e) => e.id)));
-    writeWorkFile(absolute, converted.source);
+    const takenIds = new Set(readSidecarSync(root, file).entries.map((e) => e.id));
+    const converted = convertDemoted(file, source, comments, takenIds);
+    writeWorkFile(path.join(root, file), converted.source);
     if (converted.literals.size) literals.set(file, converted.literals);
     written.push(file);
   }
@@ -140,13 +145,9 @@ async function convertAndSync(root: string, chosen: Map<string, ScannedComment[]
   else await collapseFiles(root, written);
   // A demoted string's quotes go on the entry sync just made for it.
   for (const [file, ids] of literals) {
-    writeWorkFile(path.join(root, sidecarPathFor(file)), serializeSidecar(recordLiterals(readSidecar(root, file), ids)));
+    writeWorkFile(path.join(root, sidecarPathFor(file)), serializeSidecar(recordLiterals(readSidecarSync(root, file), ids)));
   }
   return written;
-}
-
-function readSidecar(root: string, file: string): Sidecar {
-  return parseSidecar(readWorkFile(path.join(root, sidecarPathFor(file)))?.toString("utf8") ?? "");
 }
 
 function recordIgnored(root: string, entries: IgnoreEntry[]): void {
@@ -188,33 +189,54 @@ function nearestMatch(
     .sort((a, b) => distance(a) - distance(b))[0];
 }
 
+function entriesByFile(entries: ReviewEntry[]): Map<string, ReviewEntry[]> {
+  const byFile = new Map<string, ReviewEntry[]>();
+  for (const e of entries) byFile.set(e.file, [...(byFile.get(e.file) ?? []), e]);
+  return byFile;
+}
+
+interface FileVerdicts {
+  /** Comments to convert, in entry order. */
+  picks: ScannedComment[];
+  ignore: IgnoreEntry[];
+}
+
+/**
+ * Matches one file's entries to its comments as they are now, adding each entry to the
+ * report as converted, ignored, or stale.
+ */
+async function judgeFile(root: string, file: string, entries: ReviewEntry[], report: ApplyReport): Promise<FileVerdicts> {
+  const source = readSource(root, file);
+  const available = source === undefined ? [] : (await analyzeSource(file, source)).filter((c) => !c.protected);
+  const verdicts: FileVerdicts = { picks: [], ignore: [] };
+  for (const entry of entries) {
+    const match = nearestMatch(available, entry, verdicts.picks);
+    if (!match) {
+      report.stale.push(entry);
+    } else if (entry.accept === false) {
+      verdicts.ignore.push({ file, fingerprint: entry.fingerprint, preview: match.text });
+      report.ignored.push(entry);
+    } else {
+      verdicts.picks.push(match);
+      report.converted.push(entry);
+    }
+  }
+  return verdicts;
+}
+
 /** Applies a reviewed list: accepted entries become sigil comments, rejected ones are ignored from now on. */
 export async function applyReview(root: string, review: Review): Promise<ApplyReport> {
   const report = emptyReport();
-  const byFile = new Map<string, ReviewEntry[]>();
-  for (const e of review.comments) byFile.set(e.file, [...(byFile.get(e.file) ?? []), e]);
-  const accepting = [...byFile].filter(([, es]) => es.some((e) => e.accept !== false)).map(([f]) => f);
+  const byFile = entriesByFile(review.comments);
+  const accepting = [...byFile].filter(([, entries]) => entries.some((e) => e.accept !== false)).map(([file]) => file);
   requireManaged(root, accepting);
 
   const chosen = new Map<string, ScannedComment[]>();
   const ignored: IgnoreEntry[] = [];
   for (const [file, entries] of byFile) {
-    const source = existsSync(path.join(root, file)) ? readSource(root, file) : undefined;
-    const available = source === undefined ? [] : (await analyzeSource(file, source)).filter((c) => !c.protected);
-    const picks: ScannedComment[] = [];
-    for (const entry of entries) {
-      const match = nearestMatch(available, entry, picks);
-      if (!match) {
-        report.stale.push(entry);
-      } else if (entry.accept === false) {
-        ignored.push({ file, fingerprint: entry.fingerprint, preview: match.text });
-        report.ignored.push(entry);
-      } else {
-        picks.push(match);
-        report.converted.push(entry);
-      }
-    }
-    chosen.set(file, picks);
+    const verdicts = await judgeFile(root, file, entries, report);
+    chosen.set(file, verdicts.picks);
+    ignored.push(...verdicts.ignore);
   }
   recordIgnored(root, ignored);
   report.files = await convertAndSync(root, chosen);
@@ -249,7 +271,7 @@ export async function demote(root: string, targets: { file: string; line: number
   const report = emptyReport();
   const chosen = new Map<string, ScannedComment[]>();
   for (const { file, line } of targets) {
-    const source = existsSync(path.join(root, file)) ? readSource(root, file) : undefined;
+    const source = readSource(root, file);
     const target = source === undefined ? "not a readable UTF-8 file" : await demoteTarget(file, source, line);
     if (typeof target === "string") throw new Error(`${file}:${line}: ${target}`);
     const picks = chosen.get(file) ?? [];

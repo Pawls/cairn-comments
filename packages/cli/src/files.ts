@@ -42,7 +42,8 @@ export async function readSidecar(root: string, file: string): Promise<Sidecar> 
   }
 }
 
-function readSidecarSync(root: string, file: string): Sidecar {
+/** The sidecar of `file` through the `--print` overlay, so a rewrite reads its own earlier writes. */
+export function readSidecarSync(root: string, file: string): Sidecar {
   const sidecarFile = path.join(root, sidecarPathFor(file));
   return parseSidecar(readWorkFile(sidecarFile)?.toString("utf8") ?? "");
 }
