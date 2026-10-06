@@ -82,8 +82,8 @@ function isFString(string: Node): boolean {
  */
 export function isInertStringStatement(node: Node): boolean {
   if (node.type !== "expression_statement" || node.namedChildCount !== 1) return false;
-  const string = node.namedChild(0)!;
-  return string.type === "string" && !isFString(string);
+  const string = node.namedChild(0);
+  return string?.type === "string" && !isFString(string);
 }
 
 /** The expression statement covering 0-based `row` that holds one string and nothing else. */

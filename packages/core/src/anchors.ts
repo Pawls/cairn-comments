@@ -13,7 +13,8 @@ function digest(text: string): string {
 /** Hash of a node's normalized tokens: a declaration contributes its signature only, unless `withBodies`. */
 export function nodeHash(spec: LanguageSpec, node: Node, withBodies = false): string {
   const skipped = withBodies ? new Set<number>() : declarationBodies(node);
-  return digest(serialize({ spec, root: node.id, range: { start: node.startIndex, end: node.endIndex }, skipped }, node));
+  const range = { start: node.startIndex, end: node.endIndex };
+  return digest(serialize({ spec, root: node.id, range, skipped }, node));
 }
 
 /**
