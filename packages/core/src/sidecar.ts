@@ -27,6 +27,7 @@ export function sidecarPathFor(sourcePath: string): string {
   return `${SIDECAR_ROOT}/${sourcePath.replaceAll("\\", "/")}.md`;
 }
 
+/** LF line ends, trailing spaces trimmed from every line, and no blank lines at either edge. */
 export function normalizeBody(text: string): string {
   const lines = text.replace(/\r\n?/g, "\n").split("\n").map((l) => l.trimEnd());
   while (lines.length && !lines[0]) lines.shift();
@@ -34,53 +35,61 @@ export function normalizeBody(text: string): string {
   return lines.join("\n");
 }
 
+function decodeMetaValue(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 function parseMeta(inner: string): Map<string, string> {
   const meta = new Map<string, string>();
   for (const pair of inner.trim().split(/\s+/)) {
     const eq = pair.indexOf("=");
-    if (eq <= 0) continue;
-    const value = pair.slice(eq + 1);
-    try {
-      meta.set(pair.slice(0, eq), decodeURIComponent(value));
-    } catch {
-      meta.set(pair.slice(0, eq), value);
-    }
+    if (eq > 0) meta.set(pair.slice(0, eq), decodeMetaValue(pair.slice(eq + 1)));
   }
   return meta;
 }
 
-export function parseSidecar(text: string): Sidecar {
-  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+/** The lines under one entry heading. */
+interface Section {
+  id: string;
+  lines: string[];
+}
+
+/** Splits `lines` at the entry headings: what precedes the first one, then each heading's lines. */
+function splitSections(lines: readonly string[]): { preamble: string[]; sections: Section[] } {
   const preamble: string[] = [];
-  const byId = new Map<string, SidecarEntry>();
-  let current: { entry: SidecarEntry; body: string[]; pastFirstLine: boolean } | undefined;
-
-  const close = () => {
-    if (!current) return;
-    current.entry.body = normalizeBody(current.body.join("\n"));
-    // A union merge can duplicate a heading; the later copy wins, in the earlier position.
-    const earlier = byId.get(current.entry.id);
-    if (earlier) Object.assign(earlier, current.entry);
-    else byId.set(current.entry.id, current.entry);
-  };
-
+  const sections: Section[] = [];
+  let current: Section | undefined;
   for (const line of lines) {
     const heading = HEADING.exec(line);
     if (heading) {
-      close();
-      current = { entry: { id: heading[1]!, meta: new Map(), body: "" }, body: [], pastFirstLine: false };
-      continue;
-    }
-    if (!current) {
+      current = { id: heading[1]!, lines: [] };
+      sections.push(current);
+    } else if (current) {
+      current.lines.push(line);
+    } else {
       preamble.push(line);
-      continue;
     }
-    const meta = current.pastFirstLine ? null : META.exec(line);
-    current.pastFirstLine = true;
-    if (meta) current.entry.meta = parseMeta(meta[1]!);
-    else current.body.push(line.replace(ESCAPED, "$1"));
   }
-  close();
+  return { preamble, sections };
+}
+
+/** An entry from the lines under its heading: an optional metadata line, then the body. */
+function readEntry(section: Section): SidecarEntry {
+  const meta = META.exec(section.lines[0] ?? "");
+  const bodyLines = meta ? section.lines.slice(1) : section.lines;
+  const body = normalizeBody(bodyLines.map((l) => l.replace(ESCAPED, "$1")).join("\n"));
+  return { id: section.id, meta: meta ? parseMeta(meta[1]!) : new Map(), body };
+}
+
+/** Reads LF or CRLF text. A heading repeated by a union merge keeps its later copy, in the earlier position. */
+export function parseSidecar(text: string): Sidecar {
+  const { preamble, sections } = splitSections(text.replace(/\r\n?/g, "\n").split("\n"));
+  const byId = new Map<string, SidecarEntry>();
+  for (const section of sections) byId.set(section.id, readEntry(section));
   return { preamble: normalizeBody(preamble.join("\n")), entries: [...byId.values()] };
 }
 
@@ -89,22 +98,27 @@ function encodeMetaValue(value: string): string {
   return encodeURIComponent(value).replace(/%(?:3A|2F|40|2C)/g, decodeURIComponent);
 }
 
-export function serializeSidecar(sidecar: Sidecar): string {
-  const blocks: string[] = [];
-  if (sidecar.preamble) blocks.push(sidecar.preamble + "\n");
-  for (const entry of sidecar.entries) {
-    let block = `## ${entry.id}\n`;
-    if (entry.meta.size) {
-      const pairs = [...entry.meta].map(([k, v]) => `${k}=${encodeMetaValue(v)}`);
-      block += `<!-- ${pairs.join(" ")} -->\n`;
-    }
-    const body = entry.body.split("\n").map((l) => (NEEDS_ESCAPE.test(l) ? "\\" + l : l));
-    if (entry.body) block += body.join("\n") + "\n";
-    blocks.push(block);
+function serializeEntry(entry: SidecarEntry): string {
+  let block = `## ${entry.id}\n`;
+  if (entry.meta.size) {
+    const pairs = [...entry.meta].map(([k, v]) => `${k}=${encodeMetaValue(v)}`);
+    block += `<!-- ${pairs.join(" ")} -->\n`;
   }
+  if (entry.body) {
+    const body = entry.body.split("\n").map((l) => (NEEDS_ESCAPE.test(l) ? "\\" + l : l));
+    block += body.join("\n") + "\n";
+  }
+  return block;
+}
+
+/** Always LF, whatever line ends the text was read with. */
+export function serializeSidecar(sidecar: Sidecar): string {
+  const blocks = sidecar.entries.map(serializeEntry);
+  if (sidecar.preamble) blocks.unshift(sidecar.preamble + "\n");
   return blocks.join("\n");
 }
 
+/** Each entry's body by id. */
 export function bodiesOf(sidecar: Sidecar): Map<string, string> {
   return new Map(sidecar.entries.map((e) => [e.id, e.body]));
 }

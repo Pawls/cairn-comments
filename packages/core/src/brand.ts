@@ -2,7 +2,7 @@
 // extension manifest must match; packages/cli/test/brand.test.ts guards both.
 export const BRAND = "cairn";
 
-/** Title-case form for UI labels: the Marketplace display name and command category. */
+/** Title-case form for UI labels: the Marketplace display name, the settings title, and the command category. */
 export const BRAND_TITLE = "Cairn Comments";
 
 /** Git filter driver name, as in `filter.<name>.clean` and `filter=<name>`. */
