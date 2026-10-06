@@ -159,6 +159,16 @@ describe("a string comment moved in or out of a function", () => {
     expect(placed.stale).toEqual([]);
   });
 
+  it("keeps a neighbor stale across the promote when its function changed before it", async () => {
+    const demoted = await demote("a.py", METHOD, 4, await recordTrailing(WITH_TRAILING));
+    // The owner edits the method; the trailing comment was written for the old code.
+    const edited = { ...demoted, source: demoted.source.replace("x = 1", "x = 3") };
+    const trailingId = demoted.sidecar.entries.find((e) => !e.meta.has("literal"))!.id;
+    expect((await placeComments("a.py", edited.source, edited.sidecar)).stale.map((s) => s.id)).toContain(trailingId);
+    const promoted = await promote("a.py", edited);
+    expect((await placeComments("a.py", promoted.source, promoted.sidecar)).stale.map((s) => s.id)).toEqual([trailingId]);
+  });
+
   it("re-records the neighbors a promote can see", async () => {
     const demoted = await demote("a.py", METHOD, 4, await recordTrailing(WITH_TRAILING));
     const promoted = await promote("a.py", demoted);
