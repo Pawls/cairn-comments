@@ -71,9 +71,25 @@ function functionLines(python: boolean, fileIndex: number, step: number): string
   const more = `${sigil} and what breaks if it does not`;
   const trailing = `${sigil} the value ${step} is load-bearing`;
   if (python) {
-    return [`def step_${step}(x):`, `    ${why}`, `    ${more}`, `    y = x + ${step}`, `    return y  ${trailing}`, "", ""];
+    return [
+      `def step_${step}(x):`,
+      `    ${why}`,
+      `    ${more}`,
+      `    y = x + ${step}`,
+      `    return y  ${trailing}`,
+      "",
+      "",
+    ];
   }
-  return [`export function step${step}(x: number): number {`, `  ${why}`, `  ${more}`, `  const y = x + ${step};`, `  return y; ${trailing}`, "}", ""];
+  return [
+    `export function step${step}(x: number): number {`,
+    `  ${why}`,
+    `  ${more}`,
+    `  const y = x + ${step};`,
+    `  return y; ${trailing}`,
+    "}",
+    "",
+  ];
 }
 
 /** Sources without their comments plus the sidecars `sync` records, as they sit in blobs; half Python, half TypeScript. */
@@ -95,7 +111,8 @@ type Mode = "off" | "one-shot" | "process";
 /** Repo-wide config for a mode; `init` writes it exactly as a user's repo would get it. */
 function configure(repo: string, mode: Mode): void {
   if (mode === "off") {
-    for (const key of ["clean", "process"]) spawnSync("git", ["config", "--unset", `filter.cairn.${key}`], { cwd: repo, env });
+    for (const key of ["clean", "process"])
+      spawnSync("git", ["config", "--unset", `filter.cairn.${key}`], { cwd: repo, env });
   } else {
     cli(repo, "init", ...(mode === "one-shot" ? ["--one-shot"] : []));
   }
@@ -108,7 +125,8 @@ function checkout(repo: string, mode: Mode, name: string): { wt: string; ms: num
   if (mode !== "off") {
     const command = git(repo, "config", "--get", "filter.cairn.clean").trim().slice(0, -" clean %f".length);
     git(wt, "config", "--worktree", "filter.cairn.smudge", `${command} smudge %f`);
-    if (mode === "process") git(wt, "config", "--worktree", "filter.cairn.process", `${command} filter-process --smudge`);
+    if (mode === "process")
+      git(wt, "config", "--worktree", "filter.cairn.process", `${command} filter-process --smudge`);
   }
   const ms = timed(() => git(wt, "reset", "--hard", "-q"));
   return { wt, ms };
@@ -138,7 +156,8 @@ function measureRun(repo: string, mode: Mode, runIndex: number, into: Timings): 
   into.warmStatus.push(median(warm));
   const dirty = git(wt, "status", "--porcelain");
   if (dirty) throw new Error(`${mode}: worktree not clean after checkout:\n${dirty.slice(0, 500)}`);
-  if (mode === "process" && runIndex === 0) into.expanded = git(wt, "grep", "-c", "load-bearing", "--", "src/m0/f0.py").trim();
+  if (mode === "process" && runIndex === 0)
+    into.expanded = git(wt, "grep", "-c", "load-bearing", "--", "src/m0/f0.py").trim();
   git(repo, "worktree", "remove", "--force", wt);
 }
 
@@ -158,12 +177,16 @@ function printReport(repo: string, results: Record<Mode, Timings>): void {
     const c = median(results[mode].checkout);
     const w = median(results[mode].warmStatus);
     const pct = `${c >= off.checkout ? "+" : ""}${Math.round(((c - off.checkout) / off.checkout) * 100)}%`;
-    console.log(`| ${mode} | ${fmt(c)} | ${pct} | ${fmt(median(results[mode].firstStatus))} | ${fmt(w)} | +${fmt(w - off.warm)} |`);
+    console.log(
+      `| ${mode} | ${fmt(c)} | ${pct} | ${fmt(median(results[mode].firstStatus))} | ${fmt(w)} | +${fmt(w - off.warm)} |`,
+    );
   }
   const processCheckout = median(results.process.checkout);
   const withinCheckout = processCheckout <= off.checkout * 1.2;
   const withinStatus = median(results.process.warmStatus) - off.warm < 1000;
-  console.log(`\nbudget: checkout under +20%: ${withinCheckout ? "PASS" : "FAIL"}; warm status under +1 s: ${withinStatus ? "PASS" : "FAIL"}`);
+  console.log(
+    `\nbudget: checkout under +20%: ${withinCheckout ? "PASS" : "FAIL"}; warm status under +1 s: ${withinStatus ? "PASS" : "FAIL"}`,
+  );
 }
 
 const repo = path.join(dir, "repo");

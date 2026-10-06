@@ -55,7 +55,9 @@ export async function capture(name: string, cropped = true): Promise<void> {
 export async function sidecarSaved(what: string, test: (text: string) => boolean): Promise<void> {
   await waitFor(what, () => {
     const text = sidecarText();
-    const buffer = vscode.workspace.textDocuments.find((d) => d.uri.toString() === vscode.Uri.file(sidecarPath()).toString());
+    const buffer = vscode.workspace.textDocuments.find(
+      (d) => d.uri.toString() === vscode.Uri.file(sidecarPath()).toString(),
+    );
     return test(text) && (!buffer || buffer.getText() === text);
   });
 }
@@ -94,7 +96,10 @@ export async function shown(style: OwnLineStyle = "codelens") {
   await setStyle(style);
   // The previous test's reset reaches the extension through the file watcher, which may lag.
   let applied = await api.refresh(editor);
-  await waitFor("the committed comments", async () => (applied = await api.refresh(editor)).placed?.threads.length === 6);
+  await waitFor(
+    "the committed comments",
+    async () => (applied = await api.refresh(editor)).placed?.threads.length === 6,
+  );
   if (!applied.placed) throw new Error("the overlay placed nothing");
   return { api, editor, placed: applied.placed };
 }
@@ -154,7 +159,10 @@ const sidecarTabs = () =>
   vscode.window.tabGroups.all
     .flatMap((g) => g.tabs)
     .map((t) => t.input)
-    .filter((input): input is vscode.TabInputText => input instanceof vscode.TabInputText && input.uri.fsPath.includes(".agents"));
+    .filter(
+      (input): input is vscode.TabInputText =>
+        input instanceof vscode.TabInputText && input.uri.fsPath.includes(".agents"),
+    );
 
 /**
  * Reverting a sidecar opens it in a tab, which makes it the user's to save: a later
@@ -174,10 +182,16 @@ async function closeSidecarTabs(): Promise<void> {
  */
 async function waitForReload(): Promise<void> {
   const committed = readFileSync(samplePath(), "utf8");
-  await waitFor("the file to reload", async () => (await vscode.workspace.openTextDocument(samplePath())).getText() === committed);
+  await waitFor(
+    "the file to reload",
+    async () => (await vscode.workspace.openTextDocument(samplePath())).getText() === committed,
+  );
   for (const document of vscode.workspace.textDocuments) {
     if (document.uri.scheme !== "file" || !existsSync(document.fileName)) continue;
-    await waitFor(`${path.basename(document.fileName)} to reload`, () => document.getText() === readFileSync(document.fileName, "utf8"));
+    await waitFor(
+      `${path.basename(document.fileName)} to reload`,
+      () => document.getText() === readFileSync(document.fileName, "utf8"),
+    );
   }
 }
 
@@ -201,7 +215,12 @@ export async function copied(api: TestApi, document: vscode.TextDocument, range:
 }
 
 /** Asks the paste provider for `at` and asserts it offers exactly one edit. */
-export async function pasteEdit(api: TestApi, document: vscode.TextDocument, at: vscode.Range, transfer: vscode.DataTransfer) {
+export async function pasteEdit(
+  api: TestApi,
+  document: vscode.TextDocument,
+  at: vscode.Range,
+  transfer: vscode.DataTransfer,
+) {
   const edits = await api.paste.provideDocumentPasteEdits(document, [at], transfer);
   assert.equal(edits?.length, 1);
   const [pasted] = edits ?? [];
@@ -216,7 +235,11 @@ export async function applyAdditionalEdit(pasted: vscode.DocumentPasteEdit): Pro
 }
 
 /** Inserts the text a paste offers at `at`, as the editor does before it applies the paste's other edits. */
-export async function applyInsertText(document: vscode.TextDocument, pasted: vscode.DocumentPasteEdit, at: vscode.Position): Promise<void> {
+export async function applyInsertText(
+  document: vscode.TextDocument,
+  pasted: vscode.DocumentPasteEdit,
+  at: vscode.Position,
+): Promise<void> {
   if (typeof pasted.insertText !== "string") throw new Error("the paste offered a snippet");
   const edit = new vscode.WorkspaceEdit();
   edit.insert(document.uri, at, pasted.insertText);
@@ -234,9 +257,16 @@ export async function appendBlankLines(editor: vscode.TextEditor): Promise<numbe
  * Cuts `refund`'s five lines and pastes them at an empty cursor on `to`, which puts them
  * above that line, as one edit that also carries the sidecar change (as a real paste lands).
  */
-export async function cutAndPasteRefund(api: TestApi, editor: vscode.TextEditor, to: number | "last line"): Promise<void> {
+export async function cutAndPasteRefund(
+  api: TestApi,
+  editor: vscode.TextEditor,
+  to: number | "last line",
+): Promise<void> {
   const document = editor.document;
-  const from = document.getText().split("\n").findIndex((l) => l.startsWith("def refund"));
+  const from = document
+    .getText()
+    .split("\n")
+    .findIndex((l) => l.startsWith("def refund"));
   const cut = new vscode.Range(from, 0, from + 5, 0);
   const text = document.getText(cut);
   await editor.edit((b) => b.delete(cut));
@@ -249,7 +279,10 @@ export async function cutAndPasteRefund(api: TestApi, editor: vscode.TextEditor,
 
 /** Whether `refund`'s comment is rendered on its `return None`, wherever `refund` is. */
 export async function refundCommentShown(api: TestApi, editor: vscode.TextEditor): Promise<boolean> {
-  const row = editor.document.getText().split("\n").findIndex((l) => l.startsWith("        return None"));
+  const row = editor.document
+    .getText()
+    .split("\n")
+    .findIndex((l) => l.startsWith("        return None"));
   const placed = (await api.refresh(editor)).placed;
   const lens = placed?.lenses.some((l) => l.line === row && l.title === REFUND_LENS);
   return !!lens && api.placed.sites(editor.document).some((s) => s.id === "ewiw" && s.row === row);

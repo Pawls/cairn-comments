@@ -12,7 +12,9 @@ const cli = path.resolve(here, "../../../cli/bundle/main.js");
 /** The extension package; this file sits two levels below it, in out/e2e. */
 export const packageRoot = path.resolve(here, "../..");
 /** The extension under test: this package, or an unpacked .vsix's `extension/` folder. */
-export const extensionPath = process.env.CAIRN_E2E_EXTENSION ? path.resolve(process.env.CAIRN_E2E_EXTENSION) : packageRoot;
+export const extensionPath = process.env.CAIRN_E2E_EXTENSION
+  ? path.resolve(process.env.CAIRN_E2E_EXTENSION)
+  : packageRoot;
 export const fixtureDir = path.join(packageRoot, "e2e/fixture");
 
 export interface ScratchRepo {
@@ -30,7 +32,10 @@ export interface ScratchRepo {
 export function scratchRepo(populate: (repo: string) => void): ScratchRepo {
   const dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "cairn-e2e-")));
   const config = path.join(dir, "gitconfig");
-  writeFileSync(config, "[user]\n\tname = e2e\n\temail = e2e@example.com\n[core]\n\tautocrlf = false\n[init]\n\tdefaultBranch = main\n");
+  writeFileSync(
+    config,
+    "[user]\n\tname = e2e\n\temail = e2e@example.com\n[core]\n\tautocrlf = false\n[init]\n\tdefaultBranch = main\n",
+  );
   const env = {
     GIT_CONFIG_GLOBAL: config,
     GIT_CONFIG_NOSYSTEM: "1",

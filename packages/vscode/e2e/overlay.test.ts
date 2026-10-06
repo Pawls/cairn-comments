@@ -53,7 +53,10 @@ const settleNotesShownOn = async (api: TestApi, editor: vscode.TextEditor, line:
 
 /** Waits until the sidecar holds both comments a whole-line paste of `settle`'s write line copies. */
 const bothSettleNotesCopied = () =>
-  waitFor("both pasted comments in the sidecar", () => /copied-from=1kjy/.test(sidecarText()) && /copied-from=f7eo/.test(sidecarText()));
+  waitFor(
+    "both pasted comments in the sidecar",
+    () => /copied-from=1kjy/.test(sidecarText()) && /copied-from=f7eo/.test(sidecarText()),
+  );
 
 suite("overlay", () => {
   suiteSetup(async () => {
@@ -103,7 +106,10 @@ suite("overlay", () => {
       );
       const settleNote = comment(api, editor, "1kjy");
       assert.equal(settleNote.author.name, "claude-code · claude-opus-5-5 · 2026-09-25 18:40 UTC");
-      assert.equal(bodyText(settleNote), "retries are safe: ledger write is idempotent\n\nthe ledger dedupes on order.id, so a retried settle is a no-op");
+      assert.equal(
+        bodyText(settleNote),
+        "retries are safe: ledger write is idempotent\n\nthe ledger dedupes on order.id, so a retried settle is a no-op",
+      );
       assert.equal(settleNote.contextValue, "current");
       const audit = comment(api, editor, "p7c3");
       assert.equal(audit.contextValue, "stale");
@@ -113,7 +119,11 @@ suite("overlay", () => {
       await clickLens(lens);
       assert.equal(threadOf(settleNote).collapsibleState, vscode.CommentThreadCollapsibleState.Expanded);
       await clickLens(lens);
-      assert.equal(threadOf(settleNote).collapsibleState, vscode.CommentThreadCollapsibleState.Collapsed, "a second click closes the thread");
+      assert.equal(
+        threadOf(settleNote).collapsibleState,
+        vscode.CommentThreadCollapsibleState.Collapsed,
+        "a second click closes the thread",
+      );
     });
 
     test("thread: each own-line comment is an expanded thread below the line above its code", async () => {
@@ -182,7 +192,10 @@ suite("overlay", () => {
       await vscode.commands.executeCommand("cairn.saveComment", refund);
       assert.equal(refund.mode, vscode.CommentMode.Preview);
       assert.match(sidecarText(), /## ewiw\n<!--[^\n]*-->\nsupport refunds a closed order by hand\n/);
-      await waitFor("the lens to update", async () => lensTitle(await placedNow(api, editor), 3) === "support refunds a closed order by hand");
+      await waitFor(
+        "the lens to update",
+        async () => lensTitle(await placedNow(api, editor), 3) === "support refunds a closed order by hand",
+      );
     });
 
     test("a thread shows each line of a body on its own line, and edits the lines stored", async () => {
@@ -192,10 +205,16 @@ suite("overlay", () => {
       await vscode.commands.executeCommand("cairn.editComment", edited);
       edited.body = lines;
       await vscode.commands.executeCommand("cairn.saveComment", edited);
-      assert.match(sidecarText(), /## ewiw\n<!--[^\n]*-->\nsupport refunds a closed order by hand\nso there is nothing to reverse\n/);
+      assert.match(
+        sidecarText(),
+        /## ewiw\n<!--[^\n]*-->\nsupport refunds a closed order by hand\nso there is nothing to reverse\n/,
+      );
       await waitFor("the thread to show both lines", async () => {
         await api.refresh(editor);
-        return bodyText(comment(api, editor, "ewiw")) === "support refunds a closed order by hand  \nso there is nothing to reverse";
+        return (
+          bodyText(comment(api, editor, "ewiw")) ===
+          "support refunds a closed order by hand  \nso there is nothing to reverse"
+        );
       });
 
       const refund = comment(api, editor, "ewiw");
@@ -207,7 +226,10 @@ suite("overlay", () => {
     test("Confirm clears a stale comment", async () => {
       const { api, editor } = await shown("codelens");
       await vscode.commands.executeCommand("cairn.confirmComment", comment(api, editor, "p7c3"));
-      await waitFor("the stale tag to go", async () => lensTitle(await placedNow(api, editor), 4) === STALE_LENS.replace("[stale?] ", ""));
+      await waitFor(
+        "the stale tag to go",
+        async () => lensTitle(await placedNow(api, editor), 4) === STALE_LENS.replace("[stale?] ", ""),
+      );
       assert.equal(comment(api, editor, "p7c3").contextValue, "current");
     });
 
@@ -221,7 +243,10 @@ suite("overlay", () => {
     test("Promote writes an ordinary comment into the file and removes the entry", async () => {
       const { api, editor } = await shown("codelens");
       await vscode.commands.executeCommand("cairn.promoteComment", comment(api, editor, "ewiw"));
-      assert.match(readFileSync(samplePath(), "utf8"), / {4}if order\.closed:\n {8}# a closed order was already refunded by support by hand\n {8}return None\n/);
+      assert.match(
+        readFileSync(samplePath(), "utf8"),
+        / {4}if order\.closed:\n {8}# a closed order was already refunded by support by hand\n {8}return None\n/,
+      );
       assert.equal(editor.document.isDirty, false);
       assert.doesNotMatch(sidecarText(), /## ewiw/);
       await waitFor("the lens to go", async () => (await placedNow(api, editor)).lenses.length === 4);
@@ -237,7 +262,10 @@ suite("overlay", () => {
       await vscode.commands.executeCommand("cairn.promoteComment", comment(api, editor, "ewiw"));
       await vscode.window.showTextDocument(editor.document);
       await vscode.commands.executeCommand("undo");
-      await waitFor("the undo saved in both files", () => readFileSync(samplePath(), "utf8") === committed.source && sidecarText() === committed.sidecar);
+      await waitFor(
+        "the undo saved in both files",
+        () => readFileSync(samplePath(), "utf8") === committed.source && sidecarText() === committed.sidecar,
+      );
       assert.equal(editor.document.isDirty, false);
       await waitFor("the comment back in the overlay", async () => (await placedNow(api, editor)).lenses.length === 5);
     });
@@ -260,7 +288,8 @@ suite("overlay", () => {
       const pasteAt = await appendBlankLines(editor);
       const at = new vscode.Range(pasteAt, 0, pasteAt, 0);
       const [pasted] = (await api.paste.provideDocumentPasteEdits(document, [at], transfer)) ?? [];
-      if (!pasted?.additionalEdit || typeof pasted.insertText !== "string") throw new Error("the paste offered no text and sidecar edit");
+      if (!pasted?.additionalEdit || typeof pasted.insertText !== "string")
+        throw new Error("the paste offered no text and sidecar edit");
       // One edit, as a real paste lands, so one undo step covers the source and the sidecar.
       const edit = new vscode.WorkspaceEdit();
       edit.insert(document.uri, at.start, pasted.insertText);
@@ -285,7 +314,8 @@ suite("overlay", () => {
       await setMode(api, "on");
       const file = path.join(repo(), "notes.py");
       const notesSidecar = path.join(repo(), ".agents/comments/notes.py.md");
-      const original = 'def settle(order):\n    """Settle one order."""\n    ledger.write(order.id)\n    """\n    Idempotent: keyed on order.id.\n    """\n    notify(order)\n';
+      const original =
+        'def settle(order):\n    """Settle one order."""\n    ledger.write(order.id)\n    """\n    Idempotent: keyed on order.id.\n    """\n    notify(order)\n';
       writeFileSync(file, original);
       try {
         const editor = await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(file));
@@ -293,7 +323,10 @@ suite("overlay", () => {
         assert.deepEqual(await titles(1), [], "a docstring stays in the code");
         assert.deepEqual(await titles(4), ["Demote string to an AI comment (move it to the sidecar)"]);
 
-        assert.equal(await vscode.commands.executeCommand("cairn.demoteComment", { file, line: 5 }), "demoted 1 comment(s) in 1 file(s)\n");
+        assert.equal(
+          await vscode.commands.executeCommand("cairn.demoteComment", { file, line: 5 }),
+          "demoted 1 comment(s) in 1 file(s)\n",
+        );
         const code = 'def settle(order):\n    """Settle one order."""\n    ledger.write(order.id)\n    notify(order)\n';
         await waitFor("the string to leave the file", () => editor.document.getText() === code);
         const id = /^## ([0-9a-z]{4})\n<!-- .*literal=triple-double/m.exec(readFileSync(notesSidecar, "utf8"))?.[1];
@@ -329,7 +362,10 @@ suite("overlay", () => {
       const sidecar = sidecarText();
       const id = /## ([0-9a-z]{4})\n<!-- by=claude-code [^\n]*copied-from=ewiw[^\n]*scope=refund@1 /.exec(sidecar)?.[1];
       assert.ok(id, `no copied entry anchored to the second refund in:\n${sidecar}`);
-      assert.match(sidecar, new RegExp(`## ${id}\\n<!--[^\\n]*-->\\na closed order was already refunded by support by hand\\n`));
+      assert.match(
+        sidecar,
+        new RegExp(`## ${id}\\n<!--[^\\n]*-->\\na closed order was already refunded by support by hand\\n`),
+      );
       const sidecarDocument = vscode.workspace.textDocuments.find((d) => d.fileName === sidecarPath());
       assert.ok(!sidecarDocument?.isDirty, "the sidecar was left unsaved");
 
@@ -357,7 +393,10 @@ suite("overlay", () => {
       await document.save();
       await waitFor("the pasted comments on the new line", async () => {
         const placed = await placedNow(api, editor);
-        return placed.lenses.some((l) => l.line === 18 && l.title === SETTLE_LENS) && placed.labels.some((l) => l.line === 18 && l.text === TRAILING_LABEL);
+        return (
+          placed.lenses.some((l) => l.line === 18 && l.title === SETTLE_LENS) &&
+          placed.labels.some((l) => l.line === 18 && l.text === TRAILING_LABEL)
+        );
       });
     });
   });
@@ -397,7 +436,8 @@ suite("overlay", () => {
       const { api, editor } = await shown("codelens");
       const document = editor.document;
       // Its comment sits on `return None`, the third of `refund`'s five lines.
-      const refundLens = (line: number) => async () => (await placedNow(api, editor)).lenses.some((l) => l.line === line && l.title === REFUND_LENS);
+      const refundLens = (line: number) => async () =>
+        (await placedNow(api, editor)).lenses.some((l) => l.line === line && l.title === REFUND_LENS);
 
       // The fixture's anchors are hand-written, so the first move records them afresh.
       const committed = sidecarText();
@@ -465,7 +505,10 @@ suite("overlay", () => {
       const recorded = sidecarText();
       await editor.edit((b) => b.insert(new vscode.Position(1, 0), "VERSION = 2\n"));
       const beforeCut = document.getText();
-      const audit = document.getText().split("\n").findIndex((l) => l.startsWith("def audit"));
+      const audit = document
+        .getText()
+        .split("\n")
+        .findIndex((l) => l.startsWith("def audit"));
       await cutAndPasteRefund(api, editor, audit - 2);
       await waitFor("refund's comment on the pasted function", () => refundCommentShown(api, editor));
       assert.equal(sidecarText(), recorded);
@@ -485,7 +528,10 @@ suite("overlay", () => {
       const recorded = sidecarText();
       await editor.edit((b) => b.insert(new vscode.Position(1, 0), "VERSION = 2\n"));
       const beforeCut = document.getText();
-      const audit = document.getText().split("\n").findIndex((l) => l.startsWith("def audit"));
+      const audit = document
+        .getText()
+        .split("\n")
+        .findIndex((l) => l.startsWith("def audit"));
       await cutAndPasteRefund(api, editor, audit - 2);
       const afterPaste = document.getText();
       await waitFor("refund's comment on the pasted function", () => refundCommentShown(api, editor));
@@ -509,14 +555,18 @@ suite("overlay", () => {
       await recordRefundAnchors(api, editor);
       // The CLI's record of the ids it last wrote into this worktree's files (design.md § Anchoring, "Deleting").
       const seenDir = path.join(repo(), ".git", "cairn", "seen");
-      const seenRecord = () => (existsSync(seenDir) ? readdirSync(seenDir).map((f) => f + readFileSync(path.join(seenDir, f), "utf8")) : []);
+      const seenRecord = () =>
+        existsSync(seenDir) ? readdirSync(seenDir).map((f) => f + readFileSync(path.join(seenDir, f), "utf8")) : [];
       const recorded = { sidecar: readFileSync(sidecarPath()), seen: seenRecord() };
       const unchanged = (step: string) => {
         assert.ok(readFileSync(sidecarPath()).equals(recorded.sidecar), `the sidecar changed on disk after ${step}`);
         assert.deepEqual(seenRecord(), recorded.seen, `the seen record changed after ${step}`);
       };
       await editor.edit((b) => b.insert(new vscode.Position(1, 0), "VERSION = 2\n"));
-      const audit = document.getText().split("\n").findIndex((l) => l.startsWith("def audit"));
+      const audit = document
+        .getText()
+        .split("\n")
+        .findIndex((l) => l.startsWith("def audit"));
       await cutAndPasteRefund(api, editor, audit - 2);
       await api.refresh(editor);
       unchanged("the paste");
@@ -537,7 +587,10 @@ suite("overlay", () => {
       await editor.edit((b) => b.insert(new vscode.Position(5, 0), "    log(order)\n"));
       const tracked = (await api.refresh(editor)).placed;
       const trackedSites = api.placed.sites(document);
-      assert.ok(tracked?.lenses.some((l) => l.line === 7 && l.title === RETURN_LENS), "ip6u moved down with its line, not stale");
+      assert.ok(
+        tracked?.lenses.some((l) => l.line === 7 && l.title === RETURN_LENS),
+        "ip6u moved down with its line, not stale",
+      );
 
       await editor.edit((b) => b.insert(new vscode.Position(0, 0), "VERSION = 2\n"));
       await api.refresh(editor);
@@ -576,7 +629,10 @@ suite("overlay", () => {
       const document = editor.document;
       await recordRefundAnchors(api, editor);
       await editor.edit((b) => b.insert(new vscode.Position(1, 0), "VERSION = 2\n"));
-      const audit = document.getText().split("\n").findIndex((l) => l.startsWith("def audit"));
+      const audit = document
+        .getText()
+        .split("\n")
+        .findIndex((l) => l.startsWith("def audit"));
       await cutAndPasteRefund(api, editor, audit - 2);
       await waitFor("refund's comment on the pasted function", () => refundCommentShown(api, editor));
 
@@ -628,7 +684,9 @@ suite("overlay", () => {
       assert.equal(editor.document.lineAt(5).text, WRITE_LINE);
       assert.ok(await settleNotesShownOn(api, editor, 5), "the comments follow the line while the file is unsaved");
       await editor.document.save();
-      await waitFor("the comments on the moved line after placing from anchors", () => settleNotesShownOn(api, editor, 5));
+      await waitFor("the comments on the moved line after placing from anchors", () =>
+        settleNotesShownOn(api, editor, 5),
+      );
     });
 
     test("a line cut from its first non-blank character moves its comments to where it is pasted", async () => {
@@ -645,7 +703,11 @@ suite("overlay", () => {
       assert.equal(document.lineAt(18).text, WRITE_LINE);
       await sidecarSaved("the moved comments' new anchors in the sidecar", (s) => s !== before);
       assert.doesNotMatch(sidecarText(), /copied-from/);
-      assert.equal(sidecarText().match(/keyed on order\.id/g)?.length, 1, "the trailing comment moved rather than being copied");
+      assert.equal(
+        sidecarText().match(/keyed on order\.id/g)?.length,
+        1,
+        "the trailing comment moved rather than being copied",
+      );
       await document.save();
       await waitFor("the moved comments on the pasted line", () => settleNotesShownOn(api, editor, 18));
     });
@@ -685,7 +747,10 @@ suite("overlay", () => {
       /** Whether each `[line, title]` lens and the trailing label on `label` are rendered now. */
       const shows = async (lens: [number, string][], label: number) => {
         const placed = await placedNow(api, editor);
-        return lens.every(([line, title]) => lensEndingWith(placed, line, title)) && labelEndingWith(placed, label, TRAILING_LABEL);
+        return (
+          lens.every(([line, title]) => lensEndingWith(placed, line, title)) &&
+          labelEndingWith(placed, label, TRAILING_LABEL)
+        );
       };
       const afterDown: [number, string][] = [
         [4, SETTLE_LENS],

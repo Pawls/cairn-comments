@@ -155,7 +155,11 @@ async function replayFile(file: string, window: string, text: string, now: strin
       orphans.push({ file, kind, scope: entry.meta.get("scope") ?? "(module)", before, kept: now.includes(before) });
     } else if (renamed.has(entry.id)) {
       tally("rename", kind, fileChanged);
-      renames.push({ file, from: entry.meta.get("scope") ?? "", to: codeAfter(placed.source, spec.lineSigil, entry.id) });
+      renames.push({
+        file,
+        from: entry.meta.get("scope") ?? "",
+        to: codeAfter(placed.source, spec.lineSigil, entry.id),
+      });
     } else if (stale.has(entry.id)) {
       tally("diff", kind, fileChanged);
       const before = codeAfter(recorded.source, spec.lineSigil, entry.id);
@@ -219,5 +223,7 @@ for (const o of spread(kept, 12)) console.log(`  ${o.file} (${o.kind}, scope ${o
 const sample = spread(diffSamples, Number(args.sample));
 console.log(`\nsample of ${sample.length} diff placements (old code | new code; = when unchanged):`);
 for (const [i, s] of sample.entries()) {
-  console.log(`  [${i + 1}] ${s.window} ${s.file} (${s.kind})\n      old: ${s.before}\n      new: ${s.moved ? s.after : "="}`);
+  console.log(
+    `  [${i + 1}] ${s.window} ${s.file} (${s.kind})\n      old: ${s.before}\n      new: ${s.moved ? s.after : "="}`,
+  );
 }

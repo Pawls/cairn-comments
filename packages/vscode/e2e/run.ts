@@ -34,7 +34,13 @@ const REVIEW_FILES: Record<string, string> = {
     "    return data  # Updated to return the raw text",
     "",
   ].join("\n"),
-  "src/util.ts": ["export function add(a: number, b: number) {", "  // 🚀 Add the numbers", "  return a + b;", "}", ""].join("\n"),
+  "src/util.ts": [
+    "export function add(a: number, b: number) {",
+    "  // 🚀 Add the numbers",
+    "  return a + b;",
+    "}",
+    "",
+  ].join("\n"),
   // Same as the overlay fixture: the tests drive git themselves, and VS Code's built-in git
   // extension would otherwise watch and refresh the repository beside them.
   ".vscode/settings.json": '{\n  "git.enabled": false\n}\n',
@@ -48,12 +54,21 @@ const writeReviewFiles = (repo: string) => {
 };
 
 /** Runs one suite from dist/e2e/index.cjs in a VS Code window opened on `target`. */
-async function runSuite(suite: "overlay" | "review", target: ScratchRepo, env: Record<string, string> = {}): Promise<void> {
+async function runSuite(
+  suite: "overlay" | "review",
+  target: ScratchRepo,
+  env: Record<string, string> = {},
+): Promise<void> {
   await runTests({
     extensionDevelopmentPath: extensionPath,
     extensionTestsPath: path.join(packageRoot, "dist/e2e/index.cjs"),
     launchArgs: [target.repo, "--disable-extensions"],
-    extensionTestsEnv: { CAIRN_SUITE: suite, CAIRN_SCREENSHOTS: process.env.CAIRN_SCREENSHOTS ?? "", ...target.env, ...env },
+    extensionTestsEnv: {
+      CAIRN_SUITE: suite,
+      CAIRN_SCREENSHOTS: process.env.CAIRN_SCREENSHOTS ?? "",
+      ...target.env,
+      ...env,
+    },
   });
 }
 
