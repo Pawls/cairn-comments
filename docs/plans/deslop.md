@@ -14,15 +14,16 @@
 >
 > **Next:** D4, deslop the CLI.
 > **Branch:** `deslop-<slice>` per lane (e.g. `deslop-d1`), each off `main` as its own PR.
-> **Lanes:** A: D1 · D: D4 · E: D5→D6 · F: D7
+> **Lanes:** A: D8 · D: D4 · E: D5→D6 · F: D7
 
-- [D1 — Core placement](#d1)
+- [~~D1 — Core placement~~ — SHIPPED 2026-10-06](#d1)
 - [~~D2 — Core scan, detectors, literals, markers~~ — SHIPPED 2026-10-06](#d2)
 - [~~D3 — Core remainder~~ — SHIPPED 2026-10-06](#d3)
 - [D4 — CLI](#d4)
 - [D5 — VS Code extension source](#d5)
 - [D6 — Extension e2e, native harness, scripts](#d6)
 - [D7 — Design doc journal voice](#d7)
+- [D8 — Unterminated file loses a blank line between comment blocks](#d8)
 
 ## Traps
 
@@ -69,24 +70,27 @@ index; no plan-slice ids appear in code. Totals per slice, source / tests:
 | D5 | 2,034 / 354 | `activate` (243, a closure god function), `registerReviewTree` (187) | 19 / 1 | 63 / 6 |
 | D6 | – / 1,568 | `overlay.test.ts` body (542) | – / 109 | – / 76 |
 
-### D1 — Core placement · Opus 5.5 / high {#d1}
+### ~~D1 — Core placement~~ · Opus 5.5 / high — SHIPPED 2026-10-06 {#d1}
 
-**Status:** Not started. The largest module, and it runs inside `clean`.
+**Status:** Shipped in PR #9. `placement.ts`'s long functions are split by phase (longest now `resolve`, 31
+lines; worst score 14); non-null assertions went from 45 to 32. 476 tests pass on Windows and WSL, bench
+2,931 ms. Replay over one repository gave the same counts as `main` (149,437 exact, 934 diff, 3 rename, 484
+orphan), and an old-against-new probe over 409 files matched on every file. Found the bug that is now D8.
 **Note (from D2):** `stringStatementAt`'s refusal reasons are mostly tested through `demoteTarget` in
 `promote.test.ts`; the two that had no test ("sharing its line", "empty string") are pinned in `scan.test.ts`.
 **Touches:** `packages/core/src/placement.ts`; `packages/core/test/{placement,tag,promote,normalization}.test.ts`.
 **After:** none.
 
-- [ ] Re-run the metrics on the Touches and record them in the PR body
-- [ ] Comment pass (rules 5, 23, 26, 28, 30): every docstring verb checked against its body,
+- [x] Re-run the metrics on the Touches and record them in the PR body
+- [x] Comment pass (rules 5, 23, 26, 28, 30): every docstring verb checked against its body,
       every backticked name resolves, every stated number recomputed
-- [ ] `recordComments` (79 lines) and the other long functions split by phase (rule 4), each
+- [x] `recordComments` (79 lines) and the other long functions split by phase (rule 4), each
       piece scored under 15; pins added first where a phase has no direct test
-- [ ] The four `forEach` closures checked for outer writes (rule 13); the 45 non-null
+- [x] The four `forEach` closures checked for outer writes (rule 13); the 45 non-null
       assertions reduced where a type or guard states the fact instead
-- [ ] Verify: lint, `npm test`, `npm run bench`, `npm run replay -- --repo <path>` on one
+- [x] Verify: lint, `npm test`, `npm run bench`, `npm run replay -- --repo <path>` on one
       repository with placement counts identical to `main`
-- [ ] `## Skill notes` and `## Plan notes` in the PR body
+- [x] `## Skill notes` and `## Plan notes` in the PR body
 
 Cancel a split if its equivalence cannot be argued line by line; leave the code and say why.
 
@@ -195,6 +199,25 @@ bullet "The recorded CLI lives in a home the tool owns" (whose own text says "bu
 
 Out of scope: commit history. Slice-code commit subjects stay; rewriting merged history is
 not a cleanup.
+
+### D8 — Unterminated file loses a blank line between comment blocks · Opus 5.5 / high {#d8}
+
+**Status:** Not started. A bug D1 found and left alone: the fix changes what `clean` writes into blobs.
+`x = 1\n#~ first\n\n#~ second` (no final newline) strips to `x = 1\n`, because `stripComments` takes the kept
+blank line's terminator, and places back as `x = 1\n#~ first\n#~ second\n`: the blank line is lost and a final
+newline is added. The same file with a final newline round-trips.
+**Touches:** `packages/core/src/placement.ts`; `packages/core/test/placement.test.ts`; `docs/design.md` if a
+round-trip rule changes.
+**After:** D1.
+
+- [ ] A failing round-trip test for the unterminated case, committed before the fix, with the red run shown
+- [ ] The fix, keeping every other line's terminator (`applySplices`) and `clean` pure in (path, source)
+- [ ] The property tests and the `autocrlf=true` integration scenarios still pass; say in the PR whether any
+      existing blob's cleaned form changes, and for which inputs
+- [ ] Verify: lint, `npm test` on Windows and WSL, `npm run bench`, `npm run replay -- --repo <path>` with
+      counts compared to `main`
+
+Cancel if the fix would change the cleaned form of a file that round-trips today; report the case instead.
 
 ## Follow-ups outside these slices
 
