@@ -113,8 +113,10 @@ Each is pinned by a test in `packages/core/test/` or `packages/cli/test/`.
 - **Terminators.** `stripComments` removes an own-line comment with its line and
   terminator, and a trailing one with the whitespace before it, so every other line keeps
   its terminator. A comment on an unterminated last line takes the terminator before it
-  instead, recorded as `eof` so placing it puts that terminator back. `placeComments`
-  gives inserted lines the terminator of the line they go above.
+  instead, recorded as `eof` so placing it puts that terminator back. When the line before
+  is empty, that line keeps its terminator (without it the line would vanish); then, or
+  when no line comes before, `eof=none` makes the placed comment end the file unterminated
+  again. `placeComments` gives inserted lines the terminator of the line they go above.
 - **Trailing comments** have one line, so a multi-line body shows with its lines joined by
   a space. `sync` and the id rules compare in that flattened form, so viewing a body that
   way is never read as an edit.
@@ -565,7 +567,7 @@ Implemented in `packages/core/src/placement.ts` (`stripComments` is the clean fi
   - `skip`: kept lines (blank, human comments) between the comment and its node; `seq`:
     order among blocks that land on one line; `indent`, `gap` as runs (`4s`, `1t`) when
     they differ from the line placed against; `eof`, the terminator taken from before a
-    comment on an unterminated last line.
+    comment on an unterminated last line (`lf`, `crlf`), or `none` when none was taken.
 - **When it is placed.** Smudge (`placeComments`, through `locate`) places an entry
   exactly when its scope resolves, its node is found, and, in a function scope, the
   function hashes to `body`: moving the function, editing its siblings, or reformatting
