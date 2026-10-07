@@ -100,6 +100,32 @@ function wholeRows(lines: Lines, start: vscode.Position, end: vscode.Position): 
   return { first: start.line, last };
 }
 
+interface Insertion {
+  at: vscode.Range;
+  /** Whether the copied lines go on their own lines above the cursor. */
+  onNewLine: boolean;
+  /** What the paste inserts at `at`, in the document's line breaks. */
+  pasted: string;
+  /** The document's text after the paste. */
+  code: string;
+}
+
+/** Where a paste of `clipboard` into `range` goes and what it leaves in `document`. */
+function insertionOf(document: vscode.TextDocument, range: vscode.Range, payload: Payload, clipboard: string): Insertion {
+  const lines = range.isEmpty ? payload.lines : undefined;
+  const onNewLine = lines !== undefined;
+  const at = onNewLine ? new vscode.Range(range.start.line, 0, range.start.line, 0) : range;
+  const eol = document.eol === vscode.EndOfLine.CRLF ? "\r\n" : "\n";
+  const pasted = (lines ?? clipboard).replace(/\r?\n/g, eol);
+  const whole = document.getText();
+  const code = whole.slice(0, document.offsetAt(at.start)) + pasted + whole.slice(document.offsetAt(at.end));
+  return { at, onNewLine, pasted, code };
+}
+
+function withoutEntries(sidecar: Sidecar, ids: ReadonlySet<string>): Sidecar {
+  return { preamble: sidecar.preamble, entries: sidecar.entries.filter((e) => !ids.has(e.id)) };
+}
+
 export class CommentPaste implements vscode.DocumentPasteEditProvider {
   static readonly metadata: vscode.DocumentPasteProviderMetadata = {
     providedPasteEditKinds: [PASTE_KIND],
@@ -157,18 +183,11 @@ export class CommentPaste implements vscode.DocumentPasteEditProvider {
     // A file with no placed comments yet may sit outside any set-up repository; take it only when the copy came from the same one.
     if (!target || (!target.placed && target.root !== payload.root)) return undefined;
 
-    const range = ranges[0]!;
-    const onNewLine = payload.lines !== undefined && range.isEmpty;
-    const at = onNewLine ? new vscode.Range(range.start.line, 0, range.start.line, 0) : range;
-    const eol = document.eol === vscode.EndOfLine.CRLF ? "\r\n" : "\n";
-    const pasted = (onNewLine ? payload.lines! : text).replace(/\r?\n/g, eol);
-    const whole = document.getText();
-    const code = whole.slice(0, document.offsetAt(at.start)) + pasted + whole.slice(document.offsetAt(at.end));
-
+    const { at, onNewLine, pasted, code } = insertionOf(document, ranges[0]!, payload, text);
     const source = await this.source(payload.source);
     const moved = new Set(payload.comments.filter((c) => source && !source.placed.has(c.from)).map((c) => c.from));
     const sameSidecar = source?.target.sidecarPath === target.sidecarPath;
-    const withoutMoved = (sidecar: Sidecar): Sidecar => ({ preamble: sidecar.preamble, entries: sidecar.entries.filter((e) => !moved.has(e.id)) });
+    const withoutMoved = (sidecar: Sidecar) => withoutEntries(sidecar, moved);
     const carried = payload.comments.map((c) => ({
       row: at.start.line + c.relRow,
       kind: c.kind,

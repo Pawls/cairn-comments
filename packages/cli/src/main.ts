@@ -43,7 +43,8 @@ const USAGE = `usage: ${BRAND} <command>
   expand [files...]             place every comment in the working files
   collapse [files...]           remove the comments from the working files
   refresh                       in an agent worktree, place the comments of every file
-                                with a sidecar (the post-checkout, post-merge, post-commit hooks)
+                                with a sidecar (run by the post-checkout, post-merge,
+                                post-commit, and post-rewrite hooks)
   scan [--json] [--all] [files...]
                                 list likely AI comments; --all adds detectors that ship disabled
   scan --apply <review.json|->  convert the accepted comments of a reviewed \`scan --json\` list to
@@ -92,7 +93,13 @@ function printJson(value: unknown): void {
 /** Git runs filters from the worktree root and passes a root-relative path. */
 async function runFilter(mode: "clean" | "smudge", file: string | undefined): Promise<void> {
   if (!file) throw new Error(`${mode} needs the path git passes as %f`);
-  const output = await filterContent(mode, process.cwd(), file, await readStdin(), filterMode(process.cwd(), mode === "smudge"));
+  const output = await filterContent(
+    mode,
+    process.cwd(),
+    file,
+    await readStdin(),
+    filterMode(process.cwd(), mode === "smudge"),
+  );
   await new Promise<void>((resolve, reject) => {
     process.stdout.write(output, (err) => (err ? reject(err) : resolve()));
   });
@@ -102,7 +109,12 @@ async function runFilterProcess(args: string[]): Promise<void> {
   const { values } = parseArgs({ args, options: { smudge: { type: "boolean", default: false } } });
   const log = (message: string) => process.stderr.write(`${BRAND}: ${message}\n`);
   const root = process.cwd();
-  return serveFilterProcess(process.stdin, process.stdout, { root, smudge: values.smudge, mode: filterMode(root, values.smudge), log });
+  return serveFilterProcess(process.stdin, process.stdout, {
+    root,
+    smudge: values.smudge,
+    mode: filterMode(root, values.smudge),
+    log,
+  });
 }
 
 async function runSync(args: string[]): Promise<void> {
@@ -180,7 +192,13 @@ async function runCheck(args: string[]): Promise<void> {
   if (values.prune && !values.fix) throw new Error("--prune removes entries only together with --fix");
   const root = repoRoot();
   if (values.stale) return runStaleCheck(root, positionals, values.json);
-  const report = await check(root, { files: positionals, staged: values.staged, fix: values.fix, orphans: values.orphans, prune: values.prune });
+  const report = await check(root, {
+    files: positionals,
+    staged: values.staged,
+    fix: values.fix,
+    orphans: values.orphans,
+    prune: values.prune,
+  });
   if (values.json) printJson(report);
   else process.stdout.write(formatCheck(report));
   if (report.problems.length) process.exitCode = 1;
@@ -254,7 +272,11 @@ async function runPromote(args: string[]): Promise<void> {
 }
 
 async function runDemote(args: string[]): Promise<void> {
-  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { print: { type: "boolean", default: false } } });
+  const { values, positionals } = parseArgs({
+    args,
+    allowPositionals: true,
+    options: { print: { type: "boolean", default: false } },
+  });
   if (!positionals.length) throw new Error("demote needs one or more <file>:<line>");
   const root = repoRoot();
   const targets = positionals.map((arg) => {
@@ -302,7 +324,10 @@ function runInit(args: string[]): void {
       "dry-run": { type: "boolean", default: false },
     },
   });
-  const hooks = values.hooks?.split(",").map((h) => h.trim()).filter(Boolean);
+  const hooks = values.hooks
+    ?.split(",")
+    .map((h) => h.trim())
+    .filter(Boolean);
   const options = { command: values.command, oneShot: values["one-shot"], hooks, agentsMd: values["agents-md"] };
   for (const line of runPlan(planInit(repoRoot(), options), values["dry-run"])) console.log(line);
 }

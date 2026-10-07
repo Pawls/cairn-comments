@@ -5,11 +5,14 @@ import { BRAND, BRAND_TITLE } from "@cairn-comments/core";
 // The npm package and extension id use the long form; the binary and filter driver use BRAND.
 const BRAND_PACKAGE = "cairn-comments";
 
-const manifest =(url: URL) => JSON.parse(readFileSync(url, "utf8")) as Record<string, unknown>;
+const manifest = (url: URL) => JSON.parse(readFileSync(url, "utf8")) as Record<string, unknown>;
 
 // package.json cannot import the constant, so a rename has to touch it by hand; fail loudly if it was missed.
 it("the CLI binary is named after the brand constant", () => {
-  const { name, bin } = manifest(new URL("../package.json", import.meta.url)) as { name: string; bin: Record<string, string> };
+  const { name, bin } = manifest(new URL("../package.json", import.meta.url)) as {
+    name: string;
+    bin: Record<string, string>;
+  };
   expect(name).toBe(BRAND_PACKAGE);
   expect(Object.keys(bin)).toEqual([BRAND]);
 });
@@ -32,7 +35,8 @@ it("the extension manifest carries the brand in its name, display name, command 
     expect(command).toMatch(new RegExp(`^${BRAND}\\.`));
     expect(category).toBe(BRAND_TITLE);
   }
-  for (const key of Object.keys(ext.contributes.configuration.properties)) expect(key).toMatch(new RegExp(`^${BRAND}\\.`));
+  for (const key of Object.keys(ext.contributes.configuration.properties))
+    expect(key).toMatch(new RegExp(`^${BRAND}\\.`));
   // The paste edit's kind (PASTE_KIND in packages/vscode/src/paste.ts), preferred over other providers' edits.
   expect(ext.contributes.configurationDefaults["editor.pasteAs.preferences"]).toEqual([`text.${BRAND}`]);
 });

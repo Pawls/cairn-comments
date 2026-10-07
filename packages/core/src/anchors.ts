@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Node } from "web-tree-sitter";
 import type { LanguageSpec } from "./languages.js";
+import { isInertStringStatement } from "./literals.js";
 
 // Hashes of the code a comment describes, blind to what formatters change (design.md
 // § Staleness, "Normalization").
@@ -12,7 +13,8 @@ function digest(text: string): string {
 /** Hash of a node's normalized tokens: a declaration contributes its signature only, unless `withBodies`. */
 export function nodeHash(spec: LanguageSpec, node: Node, withBodies = false): string {
   const skipped = withBodies ? new Set<number>() : declarationBodies(node);
-  return digest(serialize(spec, node, { start: node.startIndex, end: node.endIndex }, skipped));
+  const range = { start: node.startIndex, end: node.endIndex };
+  return digest(serialize({ spec, root: node.id, range, skipped }, node));
 }
 
 /**
@@ -21,7 +23,8 @@ export function nodeHash(spec: LanguageSpec, node: Node, withBodies = false): st
  */
 export function bodyHash(spec: LanguageSpec, declaration: Node): string {
   const name = declaration.childForFieldName("name");
-  return digest(serialize(spec, declaration, { start: declaration.startIndex, end: declaration.endIndex }, new Set(name ? [name.id] : [])));
+  const range = { start: declaration.startIndex, end: declaration.endIndex };
+  return digest(serialize({ spec, root: declaration.id, range, skipped: new Set(name ? [name.id] : []) }, declaration));
 }
 
 const DECLARATION = /function|method|class|interface|struct|enum|namespace|internal_module|constructor|record|property|object_declaration|companion_object/;
@@ -48,12 +51,15 @@ function declarationBodies(anchor: Node): Set<number> {
     // A C# property keeps its block bodies in `accessors`. An expression body is all a
     // function says (`() => a()`, Kotlin's `fun f() = a()`), so only a block body is left out.
     const body = node.type.includes("property") ? node.childForFieldName("accessors") : bodyOf(node);
-    if (!body) continue;
-    const expression =
-      (node.type === "arrow_function" && body.type !== "statement_block") || (body.type === "function_body" && body.namedChild(0)?.type !== "block");
-    if (!expression) skipped.add(body.id);
+    if (body && !isExpressionBody(node, body)) skipped.add(body.id);
   }
   return skipped;
+}
+
+/** An arrow function whose body is not a block, or a Kotlin function whose body does not start with one. */
+function isExpressionBody(declaration: Node, body: Node): boolean {
+  if (declaration.type === "arrow_function") return body.type !== "statement_block";
+  return body.type === "function_body" && body.namedChild(0)?.type !== "block";
 }
 
 function spineChild(node: Node): Node | null {
@@ -85,7 +91,7 @@ function isCloser(node: Node | null): boolean {
   return !!node && !node.isNamed && (node.type === ")" || node.type === "]" || node.type === "}");
 }
 
-/** `(x) => …` serialized as `x => …` is: the lone identifier parameter, without its parentheses. */
+/** A lone identifier parameter of an arrow function, without its parentheses, so `(x) => …` and `x => …` match. */
 function loneArrowParameter(node: Node, children: Node[]): string | undefined {
   if (node.type !== "formal_parameters" || node.parent?.type !== "arrow_function") return undefined;
   const named = children.filter((c) => c.isNamed);
@@ -101,32 +107,57 @@ function isFormatterToken(node: Node, children: Node[], i: number): boolean {
   return child.type === "," && isCloser(children[i + 1] ?? null);
 }
 
-/**
- * Tokens and structure of the nodes overlapping `range`, blind to whatever a formatter
- * changes: whitespace, comments, semicolons, trailing commas, redundant parentheses, and
- * the parentheses around a lone arrow-function parameter. A named node wholly inside the
- * range contributes its type, so `(a + b) * c` and `a + b * c` still differ.
- */
-function serialize(spec: LanguageSpec, node: Node, range: { start: number; end: number }, skipped: Set<number>): string {
-  if (node.endIndex <= range.start || node.startIndex >= range.end) return "";
-  if (skipped.has(node.id) || spec.commentTypes.includes(node.type)) return "";
-  if (node.childCount === 0) {
-    if (!node.text || node.type === ";") return "";
-    return normalizeLeaf(node);
-  }
+/** What one serialization walk shares: the grammar, the offsets it covers, and the nodes left out. */
+interface Walk {
+  spec: LanguageSpec;
+  /** The hashed node's id: it counts even when it is a string statement. */
+  root: number;
+  range: { start: number; end: number };
+  skipped: ReadonlySet<number>;
+}
+
+/** The children of `node` that are not comments. */
+function codeChildren(spec: LanguageSpec, node: Node): Node[] {
   const children: Node[] = [];
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i)!;
     if (!spec.commentTypes.includes(child.type)) children.push(child);
   }
+  return children;
+}
+
+/** Each child's serialization, leaving out formatter tokens and children that contribute nothing. */
+function serializeChildren(walk: Walk, node: Node, children: Node[]): string[] {
+  const parts: string[] = [];
+  for (const [i, child] of children.entries()) {
+    if (isFormatterToken(node, children, i)) continue;
+    const part = serialize(walk, child);
+    if (part) parts.push(part);
+  }
+  return parts;
+}
+
+/**
+ * Tokens and structure of the nodes overlapping the walk's range, blind to whatever a
+ * formatter changes: whitespace, comments, semicolons, trailing commas, redundant
+ * parentheses, and the parentheses around a lone arrow-function parameter. Python string
+ * statements other than the hashed node count for nothing, since they do nothing. A named node
+ * wholly inside the range contributes its type, so `(a + b) * c` and `a + b * c` still differ.
+ */
+function serialize(walk: Walk, node: Node): string {
+  const { spec, range } = walk;
+  if (node.endIndex <= range.start || node.startIndex >= range.end) return "";
+  if (walk.skipped.has(node.id) || spec.commentTypes.includes(node.type)) return "";
+  if (spec.id === "python" && node.id !== walk.root && isInertStringStatement(node)) return "";
+  if (node.childCount === 0) {
+    if (!node.text || node.type === ";") return "";
+    return normalizeLeaf(node);
+  }
+  const children = codeChildren(spec, node);
   const parameter = loneArrowParameter(node, children);
   if (parameter) return parameter;
-  const parts: string[] = [];
-  children.forEach((child, i) => {
-    if (isFormatterToken(node, children, i)) return;
-    const part = serialize(spec, child, range, skipped);
-    if (part) parts.push(part);
-  });
+  const text = serializeChildren(walk, node, children).join(" ");
   const inside = node.startIndex >= range.start && node.endIndex <= range.end;
-  return node.isNamed && inside && node.type !== "parenthesized_expression" ? `(${node.type} ${parts.join(" ")})` : parts.join(" ");
+  if (node.isNamed && inside && node.type !== "parenthesized_expression") return `(${node.type} ${text})`;
+  return text;
 }

@@ -6,13 +6,18 @@ function hashId(path: string, text: string, occurrence: number, salt: number): s
   return Number.parseInt(hex.slice(0, 8), 16).toString(36).padStart(4, "0").slice(-4);
 }
 
-/** An id for a new comment of `text` in `path` that is not in `taken`, which it then joins. */
-export function freshId(path: string, text: string, taken: Set<string>): string {
+/** The first id for this (path, text, occurrence) that is not in `taken`, which it then joins. */
+function claimId(path: string, text: string, occurrence: number, taken: Set<string>): string {
   let salt = 0;
-  let id = hashId(path, text, 0, salt);
-  while (taken.has(id)) id = hashId(path, text, 0, ++salt);
+  let id = hashId(path, text, occurrence, salt);
+  while (taken.has(id)) id = hashId(path, text, occurrence, ++salt);
   taken.add(id);
   return id;
+}
+
+/** An id for a new comment of `text` in `path` that is not in `taken`, which it then joins. */
+export function freshId(path: string, text: string, taken: Set<string>): string {
+  return claimId(path, text, 0, taken);
 }
 
 /**
@@ -38,12 +43,8 @@ export function resolveIds(path: string, markers: readonly Marker[]): string[] {
       }
     }
     const text = m.text ?? "";
-    const n = occurrences.get(text) ?? 0;
-    occurrences.set(text, n + 1);
-    let salt = 0;
-    let id = hashId(path, text, n, salt);
-    while (taken.has(id)) id = hashId(path, text, n, ++salt);
-    taken.add(id);
-    return id;
+    const occurrence = occurrences.get(text) ?? 0;
+    occurrences.set(text, occurrence + 1);
+    return claimId(path, text, occurrence, taken);
   });
 }

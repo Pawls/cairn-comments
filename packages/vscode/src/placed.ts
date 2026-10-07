@@ -58,6 +58,8 @@ interface DocState {
   stale: Set<string>;
   /** Whether edits moved the sites since they were placed. */
   tracked: boolean;
+  /** Whether an undo or redo changed the text since then, which can restore code whose comments tracking dropped. */
+  undone?: boolean;
   /** The text and sites before the latest edit, which a cut needs (see `beforeCut`). */
   previous?: { text: string; sites: CommentSite[]; changes: readonly vscode.TextDocumentContentChangeEvent[]; at: number };
   /** The sites a paste edit carries, added if the next edit leaves `text` (see `expectPaste`). */
@@ -73,6 +75,45 @@ interface ThreadRecord {
   /** What the thread was last built from, so an unchanged comment keeps its widget state. */
   key: string;
   style: OwnLineStyle;
+}
+
+/** A comment's thread as `render` wants it: the line it is attached to, and whether it starts open. */
+interface WantedThread {
+  site: CommentSite;
+  entry: SidecarEntry;
+  stale: boolean;
+  line: number;
+  expanded: boolean;
+}
+
+/**
+ * `kept` with the comments placement found and tracking lost added. A tracked comment
+ * keeps its site and stale flag; an added one takes the placement's.
+ */
+function withLost(kept: DocState, placed: readonly CommentSite[], placedStale: ReadonlySet<string>): DocState {
+  const tracked = new Set(kept.sites.map((s) => s.id));
+  const lost = placed.filter((s) => !tracked.has(s.id));
+  const stale = new Set([...kept.stale].filter((id) => tracked.has(id)));
+  for (const site of lost) if (placedStale.has(site.id)) stale.add(site.id);
+  return { ...kept, sites: [...kept.sites, ...lost], stale, undone: false };
+}
+
+/** One end-of-line decoration per line with labels, in the warning color when any of them is stale. */
+function labelDecorations(
+  document: vscode.TextDocument,
+  labels: PlacedRender["labels"],
+  color: string | vscode.ThemeColor,
+): vscode.DecorationOptions[] {
+  const byLine = new Map<number, PlacedRender["labels"]>();
+  for (const label of labels) byLine.set(label.line, [...(byLine.get(label.line) ?? []), label]);
+  const warn = new vscode.ThemeColor("editorWarning.foreground");
+  return [...byLine].map(([line, onLine]) => {
+    const end = document.lineAt(line).range.end;
+    const gap = document.lineAt(line).isEmptyOrWhitespace ? "" : "  ";
+    const text = gap + onLine.map((l) => l.text).join("  ·  ");
+    const stale = onLine.some((l) => l.stale);
+    return { range: new vscode.Range(end, end), renderOptions: { after: { contentText: text, color: stale ? warn : color, fontStyle: "italic" } } };
+  });
 }
 
 export class PlacedView implements vscode.CodeLensProvider, vscode.Disposable {
@@ -98,23 +139,35 @@ export class PlacedView implements vscode.CodeLensProvider, vscode.Disposable {
   /**
    * Whether `document` has sites for its current text. Sites moved by edits stop counting
    * once the document is clean again (saved, reverted, or reloaded after a change on disk):
-   * its text then matches what the anchors describe, so they are placed from those.
+   * its text then matches what the anchors describe, so they are placed from those. After
+   * an undo or redo they stop counting too, so `place` can add the comments tracking lost.
    */
   isCurrent(document: vscode.TextDocument): boolean {
     const state = this.states.get(document.uri.toString());
-    return state?.version === document.version && !(state.tracked && !document.isDirty);
+    return state?.version === document.version && !state.undone && !(state.tracked && !document.isDirty);
   }
 
   /**
    * Places `document`'s comments from their anchors. False when the document changed while
-   * placing, so the result would not describe it.
+   * placing, so the result would not describe it. In a dirty buffer after an undo or redo,
+   * the tracked sites stay and only the comments tracking lost are added (design.md
+   * § Overlay rendering, "Live tracking").
    */
   async place(document: vscode.TextDocument, file: string, sidecar: Sidecar): Promise<boolean> {
     const version = document.version;
     const text = document.getText();
     const placed = await placeComments(file, text, sidecar);
     if (document.version !== version || document.isClosed) return false;
-    this.states.set(document.uri.toString(), { version, text, sites: placed.sites, stale: new Set(placed.stale.map((s) => s.id)), tracked: false });
+    // A placement that overlapped this one already finished; replacing its merge would undo it.
+    if (this.isCurrent(document)) return true;
+    const uri = document.uri.toString();
+    const stale = new Set(placed.stale.map((s) => s.id));
+    const kept = this.states.get(uri);
+    if (kept?.undone && kept.version === version && document.isDirty) {
+      this.states.set(uri, withLost(kept, placed.sites, stale));
+    } else {
+      this.states.set(uri, { version, text, sites: placed.sites, stale, tracked: false });
+    }
     return true;
   }
 
@@ -136,6 +189,7 @@ export class PlacedView implements vscode.CodeLensProvider, vscode.Disposable {
     state.text = event.document.getText();
     state.version = event.document.version;
     state.tracked = true;
+    if (event.reason !== undefined) state.undone = true;
     const pasted = state.pasted;
     state.pasted = undefined;
     if (pasted?.text === state.text) {
@@ -211,12 +265,17 @@ export class PlacedView implements vscode.CodeLensProvider, vscode.Disposable {
     this.disposeThreads(editor.document.uri.toString());
   }
 
-  render(editor: vscode.TextEditor, entries: ReadonlyMap<string, SidecarEntry>, style: OwnLineStyle, color: string | vscode.ThemeColor): PlacedRender {
+  render(
+    editor: vscode.TextEditor,
+    entries: ReadonlyMap<string, SidecarEntry>,
+    style: OwnLineStyle,
+    color: string | vscode.ThemeColor,
+  ): PlacedRender {
     const document = editor.document;
     const state = this.states.get(document.uri.toString());
     const shown = (state?.sites ?? []).flatMap((site) => {
       const entry = entries.get(site.id);
-      return entry ? [{ site, entry, stale: state!.stale.has(site.id) }] : [];
+      return state && entry ? [{ site, entry, stale: state.stale.has(site.id) }] : [];
     });
     const lastLine = document.lineCount - 1;
     // An own-line comment goes above `row`; past the last line it goes above nothing, so
@@ -226,41 +285,29 @@ export class PlacedView implements vscode.CodeLensProvider, vscode.Disposable {
     const title = (s: (typeof shown)[number]) => (s.stale ? `${STALE_TAG} ` : "") + labelFor(s.entry.body);
 
     const out: PlacedRender = { lenses: [], threads: [], labels: [] };
+    const codeLenses: vscode.CodeLens[] = [];
+    const threads: WantedThread[] = [];
     for (const s of shown) {
       const { row, kind, id } = s.site;
-      if (kind === "trail") out.labels.push({ line: row, text: title(s), stale: s.stale });
-      else if (style === "codelens") out.lenses.push({ line: anchorLine(row), title: title(s) });
-      else if (style === "eol") out.labels.push({ line: lineAbove(row), text: title(s), stale: s.stale });
+      if (kind === "trail") {
+        out.labels.push({ line: row, text: title(s), stale: s.stale });
+      } else if (style === "codelens") {
+        const lens = { line: anchorLine(row), title: title(s) };
+        out.lenses.push(lens);
+        const command = { title: `~ ${lens.title}`, command: SHOW_COMMENT, arguments: [document.uri, id] };
+        codeLenses.push(new vscode.CodeLens(document.lineAt(lens.line).range, command));
+      } else if (style === "eol") {
+        out.labels.push({ line: lineAbove(row), text: title(s), stale: s.stale });
+      }
       const expanded = kind === "own" && style === "thread";
-      out.threads.push({ line: expanded ? lineAbove(row) : anchorLine(row), id, expanded });
+      const line = expanded ? lineAbove(row) : anchorLine(row);
+      out.threads.push({ line, id, expanded });
+      threads.push({ ...s, line, expanded });
     }
 
-    const byLine = new Map<number, PlacedRender["labels"]>();
-    for (const l of out.labels) byLine.set(l.line, [...(byLine.get(l.line) ?? []), l]);
-    const warn = new vscode.ThemeColor("editorWarning.foreground");
-    editor.setDecorations(
-      this.labelType,
-      [...byLine].map(([line, labels]) => {
-        const end = document.lineAt(line).range.end;
-        const gap = document.lineAt(line).isEmptyOrWhitespace ? "" : "  ";
-        const text = gap + labels.map((l) => l.text).join("  ·  ");
-        const stale = labels.some((l) => l.stale);
-        return { range: new vscode.Range(end, end), renderOptions: { after: { contentText: text, color: stale ? warn : color, fontStyle: "italic" } } };
-      }),
-    );
-
-    const lensIds = shown.filter((s) => s.site.kind === "own").map((s) => s.site.id);
-    this.setLenses(
-      document,
-      out.lenses.map((l, i) => new vscode.CodeLens(document.lineAt(l.line).range, { title: `~ ${l.title}`, command: SHOW_COMMENT, arguments: [document.uri, lensIds[i]] })),
-    );
-
-    const threadOf = new Map(out.threads.map((t) => [t.id, t]));
-    this.setThreads(
-      document,
-      style,
-      shown.map((s) => ({ ...s, line: threadOf.get(s.site.id)!.line, expanded: threadOf.get(s.site.id)!.expanded })),
-    );
+    editor.setDecorations(this.labelType, labelDecorations(document, out.labels, color));
+    this.setLenses(document, codeLenses);
+    this.setThreads(document, style, threads);
     return out;
   }
 
@@ -276,11 +323,7 @@ export class PlacedView implements vscode.CodeLensProvider, vscode.Disposable {
    * Keeps one thread per comment: a moved comment's thread moves, a changed one is rebuilt,
    * and one in the middle of an edit is left alone.
    */
-  private setThreads(
-    document: vscode.TextDocument,
-    style: OwnLineStyle,
-    wanted: { site: CommentSite; entry: SidecarEntry; stale: boolean; line: number; expanded: boolean }[],
-  ): void {
+  private setThreads(document: vscode.TextDocument, style: OwnLineStyle, wanted: readonly WantedThread[]): void {
     const uri = document.uri.toString();
     const records = this.threads.get(uri) ?? new Map<string, ThreadRecord>();
     this.threads.set(uri, records);

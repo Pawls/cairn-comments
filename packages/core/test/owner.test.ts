@@ -89,6 +89,19 @@ describe("promotePlaced", () => {
     expect(result.sidecar.entries).toEqual([]);
   });
 
+  it("writes the promoted comment with the file's line ending", async () => {
+    const { code, sidecar, ids } = await owner(WORKING.replaceAll("\n", "\r\n"));
+    const result = await promotePlaced("a.py", code, sidecar, [ids[0]!]);
+    expect(result.source).toContain("    # retries are safe\r\n    # second line\r\n    ledger.write");
+    expect(result.source).not.toMatch(/[^\r]\n/);
+  });
+
+  it("reports an id that does not place and changes nothing", async () => {
+    const { code, sidecar, ids } = await owner();
+    const result = await promotePlaced("a.py", code, sidecar, [ids[0]!, "zzzz"]);
+    expect(result).toEqual({ source: code, sidecar, missing: ["zzzz"] });
+  });
+
   it("keeps a stale comment stale", async () => {
     const { code, sidecar, ids } = await owner();
     const edited = code.replace("notify(order)", "notify(order, loud=True)");
@@ -149,6 +162,54 @@ describe("carryComments", () => {
     const result = await carryComments("b.py", code, taken, [{ row: 1, kind: "own", body: "note", meta: new Map(), from: "aaaa", moved: true }]);
     expect(result.ids[0]).not.toBe("aaaa");
     expect(result.sidecar.entries.map((e) => e.body)).toEqual(["unrelated", "note"]);
+  });
+
+  it("returns the sidecar untouched for a language it does not know and for nothing carried", async () => {
+    const sidecar: Sidecar = { preamble: "", entries: [{ id: "aaaa", meta: new Map(), body: "kept" }] };
+    const note = { row: 0, kind: "own" as const, body: "note", meta: new Map<string, string>(), from: "bbbb" };
+    const unknown = await carryComments("notes.txt", "x\n", sidecar, [note]);
+    expect(unknown.sidecar).toBe(sidecar);
+    expect(unknown.ids).toEqual([]);
+    const nothing = await carryComments("a.py", "x = 1\n", sidecar, []);
+    expect(nothing.sidecar).toBe(sidecar);
+    expect(nothing.ids).toEqual([]);
+  });
+
+  it("skips a comment with no body or no line to go on, and keeps the ids of the others in place", async () => {
+    const code = "def f():\n    x = 1\n";
+    const meta = new Map<string, string>();
+    const result = await carryComments("a.py", code, EMPTY, [
+      { row: 99, kind: "own", body: "past the end", meta, from: "aaaa" },
+      { row: 1, kind: "own", body: " \n ", meta, from: "bbbb" },
+      { row: 1, kind: "own", body: "real", meta, from: "cccc" },
+    ]);
+    expect(result.ids.slice(0, 2)).toEqual(["", ""]);
+    expect(result.ids[2]).toMatch(/^[0-9a-z]{4}$/);
+    expect(result.sidecar.entries.map((e) => [e.id, e.body])).toEqual([[result.ids[2], "real"]]);
+  });
+
+  it("gives a copy the source's provenance but neither its placement nor its own copied-from", async () => {
+    const { code, sidecar, ids } = await owner();
+    const meta = new Map([["by", "claude-code"], ["copied-from", "old1"], ["scope", "gone@9"], ["node", "deadbeef"]]);
+    const copy = await carryComments("a.py", code + "\ndef refund(order):\n    return None\n", sidecar, [{ row: 9, kind: "own", body: "refunded by hand", meta, from: ids[2]! }]);
+    const entry = copy.sidecar.entries.at(-1)!;
+    expect(entry.meta.get("by")).toBe("claude-code");
+    expect(entry.meta.get("copied-from")).toBe(ids[2]);
+    expect(entry.meta.get("scope")).toBe("refund@1");
+    expect(entry.meta.get("node")).not.toBe("deadbeef");
+
+    const moved = await carryComments("a.py", "def f():\n    x = 1\n", EMPTY, [{ row: 1, kind: "own", body: "note", meta, from: "q0q0", moved: true }]);
+    expect(moved.sidecar.entries[0]!.meta.get("copied-from")).toBe("old1");
+  });
+
+  it("writes a carried comment with the file's line ending and the indent of its line", async () => {
+    const crlf = await carryComments("a.py", "def f():\r\n    x = 1\r\n", EMPTY, [{ row: 1, kind: "own", body: "a\nb", meta: new Map(), from: "aaaa" }]);
+    const crlfPlaced = await placeComments("a.py", "def f():\r\n    x = 1\r\n", crlf.sidecar);
+    expect(crlfPlaced.source).toBe(`def f():\r\n    #~${crlf.ids[0]} a\r\n    #~ b\r\n    x = 1\r\n`);
+
+    const tabbed = await carryComments("a.py", "def f():\n\tx = 1\n", EMPTY, [{ row: 1, kind: "own", body: "note", meta: new Map(), from: "aaaa" }]);
+    const tabbedPlaced = await placeComments("a.py", "def f():\n\tx = 1\n", tabbed.sidecar);
+    expect(tabbedPlaced.source).toBe(`def f():\n\t#~${tabbed.ids[0]} note\n\tx = 1\n`);
   });
 
   it("carries multi-line and trailing comments, and two comments on one line stay apart", async () => {

@@ -6,15 +6,13 @@
 // extension as a stand-in for Pylance's paste provider. Set CAIRN_E2E_EXTENSION=<dir> to
 // test an unpacked .vsix instead of this package. Windows only so far.
 import assert from "node:assert/strict";
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { downloadAndUnzipVSCode } from "@vscode/test-electron";
 import { _electron, type ElectronApplication, type Page } from "playwright";
-import { scratchRepo, type ScratchRepo } from "../e2e/scratch.js";
+import { extensionPath, fixtureDir, fixtureRepo, packageRoot, type ScratchRepo } from "../e2e/scratch.js";
+import { waitFor } from "../e2e/wait.js";
 
-const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const extension = process.env.CAIRN_E2E_EXTENSION ? path.resolve(process.env.CAIRN_E2E_EXTENSION) : packageRoot;
 const competitor = path.join(packageRoot, "native/competitor");
 const failures = path.join(packageRoot, ".vscode-test/native-failures");
 
@@ -32,15 +30,9 @@ const SETTINGS = {
   "git.enabled": false,
 };
 
-const settle = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-async function waitFor(what: string, condition: () => boolean | Promise<boolean>, ms = 15_000): Promise<void> {
-  const deadline = Date.now() + ms;
-  while (!(await condition())) {
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
-    await settle(100);
-  }
-}
+/** `waitFor` with a longer timeout and a slower poll than its defaults: each step here drives a real window. */
+const waitUntil = (what: string, condition: () => boolean | Promise<boolean>) =>
+  waitFor(what, condition, { timeout: 15_000, every: 100 });
 
 class Window {
   constructor(
@@ -86,17 +78,23 @@ class Window {
   }
 }
 
-async function launch(scratch: ScratchRepo): Promise<Window> {
+/** A user-data folder in `scratch` holding `SETTINGS`. */
+function writeUserData(scratch: ScratchRepo): string {
   const userData = path.join(scratch.dir, "user-data");
   mkdirSync(path.join(userData, "User"), { recursive: true });
   writeFileSync(path.join(userData, "User/settings.json"), JSON.stringify(SETTINGS));
+  return userData;
+}
+
+async function launch(scratch: ScratchRepo): Promise<Window> {
+  const userData = writeUserData(scratch);
   const app = await _electron.launch({
     executablePath: await downloadAndUnzipVSCode(),
     env: { ...(process.env as Record<string, string>), ...scratch.env },
     args: [
       scratch.repo,
       path.join(scratch.repo, "sample.py"),
-      `--extensionDevelopmentPath=${extension}`,
+      `--extensionDevelopmentPath=${extensionPath}`,
       `--extensionDevelopmentPath=${competitor}`,
       `--user-data-dir=${userData}`,
       `--extensions-dir=${path.join(scratch.dir, "extensions")}`,
@@ -109,46 +107,59 @@ async function launch(scratch: ScratchRepo): Promise<Window> {
   const page = await app.firstWindow();
   const window = new Window(app, page, scratch.repo);
   await page.locator(".monaco-editor .view-lines").first().waitFor({ timeout: 60_000 });
-  await page.locator(".monaco-editor .view-lines").first().click({ position: { x: 40, y: 8 } });
+  await page
+    .locator(".monaco-editor .view-lines")
+    .first()
+    .click({ position: { x: 40, y: 8 } });
   await window.command("Toggle AI Comment Overlay");
   await window.shows("retries are safe: ledger write is idempotent");
   return window;
 }
 
 const TESTS: Record<string, (w: Window) => Promise<void>> = {
-  "a line highlighted without its indentation, cut and pasted, moves its comments past another paste provider": async (w) => {
+  "a line highlighted without its indentation, cut and pasted, moves its comments past another paste provider": async (
+    w,
+  ) => {
     const before = w.sidecar();
     // `ledger.write(order.id)` carries an own-line and a trailing comment.
     await w.goto(5);
     await w.keys("Home", "Shift+End", "Control+X");
     await w.goto(18);
     await w.keys("Home", "Control+V");
-    await waitFor("the sidecar to change", () => w.sidecar() !== before);
+    await waitUntil("the sidecar to change", () => w.sidecar() !== before);
     await w.keys("Control+S");
-    await waitFor("the file to be saved", () => w.read("sample.py").includes("def audit(order):\n    ledger.write(order.id)\n"));
+    await waitUntil("the file to be saved", () =>
+      w.read("sample.py").includes("def audit(order):\n    ledger.write(order.id)\n"),
+    );
     const sidecar = w.sidecar();
     assert.doesNotMatch(sidecar, /copied-from/);
     assert.match(sidecar, /## 1kjy\n<!-- [^\n]*scope=audit /);
     assert.match(sidecar, /## f7eo\n<!-- [^\n]*pos=trail scope=audit /);
   },
 
-  "a block highlighted from its first non-blank character, cut and pasted, moves its comments past another paste provider": async (w) => {
-    const before = w.sidecar();
-    // settle's body, from `ledger` to the end of `return order`.
-    await w.goto(5);
-    await w.keys("Home", "Shift+ArrowDown", "Shift+ArrowDown", "Shift+End", "Control+X");
-    // Two lines shorter, audit's return is now line 17; the block goes above it.
-    await w.goto(17);
-    await w.keys("Home", "Control+V");
-    await waitFor("the sidecar to change", () => w.sidecar() !== before);
-    await w.keys("Control+S");
-    await waitFor("the file to be saved", () =>
-      w.read("sample.py").includes("    ledger.check(order.id)\n    ledger.write(order.id)\n    notify(order)\n    return order\n    return ledger.balance("),
-    );
-    const sidecar = w.sidecar();
-    assert.doesNotMatch(sidecar, /copied-from/);
-    for (const id of ["1kjy", "f7eo", "ip6u"]) assert.match(sidecar, new RegExp(`## ${id}\\n<!-- [^\\n]*scope=audit `));
-  },
+  "a block highlighted from its first non-blank character, cut and pasted, moves its comments past another paste provider":
+    async (w) => {
+      const before = w.sidecar();
+      // settle's body, from `ledger` to the end of `return order`.
+      await w.goto(5);
+      await w.keys("Home", "Shift+ArrowDown", "Shift+ArrowDown", "Shift+End", "Control+X");
+      // Two lines shorter, audit's return is now line 17; the block goes above it.
+      await w.goto(17);
+      await w.keys("Home", "Control+V");
+      await waitUntil("the sidecar to change", () => w.sidecar() !== before);
+      await w.keys("Control+S");
+      await waitUntil("the file to be saved", () =>
+        w
+          .read("sample.py")
+          .includes(
+            "    ledger.check(order.id)\n    ledger.write(order.id)\n    notify(order)\n    return order\n    return ledger.balance(",
+          ),
+      );
+      const sidecar = w.sidecar();
+      assert.doesNotMatch(sidecar, /copied-from/);
+      for (const id of ["1kjy", "f7eo", "ip6u"])
+        assert.match(sidecar, new RegExp(`## ${id}\\n<!-- [^\\n]*scope=audit `));
+    },
 
   "Ctrl+Z in the source file undoes a comment edited in its thread": async (w) => {
     const original = "retries are safe: ledger write is idempotent";
@@ -159,42 +170,58 @@ const TESTS: Record<string, (w: Window) => Promise<void>> = {
     await w.keys("Control+A");
     await w.page.keyboard.type("an edited body");
     await thread.locator(".monaco-button", { hasText: "Save AI Comment" }).click();
-    await waitFor("the edit in the sidecar", () => w.sidecar().includes("an edited body"));
+    await waitUntil("the edit in the sidecar", () => w.sidecar().includes("an edited body"));
 
-    await w.page.locator(".monaco-editor .view-lines").first().click({ position: { x: 40, y: 8 } });
+    await w.page
+      .locator(".monaco-editor .view-lines")
+      .first()
+      .click({ position: { x: 40, y: 8 } });
     await w.keys("Control+Z");
     // VS Code asks whether to undo across files only when the other file's editor could be affected.
     const acrossFiles = w.page.locator(".monaco-dialog-box .monaco-button", { hasText: /Undo in \d+ Files/ });
     await acrossFiles.click({ timeout: 2_000 }).catch(() => undefined);
     await w.page.locator(".codelens-decoration a", { hasText: original }).waitFor({ timeout: 5_000 });
-    await waitFor("the original body back in the sidecar", () => w.sidecar().includes(original) && !w.sidecar().includes("an edited body"));
-    assert.equal(w.read("sample.py"), readFileSync(path.join(packageRoot, "e2e/fixture/sample.py"), "utf8"), "the source is untouched");
+    await waitUntil(
+      "the original body back in the sidecar",
+      () => w.sidecar().includes(original) && !w.sidecar().includes("an edited body"),
+    );
+    assert.equal(
+      w.read("sample.py"),
+      readFileSync(path.join(fixtureDir, "sample.py"), "utf8"),
+      "the source is untouched",
+    );
   },
 };
 
-const only = process.argv[2];
-let failed = 0;
-for (const [name, test] of Object.entries(TESTS)) {
-  if (only && !name.includes(only)) continue;
-  const scratch = scratchRepo((repo) => cpSync(path.join(packageRoot, "e2e/fixture"), repo, { recursive: true }));
+/** Runs one test in a fresh window and scratch repository; a failure keeps a screenshot named `<index>.png`. */
+async function runTest(index: number, name: string, test: (w: Window) => Promise<void>): Promise<boolean> {
+  const scratch = fixtureRepo();
   let window: Window | undefined;
   try {
     window = await launch(scratch);
     await test(window);
     console.log(`  ✓ ${name}`);
+    return true;
   } catch (error) {
-    failed++;
     console.log(`  ✗ ${name}\n    ${error instanceof Error ? error.message : String(error)}`);
     if (window) {
       mkdirSync(failures, { recursive: true });
-      const shot = path.join(failures, `${Object.keys(TESTS).indexOf(name)}.png`);
+      const shot = path.join(failures, `${index}.png`);
       await window.page.screenshot({ path: shot }).catch(() => undefined);
       console.log(`    screenshot: ${shot}`);
     }
+    return false;
   } finally {
     await window?.app.close().catch(() => undefined);
     rmSync(scratch.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }
+}
+
+const only = process.argv[2];
+let failed = 0;
+for (const [index, [name, test]] of Object.entries(TESTS).entries()) {
+  if (only && !name.includes(only)) continue;
+  if (!(await runTest(index, name, test))) failed++;
 }
 console.log(failed ? `${failed} native test(s) failed` : "native tests passed");
 process.exitCode = failed ? 1 : 0;

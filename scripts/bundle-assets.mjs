@@ -12,5 +12,6 @@ const require = createRequire(new URL("../packages/core/package.json", import.me
 export function copyWasmAssets(dir) {
   mkdirSync(path.join(dir, "grammars"), { recursive: true });
   copyFileSync(require.resolve("web-tree-sitter/web-tree-sitter.wasm"), path.join(dir, "web-tree-sitter.wasm"));
-  for (const { wasm } of LANGUAGES) copyFileSync(require.resolve(wasm), path.join(dir, "grammars", path.posix.basename(wasm)));
+  for (const { wasm } of LANGUAGES)
+    copyFileSync(require.resolve(wasm), path.join(dir, "grammars", path.posix.basename(wasm)));
 }

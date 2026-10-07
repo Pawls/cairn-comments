@@ -8,7 +8,11 @@ import { Sandbox } from "./harness.js";
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const npm = (cwd: string, ...args: string[]) =>
   // npm is a .cmd on Windows, which only a shell can start.
-  execFileSync(process.platform === "win32" ? "npm.cmd" : "npm", args, { cwd, encoding: "utf8", shell: process.platform === "win32" });
+  execFileSync(process.platform === "win32" ? "npm.cmd" : "npm", args, {
+    cwd,
+    encoding: "utf8",
+    shell: process.platform === "win32",
+  });
 
 /** Install the packed tarball into an empty project and run the quickstart. */
 describe("the published CLI package", () => {
@@ -19,7 +23,10 @@ describe("the published CLI package", () => {
 
   beforeAll(() => {
     scratch = new Sandbox({ autocrlf: false });
-    const packed = JSON.parse(npm(packageDir, "pack", "--json", "--pack-destination", scratch.dir)) as { filename: string; files: { path: string }[] }[];
+    const packed = JSON.parse(npm(packageDir, "pack", "--json", "--pack-destination", scratch.dir)) as {
+      filename: string;
+      files: { path: string }[];
+    }[];
     files = packed[0]!.files.map((f) => f.path).sort();
     const project = scratch.path("project");
     mkdirSync(project);

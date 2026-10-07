@@ -50,7 +50,7 @@ export function escapeRegExp(s: string): string {
  * Finds sigil comments via the grammar's comment nodes, so a sigil inside a string is
  * never one. Consecutive own-line sigil lines at one indent form a block whose first line
  * carries the id; a bare one never absorbs the lines below it, which could belong to a
- * neighbouring new comment.
+ * neighboring new comment.
  */
 export async function findMarkers(spec: LanguageSpec, source: string): Promise<Marker[]> {
   if (!source.includes(spec.lineSigil)) return [];

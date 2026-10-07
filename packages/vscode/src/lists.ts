@@ -60,8 +60,12 @@ export function registerLists(
     stale,
     orphans,
     { dispose: () => clearTimeout(timer) },
-    stale.view.onDidChangeVisibility((e) => e.visible && void stale.load(load.stale)),
-    orphans.view.onDidChangeVisibility((e) => e.visible && void orphans.load(load.orphans)),
+    stale.view.onDidChangeVisibility((e) => {
+      if (e.visible) void stale.load(load.stale);
+    }),
+    orphans.view.onDidChangeVisibility((e) => {
+      if (e.visible) void orphans.load(load.orphans);
+    }),
     vscode.workspace.onDidSaveTextDocument(scheduleRefresh),
     vscode.commands.registerCommand(REFRESH_LISTS, refresh),
   );

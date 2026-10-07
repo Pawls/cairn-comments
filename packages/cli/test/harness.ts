@@ -16,6 +16,13 @@ export interface SandboxOptions {
   cli?: string;
 }
 
+/** A command run without throwing: its exit status and output. */
+export interface RunResult {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+}
+
 /**
  * A scratch directory with its own global git config, so a scenario behaves the same on
  * every machine and never reads or writes the developer's real config or hooks.
@@ -46,7 +53,14 @@ export class Sandbox {
     );
     const inherited = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("GIT_")));
     // XDG_CONFIG_HOME: git also reads $XDG_CONFIG_HOME/git/ignore, which GIT_CONFIG_GLOBAL does not cover.
-    this.env = { ...inherited, GIT_CONFIG_GLOBAL: config, GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0", XDG_CONFIG_HOME: this.dir, [CLI_HOME_ENV]: this.home };
+    this.env = {
+      ...inherited,
+      GIT_CONFIG_GLOBAL: config,
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_TERMINAL_PROMPT: "0",
+      XDG_CONFIG_HOME: this.dir,
+      [CLI_HOME_ENV]: this.home,
+    };
   }
 
   path(...parts: string[]): string {
@@ -58,7 +72,7 @@ export class Sandbox {
   }
 
   /** Runs git without throwing, for scenarios where git is expected to report a failure. */
-  gitResult(cwd: string, ...args: string[]): { status: number | null; stdout: string; stderr: string } {
+  gitResult(cwd: string, ...args: string[]): RunResult {
     const { status, stdout, stderr } = spawnSync("git", args, { cwd, env: this.env, encoding: "utf8" });
     return { status, stdout, stderr };
   }
@@ -69,18 +83,33 @@ export class Sandbox {
 
   /** Runs another copy of the CLI, such as an older bundle, in this sandbox. */
   cliFrom(entry: string, cwd: string, ...args: string[]): string {
-    return execFileSync(process.execPath, [entry, ...args], { cwd, env: this.env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    return execFileSync(process.execPath, [entry, ...args], {
+      cwd,
+      env: this.env,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
   }
 
   /** Runs the CLI without throwing, for commands whose exit code is the result. */
-  cliResult(cwd: string, ...args: string[]): { status: number | null; stdout: string; stderr: string } {
-    const { status, stdout, stderr } = spawnSync(process.execPath, [this.cliPath, ...args], { cwd, env: this.env, encoding: "utf8" });
+  cliResult(cwd: string, ...args: string[]): RunResult {
+    const { status, stdout, stderr } = spawnSync(process.execPath, [this.cliPath, ...args], {
+      cwd,
+      env: this.env,
+      encoding: "utf8",
+    });
     return { status, stdout, stderr };
   }
 
   /** Runs the CLI with `input` on stdin, as a harness hook would. */
   cliWithInput(cwd: string, input: string, ...args: string[]): string {
-    return execFileSync(process.execPath, [this.cliPath, ...args], { cwd, env: this.env, encoding: "utf8", input, stdio: ["pipe", "pipe", "pipe"] });
+    return execFileSync(process.execPath, [this.cliPath, ...args], {
+      cwd,
+      env: this.env,
+      encoding: "utf8",
+      input,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
   }
 
   /** Writes LF-authored text with this sandbox's working-tree terminator. */

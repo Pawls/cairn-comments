@@ -1,4 +1,14 @@
-import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  fstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import { BRAND } from "@cairn-comments/core";
 import { isTracked, worktreeRoots } from "./git.js";
@@ -23,9 +33,14 @@ export interface Adapter {
   uninstall(settings: Record<string, unknown>): void;
 }
 
-const str = (v: unknown): string | undefined => (typeof v === "string" && v ? v : undefined);
-const obj = (v: unknown): Record<string, unknown> => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
-const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+// Payloads and settings files are JSON from elsewhere: read every field through these.
+const asString = (v: unknown): string | undefined => (typeof v === "string" && v ? v : undefined);
+const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+const asObject = (v: unknown): Record<string, unknown> => (isObject(v) ? v : {});
+const asArray = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+
+/** Matches the command this tool installs for `harness`, whatever CLI path precedes it. */
+const ourHook = (harness: string) => new RegExp(String.raw`\bhook ${harness}$`);
 
 /**
  * The model of the last assistant message in a Claude Code transcript (JSONL). The
@@ -48,11 +63,11 @@ export function modelFromTranscript(file: string | undefined, tailBytes = 256 * 
   for (let i = lines.length - 1; i >= 0; i--) {
     let record: Record<string, unknown>;
     try {
-      record = obj(JSON.parse(lines[i]!));
+      record = asObject(JSON.parse(lines[i]!));
     } catch {
       continue; // the first line of the tail is usually cut
     }
-    const model = str(obj(record.message).model);
+    const model = asString(asObject(record.message).model);
     if (record.type === "assistant" && model && !model.startsWith("<")) return model;
   }
   return undefined;
@@ -60,15 +75,8 @@ export function modelFromTranscript(file: string | undefined, tailBytes = 256 * 
 
 /** Paths an `apply_patch` envelope touches, in any string field of the tool input. */
 export function patchedFiles(input: unknown): string[] {
-  const texts: string[] = [];
-  const walk = (v: unknown) => {
-    if (typeof v === "string") texts.push(v);
-    else if (Array.isArray(v)) v.forEach(walk);
-    else if (v && typeof v === "object") Object.values(v).forEach(walk);
-  };
-  walk(input);
   const files = new Set<string>();
-  for (const text of texts) {
+  for (const text of stringsIn(input)) {
     for (const m of text.matchAll(/^\*\*\* (?:Add File|Update File|Move to): (.+)$/gm)) {
       const file = m[1]!.trimEnd();
       if (file) files.add(file);
@@ -77,41 +85,65 @@ export function patchedFiles(input: unknown): string[] {
   return [...files];
 }
 
-/** The `{matcher, hooks: [{type: "command", command}]}` layout Claude Code and Codex share. */
-function installMatcherHook(settings: Record<string, unknown>, event: string, matcher: string, command: string, ours: RegExp): void {
-  const hooks = (settings.hooks = obj(settings.hooks));
-  const groups = (hooks[event] = arr(hooks[event]));
-  for (const group of groups) {
-    for (const hook of arr(obj(group).hooks)) {
-      const h = obj(hook);
-      if (typeof h.command === "string" && ours.test(h.command)) {
-        h.command = command;
-        return;
-      }
-    }
+/** Every string in a parsed JSON value, depth first. */
+function* stringsIn(value: unknown): Generator<string> {
+  if (typeof value === "string") {
+    yield value;
+  } else if (Array.isArray(value)) {
+    for (const item of value) yield* stringsIn(item);
+  } else if (value && typeof value === "object") {
+    for (const item of Object.values(value)) yield* stringsIn(item);
   }
-  groups.push({ matcher, hooks: [{ type: "command", command }] });
 }
 
-const isOurs = (entry: unknown, ours: RegExp) => {
-  const command = obj(entry).command;
-  return typeof command === "string" && ours.test(command);
+const isOurs = (entry: unknown, harness: string) => {
+  const command = asObject(entry).command;
+  return typeof command === "string" && ourHook(harness).test(command);
 };
+
+/** The `{matcher, hooks: [{type: "command", command}]}` layout Claude Code and Codex share. */
+function installMatcherHook(
+  settings: Record<string, unknown>,
+  matcher: string,
+  command: string,
+  harness: string,
+): void {
+  const hooks = (settings.hooks = asObject(settings.hooks));
+  const groups = (hooks.PostToolUse = asArray(hooks.PostToolUse));
+  const hookCommand = `${command} hook ${harness}`;
+  for (const group of groups) {
+    const ours = asArray(asObject(group).hooks)
+      .map(asObject)
+      .find((h) => isOurs(h, harness));
+    if (ours) {
+      ours.command = hookCommand;
+      return;
+    }
+  }
+  groups.push({ matcher, hooks: [{ type: "command", command: hookCommand }] });
+}
+
+function isEmptyContainer(value: unknown): boolean {
+  if (Array.isArray(value)) return !value.length;
+  return isObject(value) && !Object.keys(value).length;
+}
 
 /** Deletes `key` from `parent` when it holds an empty object or array. */
 function prune(parent: Record<string, unknown>, key: string): void {
-  const v = parent[key];
-  if ((Array.isArray(v) && !v.length) || (v && typeof v === "object" && !Array.isArray(v) && !Object.keys(v).length)) delete parent[key];
+  if (isEmptyContainer(parent[key])) delete parent[key];
 }
 
-function uninstallMatcherHook(settings: Record<string, unknown>, event: string, ours: RegExp): void {
-  const hooks = obj(settings.hooks);
-  hooks[event] = arr(hooks[event]).filter((group) => {
-    const g = obj(group);
-    g.hooks = arr(g.hooks).filter((h) => !isOurs(h, ours));
-    return (g.hooks as unknown[]).length > 0;
-  });
-  prune(hooks, event);
+function uninstallMatcherHook(settings: Record<string, unknown>, harness: string): void {
+  const hooks = asObject(settings.hooks);
+  const kept: unknown[] = [];
+  for (const group of asArray(hooks.PostToolUse)) {
+    const g = asObject(group);
+    const remaining = asArray(g.hooks).filter((h) => !isOurs(h, harness));
+    g.hooks = remaining;
+    if (remaining.length) kept.push(group);
+  }
+  hooks.PostToolUse = kept;
+  prune(hooks, "PostToolUse");
   if (settings.hooks !== undefined) prune(settings, "hooks");
 }
 
@@ -120,61 +152,67 @@ export const ADAPTERS: Record<string, Adapter> = {
     // Local settings: the command holds this machine's path to the CLI.
     settingsFile: ".claude/settings.local.json",
     parse(p) {
-      const input = obj(p.tool_input);
-      const file = str(input.file_path) ?? str(input.notebook_path);
+      const input = asObject(p.tool_input);
+      const file = asString(input.file_path) ?? asString(input.notebook_path);
       return {
-        cwd: str(p.cwd) ?? process.cwd(),
+        cwd: asString(p.cwd) ?? process.cwd(),
         files: file ? [file] : [],
-        provenance: { by: "claude-code", session: str(p.session_id), model: modelFromTranscript(str(p.transcript_path)) },
+        provenance: {
+          by: "claude-code",
+          session: asString(p.session_id),
+          model: modelFromTranscript(asString(p.transcript_path)),
+        },
       };
     },
     install(settings, command) {
-      installMatcherHook(settings, "PostToolUse", "Edit|Write|MultiEdit", `${command} hook claude-code`, /\bhook claude-code$/);
+      installMatcherHook(settings, "Edit|Write|MultiEdit", command, "claude-code");
     },
     uninstall(settings) {
-      uninstallMatcherHook(settings, "PostToolUse", /\bhook claude-code$/);
+      uninstallMatcherHook(settings, "claude-code");
     },
   },
   codex: {
     settingsFile: ".codex/hooks.json",
     parse(p) {
       const input = p.tool_input;
-      const file = str(obj(input).file_path);
+      const file = asString(asObject(input).file_path);
       return {
-        cwd: str(p.cwd) ?? process.cwd(),
+        cwd: asString(p.cwd) ?? process.cwd(),
         files: file ? [file] : patchedFiles(input),
-        provenance: { by: "codex", session: str(p.session_id), model: str(p.model) },
+        provenance: { by: "codex", session: asString(p.session_id), model: asString(p.model) },
       };
     },
     install(settings, command) {
-      installMatcherHook(settings, "PostToolUse", "apply_patch|Edit|Write", `${command} hook codex`, /\bhook codex$/);
+      installMatcherHook(settings, "apply_patch|Edit|Write", command, "codex");
     },
     uninstall(settings) {
-      uninstallMatcherHook(settings, "PostToolUse", /\bhook codex$/);
+      uninstallMatcherHook(settings, "codex");
     },
   },
   cursor: {
     settingsFile: ".cursor/hooks.json",
     parse(p) {
-      const file = str(p.file_path);
-      const root = arr(p.workspace_roots).map(str).find((r): r is string => !!r);
+      const file = asString(p.file_path);
+      const root = asArray(p.workspace_roots)
+        .map(asString)
+        .find((r): r is string => !!r);
       return {
         cwd: root ?? process.cwd(),
         files: file ? [file] : [],
-        provenance: { by: "cursor", session: str(p.conversation_id), model: str(p.model) },
+        provenance: { by: "cursor", session: asString(p.conversation_id), model: asString(p.model) },
       };
     },
     install(settings, command) {
       settings.version ??= 1;
-      const hooks = (settings.hooks = obj(settings.hooks));
-      const entries = (hooks.afterFileEdit = arr(hooks.afterFileEdit));
-      const ours = entries.map(obj).find((e) => typeof e.command === "string" && /\bhook cursor$/.test(e.command));
+      const hooks = (settings.hooks = asObject(settings.hooks));
+      const entries = (hooks.afterFileEdit = asArray(hooks.afterFileEdit));
+      const ours = entries.map(asObject).find((e) => isOurs(e, "cursor"));
       if (ours) ours.command = `${command} hook cursor`;
       else entries.push({ command: `${command} hook cursor` });
     },
     uninstall(settings) {
-      const hooks = obj(settings.hooks);
-      hooks.afterFileEdit = arr(hooks.afterFileEdit).filter((e) => !isOurs(e, /\bhook cursor$/));
+      const hooks = asObject(settings.hooks);
+      hooks.afterFileEdit = asArray(hooks.afterFileEdit).filter((e) => !isOurs(e, "cursor"));
       prune(hooks, "afterFileEdit");
       if (settings.hooks !== undefined) prune(settings, "hooks");
       // `version` is ours too when nothing else is left.
@@ -185,7 +223,8 @@ export const ADAPTERS: Record<string, Adapter> = {
 
 export function adapterFor(harness: string): Adapter {
   const adapter = ADAPTERS[harness];
-  if (!adapter) throw new Error(`unknown harness "${harness}"; ${BRAND} has adapters for ${Object.keys(ADAPTERS).join(", ")}`);
+  if (!adapter)
+    throw new Error(`unknown harness "${harness}"; ${BRAND} has adapters for ${Object.keys(ADAPTERS).join(", ")}`);
   return adapter;
 }
 
@@ -196,15 +235,18 @@ export interface SettingsChange {
   next: string | null;
 }
 
-function editSettings(root: string, harness: string, edit: (adapter: Adapter, settings: Record<string, unknown>) => void): SettingsChange | undefined {
+type SettingsEdit = (adapter: Adapter, settings: Record<string, unknown>) => void;
+
+function editSettings(root: string, harness: string, edit: SettingsEdit): SettingsChange | undefined {
   const adapter = adapterFor(harness);
   const file = path.join(root, adapter.settingsFile);
   const existing = existsSync(file) ? readFileSync(file, "utf8") : undefined;
   let settings: Record<string, unknown>;
   try {
-    settings = existing?.trim() ? obj(JSON.parse(existing)) : {};
+    settings = existing?.trim() ? asObject(JSON.parse(existing)) : {};
   } catch (error) {
-    throw new Error(`${adapter.settingsFile} is not valid JSON, so the ${harness} hook was left alone: ${(error as Error).message}`, { cause: error });
+    const reason = `${adapter.settingsFile} is not valid JSON, so the ${harness} hook was left alone`;
+    throw new Error(`${reason}: ${(error as Error).message}`, { cause: error });
   }
   edit(adapter, settings);
   const eol = existing?.includes("\r\n") ? "\r\n" : "\n";

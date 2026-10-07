@@ -37,7 +37,7 @@ Committed blob / owner checkout          Agent worktree (smudged)
 | Decision | Choice | Why |
 | --- | --- | --- |
 | Agent view | Real bytes on disk in agent worktrees | Agents touch files through Read, Grep, exact-string Edit, LSP, ast-grep, and shell. Virtualizing all of those per harness does not hold; an Edit whose `old_string` includes text that is not on disk fails. |
-| Anchoring | No markers in committed code; the sidecar records where each comment goes (§ Anchoring). Decided 2026-09-25; marker mode (a `#~a1b2` id left in the code) was removed in v1 A16. | The owner judged that id markers in committed code would stop serious developers from adopting the tool, overlay or not. The earlier reason to keep markers, that zero-trace anchoring meant fuzzy matching, no longer holds: placement is exact per declaration (§ Anchoring, "Rejected: scored fuzzy placement"). |
+| Anchoring | No markers in committed code; the sidecar records where each comment goes (§ Anchoring). Decided 2026-09-25; marker mode (a `#~a1b2` id left in the code) was removed on 2026-09-29. | The owner judged that id markers in committed code would stop serious developers from adopting the tool, overlay or not. The earlier reason to keep markers, that zero-trace anchoring meant fuzzy matching, no longer holds: placement is exact per declaration (§ Anchoring, "Rejected: scored fuzzy placement"). |
 | Pure pointer links (no filter) | Rejected | Every pointer costs tokens on every read, and using a comment costs an extra Read call plus the whole sidecar file. Strictly more tokens than inline whenever comments are used. |
 | Sidecar storage | Tracked markdown under `.agents/comments/`, mirroring source paths | Travels with clones, cloud agents, and PRs; human-readable. Users who want the comments kept on one machine can gitignore the folder; the committed code is the same either way. |
 | Human view | Virtual overlay in VS Code | Files on disk hold only the code. Each comment renders against the site placement reports: a CodeLens above its code line (a trailing one at the end of its line), and a native comment thread with provenance and actions (§ Overlay rendering). |
@@ -113,8 +113,10 @@ Each is pinned by a test in `packages/core/test/` or `packages/cli/test/`.
 - **Terminators.** `stripComments` removes an own-line comment with its line and
   terminator, and a trailing one with the whitespace before it, so every other line keeps
   its terminator. A comment on an unterminated last line takes the terminator before it
-  instead, recorded as `eof` so placing it puts that terminator back. `placeComments`
-  gives inserted lines the terminator of the line they go above.
+  instead, recorded as `eof` so placing it puts that terminator back. When the line before
+  is empty, that line keeps its terminator (without it the line would vanish); then, or
+  when no line comes before, `eof=none` makes the placed comment end the file unterminated
+  again. `placeComments` gives inserted lines the terminator of the line they go above.
 - **Trailing comments** have one line, so a multi-line body shows with its lines joined by
   a space. `sync` and the id rules compare in that flattened form, so viewing a body that
   way is never read as an edit.
@@ -306,7 +308,14 @@ code action, which runs the CLI.
   deleted line whose text the same event inserted whole on exactly one row takes its
   comments there: VS Code's Alt+Up/Down moves a line by deleting the line it passes and
   inserting that line on the other side of the selection, so without this the passed
-  line's comments would vanish. Each document also keeps its text and sites from before
+  line's comments would vanish. An undo or redo can put back code whose comments tracking
+  already dropped: Ctrl+Z after a cut and paste brings the function back, but its comments
+  went with the cut. So after an undo or redo of the source, the next refresh places the
+  buffer from anchors, dirty or not, and adds each comment that placement finds and
+  tracking has lost; every comment tracking still has keeps its tracked site, so an
+  unsaved edit elsewhere does not turn its comments stale. An added comment is exact or
+  absent like any placement: where an unsaved edit changed its code, it shows what a save
+  would show (tagged stale, or nothing). Each document also keeps its text and sites from before
   the latest edit, for a cut (see "Copy and paste"). Placing a dirty buffer from anchors would
   mark every comment in a function stale on its first keystroke. A change event's
   `isDirty` still says false on a clean document's first edit (VS Code sends the dirty
@@ -513,9 +522,22 @@ placements and `confirmPlaced` (`packages/core/src/owner.ts`) clears them. The C
   `parenthesized_expression` is transparent), parentheses around a lone arrow-function
   parameter, quote style and string-prefix case (`U'q'` equals `"q"`), and number
   spelling (`0XAB`/`0xab`, `.5`/`0.5`, `1.50`/`1.5`). Seventeen formatter-only pairs
-  modeled on black, prettier, and dotnet format pin it, beside thirteen real changes;
+  modeled on black, prettier, and dotnet format pin it, beside eighteen real changes;
   neither formatter is installed here, so the pairs are hand-written from their
   documented rewrites.
+- **String statements.** In Python, a statement that is one string and nothing else
+  counts for nothing in a hash that contains it, docstrings included. An f-string still
+  counts, since it runs code, and so does a concatenation (`"a" "b"`). Demote and promote
+  move such strings in and out of a function (§ Promote and demote), and a docstring edit
+  leaves the code as it was, so neither turns the comments around them stale. The hashed
+  node itself still counts, so a comment right above a string tells one string from
+  another. Other languages keep every string statement: JavaScript's `"use strict"`
+  changes what the code does. Eight pairs in `normalization.test.ts` pin the rule. The
+  earlier hash is not accepted as well. An entry recorded before the rule, in a function
+  holding a string statement, places stale once and `confirm` clears it. One whose anchor
+  node itself holds a string statement (an `if` around a note, a `def` with a docstring)
+  no longer finds that node and becomes an orphan, which `confirm` cannot clear. On the
+  owner's 23 real entries the rule made 6 stale and orphaned none.
 - **The tag.** `placeComments` writes `[stale?]` and a space before a stale body.
   `findMarkers` strips the tag from any comment with an id, so `stripComments`, `sync`,
   and the id rules never see it; a new comment (no id) that starts with it keeps it as
@@ -526,7 +548,8 @@ placements and `confirmPlaced` (`packages/core/src/owner.ts`) clears them. The C
   unsaved.
 ## Anchoring
 
-Built in v1 A12 for Python and A13 for the other v1 languages; the only model since A16.
+Built for every v1 language on 2026-09-25; the only model since marker mode was removed on
+2026-09-29.
 Implemented in `packages/core/src/placement.ts` (`stripComments` is the clean filter,
 `placeComments` the smudge, `recordComments` the sync). Tests:
 `packages/core/test/placement.test.ts` (including a round-trip property) and
@@ -542,7 +565,8 @@ Implemented in `packages/core/src/placement.ts` (`stripComments` is the clean fi
     last comment of a block, whose next code line dedents), `trail` (end of the line where
     the node starts), or `row` (a line number, when no code node anchors the comment);
   - `scope`: the enclosing function, else class, as a dotted path (`Ledger.size`), with
-    `@n` for the nth declaration of that path (a property and its setter); absent at
+    `@n` on each later declaration of that path, counting from 1 after the first
+    (`Ledger.size@1` for a setter after its property); absent at
     module level. The node types per language are `functionTypes` and `namespaceTypes` in
     `languages.ts` (a C# property counts as a function). A function or class expression is
     a scope only when bound to a name (`const f = () => {}`, a class field,
@@ -563,12 +587,12 @@ Implemented in `packages/core/src/placement.ts` (`stripComments` is the clean fi
   - `skip`: kept lines (blank, human comments) between the comment and its node; `seq`:
     order among blocks that land on one line; `indent`, `gap` as runs (`4s`, `1t`) when
     they differ from the line placed against; `eof`, the terminator taken from before a
-    comment on an unterminated last line.
+    comment on an unterminated last line (`lf`, `crlf`), or `none` when none was taken.
 - **When it is placed.** Smudge (`placeComments`, through `locate`) places an entry
   exactly when its scope resolves, its node is found, and, in a function scope, the
   function hashes to `body`: moving the function, editing its siblings, or reformatting
-  the file (whitespace, quotes, redundant parentheses; the A7 normalization) keeps every
-  comment as it was. Otherwise, in order:
+  the file (whitespace, quotes, redundant parentheses; § Staleness, "Normalization")
+  keeps every comment as it was. Otherwise, in order:
   - the function changed: the recorded `stmts` are diffed against the current ones (a
     longest common subsequence). A comment whose statement is in an unchanged run goes
     back on its node, shown behind `[stale?]`: the declaration it lives in changed, so it
@@ -583,7 +607,7 @@ Implemented in `packages/core/src/placement.ts` (`stripComments` is the clean fi
   - anything else, including a comment whose own statement was replaced or deleted, is an
     orphan. It is kept in the sidecar, never dropped, and listed by `check --orphans`.
     Moving it to the start of the replacement was built and measured wrong a third of the
-    time ("Measured"), which fired A14's kill criterion.
+    time ("Measured"), so it was dropped.
 - **Renames.** A scope path that no longer resolves is looked for as a rename: the one
   function whose `body` is unchanged (the name is not hashed), else the function whose
   statement-hash set overlaps most by Jaccard index, at least 0.5 and with two statements
@@ -709,7 +733,17 @@ suites.
   it (promote, demote, and a review's apply save the source; a paste does not). Undoing a
   promote is then a demote on disk, and undoing a delete, confirm, edit, or paste restores
   the stored entry without saving edits the owner had not saved. A sidecar open in a tab
-  is left to the user.
+  is left to the user. When the owner answers VS Code's prompt with "Undo this File", the
+  source changes and the sidecar does not, so nothing is saved and no entry is removed: a
+  comment missing from the buffer partway through an undo has not been deleted (§ Anchoring,
+  "Deleting"). A comment the undo brings back shows where the sidecar's anchors place it
+  in the restored text (§ Overlay rendering, "Live tracking"). Undoing a cut and paste
+  within one file this way brings its comments back on the original function, since the
+  anchors a whole-function move records still describe it there; a move that changed
+  them (into another class) leaves the comment unplaced and listed under Orphaned, its
+  entry kept, until a redo puts the moved code back. A move whose paste left the sidecar
+  unchanged has no sidecar step, so VS Code does not ask. No test answers the prompt: the
+  e2e window never shows it, and the native harness does not press it yet.
 
 ## Check
 
@@ -789,11 +823,11 @@ heading and the second branch's `<!-- ... -->` metadata line read back as body t
   empty project, and runs the quickstart with it. The e2e suite also passes against an
   unpacked `.vsix` (`CAIRN_E2E_EXTENSION`), which holds no `node_modules`.
 - **Node 22 or later.** Node 20 left maintenance in April 2026; CI tests 22 on Linux and Windows; 24 is checked locally.
-- **The recorded CLI lives in a home the tool owns** (decided 2026-09-26, built in v1 A17).
+- **The recorded CLI lives in a home the tool owns** (decided 2026-09-26, built 2026-09-29).
   `init` writes an absolute `node "<path>/main.js"` into the filter, merge driver, and
   hooks, and git runs it in every initialized repository whether or not an editor is
   open. A path that disappears makes every commit fail in the pre-commit hook and leaves
-  `status` and `diff` unfiltered. Before A17, `init` recorded wherever the running CLI sat,
+  `status` and `diff` unfiltered. Before that, `init` recorded wherever the running CLI sat,
   and none of the ways to run it gives a path that lasts:
   - The extension's own folder is versioned (`...-vscode-0.1.0`) and deleted on update.
   - `npx` runs from `~/.npm/_npx/<hash>`, a cache npm prunes. Recording `npx cairn-comments`
@@ -868,8 +902,9 @@ heading and the second branch's `<!-- ... -->` metadata line read back as body t
   keeps no terminator, so placing it back uses LF. Any code line in the file avoids it.
 - **Comments on lines a formatter joins.** A comment anchored to a node that
   starts its own line inside an expression (an argument on its own line) does not place
-  once a formatter joins that line into the statement; the entry is kept. A14's
-  fallbacks cover it.
+  once a formatter joins that line into the statement; the entry is kept as an orphan.
+  The hashes ignore whitespace, so the function still matches its `body` and the
+  statement-diff fallback (§ Anchoring, "When it is placed") never runs.
 - **Comments in module-level callbacks orphan on any edit to the callback.**
   A test's `it("...", () => { ... })` is not a scope, so a comment inside it anchors at
   module level to a node inside the call, and the call's hash covers the whole callback

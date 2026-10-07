@@ -56,7 +56,8 @@ describe.each(MODES)("round trip through git (autocrlf=$autocrlf, oneShot=$oneSh
 
   it("init sets up the filter, merge driver, and hooks, is idempotent, and leaves the owner checkout without smudge", () => {
     const attributes = box.read(box.path("main", ".gitattributes"));
-    for (const ext of ["py", "ts", "tsx", "js", "cs", "java", "kt", "kts"]) expect(attributes).toContain(`*.${ext} filter=cairn`);
+    for (const ext of ["py", "ts", "tsx", "js", "cs", "java", "kt", "kts"])
+      expect(attributes).toContain(`*.${ext} filter=cairn`);
     expect(attributes).toContain(".agents/comments/** merge=cairn text eol=lf");
     expect(attributes).toContain(".agents/scan-ignore merge=union text eol=lf");
     for (const hook of ["pre-commit", "post-checkout", "post-merge", "post-commit", "post-rewrite"]) {
@@ -136,14 +137,19 @@ describe.each(MODES)("round trip through git (autocrlf=$autocrlf, oneShot=$oneSh
     box.git(main, "commit", "-qam", "owner moves settle, edits refund, reformats a call");
     box.git(wt2, "merge", "-q", "--no-edit", "main");
     const placed = box.read(box.path("wt2", SOURCE));
-    expect(placed).toMatch(/#~[0-9a-z]{4} settles one order; safe to retry after a crash\ndef settle\(order\):\n {4}#~[0-9a-z]{4} retries are safe/);
+    expect(placed).toMatch(
+      /#~[0-9a-z]{4} settles one order; safe to retry after a crash\ndef settle\(order\):\n {4}#~[0-9a-z]{4} retries are safe/,
+    );
     expect(placed).toMatch(/ledger\.write\( order\.id \) {2}#~[0-9a-z]{4} keyed on order\.id\n/);
     expect(placed.indexOf("def refund")).toBeLessThan(placed.indexOf("def settle"));
     expect(box.status(wt2)).toBe("");
   });
 
   it("an owner edit inside a function shows its comments stale until the agent edits there or confirms", () => {
-    box.write(box.path("main", SOURCE), box.read(box.path("main", SOURCE)).replace("notify(order)", "notify(order, now)"));
+    box.write(
+      box.path("main", SOURCE),
+      box.read(box.path("main", SOURCE)).replace("notify(order)", "notify(order, now)"),
+    );
     box.git(main, "commit", "-qam", "owner edits settle");
     box.git(wt2, "merge", "-q", "--no-edit", "main");
     const file = box.path("wt2", SOURCE);
@@ -156,7 +162,10 @@ describe.each(MODES)("round trip through git (autocrlf=$autocrlf, oneShot=$oneSh
     const owner = box.cliResult(main, "check", "--stale", "--json");
     expect(owner.status).toBe(1);
     const rows = JSON.parse(owner.stdout) as { line: number; id: string; text: string }[];
-    expect(rows.map((r) => r.text)).toEqual(["retries are safe: ledger write is idempotent\nthe ledger rejects a duplicate order id", "keyed on order.id"]);
+    expect(rows.map((r) => r.text)).toEqual([
+      "retries are safe: ledger write is idempotent\nthe ledger rejects a duplicate order id",
+      "keyed on order.id",
+    ]);
     expect(box.read(box.path("main", SOURCE)).split(/\r?\n/)[rows[0]!.line - 1]).toMatch(/ledger\.write/);
     expect(box.cliResult(wt2, "check", "--stale").status).toBe(1);
 
@@ -214,14 +223,18 @@ describe.each(MODES)("round trip through git (autocrlf=$autocrlf, oneShot=$oneSh
     box.git(main, "commit", "-qam", "owner drops the ledger write");
     const listed = box.cliResult(main, "check", "--orphans");
     expect(listed.status).toBe(1);
-    expect(listed.stdout).toMatch(new RegExp(`^${SIDECAR}: [0-9a-z]{4} no longer places in ${SOURCE} \\(last in settle\\): retries are safe`, "m"));
+    expect(listed.stdout).toMatch(
+      new RegExp(`^${SIDECAR}: [0-9a-z]{4} no longer places in ${SOURCE} \\(last in settle\\): retries are safe`, "m"),
+    );
     expect(listed.stdout).toContain("keyed on order.id");
 
     box.cliResult(main, "check", "--fix");
     expect(box.read(box.path("main", SIDECAR))).toContain("retries are safe");
     expect(box.cliResult(main, "check", "--prune").status).not.toBe(0);
 
-    expect(box.cli(main, "check", "--fix", "--prune")).toMatch(/^removed [0-9a-z]{4} from .*: it no longer places in /m);
+    expect(box.cli(main, "check", "--fix", "--prune")).toMatch(
+      /^removed [0-9a-z]{4} from .*: it no longer places in /m,
+    );
     expect(box.read(box.path("main", SIDECAR))).not.toContain("retries are safe");
     expect(box.read(box.path("main", SIDECAR))).toContain("settles one order");
     expect(box.status(main)).toBe(`M  ${SIDECAR}\n`);

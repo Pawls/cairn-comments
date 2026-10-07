@@ -56,7 +56,10 @@ export function findComments(spec: LanguageSpec, source: string): Promise<Commen
   return parseWith(spec, source, (root) => commentsIn(spec, root));
 }
 
-/** Whether `text` parses as this language with no error nodes and not as a run of words: the commented-out-code test. */
+/**
+ * Whether `text` parses as this language with no error nodes and not as a run of words:
+ * the commented-out-code test.
+ */
 export async function parsesCleanly(spec: LanguageSpec, text: string): Promise<boolean> {
   const tree = (await parserFor(spec)).parse(text);
   if (!tree) return false;
