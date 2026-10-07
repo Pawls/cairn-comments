@@ -23,4 +23,5 @@ Comments** shows the stashed comments as an overlay. The project README has the 
 guide, including agent setup, cleaning up an existing repository, and how to remove the
 tool.
 
-Needs git and Node 22 or later. MIT licensed.
+Needs git and Node 22 or later. Tested on Windows and Linux; macOS support is experimental
+(the test suite passed there in CI, but nobody has used it by hand yet). MIT licensed.

@@ -5,6 +5,7 @@
   "version": "0.1.0",
   "publisher": "pawls",
   "icon": "media/icon.png",
+  "preview": true,
   "license": "MIT",
   "repository": {
     "type": "git",

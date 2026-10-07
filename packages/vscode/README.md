@@ -42,6 +42,10 @@ of their line.
 
 Git and Node 22 or later. The extension carries the `cairn` CLI; nothing else to install.
 
+Tested on Windows and Linux (WSL Ubuntu included). macOS support is experimental: the test
+suite passed there in CI, but nobody has used it by hand yet. Please
+[report what you find](https://github.com/Pawls/cairn-comments/issues).
+
 Open the repository and the **AI Comments** view in the Activity Bar. In a repository that
 is not set up yet, it offers **Set Up Cairn Comments in This Repository**, lists every
 change it will make, and makes them when you confirm. Commit the `.gitattributes` it
