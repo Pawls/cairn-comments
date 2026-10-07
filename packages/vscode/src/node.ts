@@ -18,7 +18,8 @@ export function nodeProblem(versionOutput: string | undefined): string | undefin
 
 function nodeVersion(): Promise<string | undefined> {
   return new Promise((resolve) => {
-    execFile("node", ["--version"], { encoding: "utf8" }, (error, stdout) => resolve(error ? undefined : stdout));
+    // Looked up on PATH on purpose (typescript:S4036): this must find the same `node` git runs for the filter.
+    execFile("node", ["--version"], { encoding: "utf8" }, (error, stdout) => resolve(error ? undefined : stdout)); // NOSONAR
   });
 }
 
