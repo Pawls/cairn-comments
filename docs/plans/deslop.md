@@ -12,17 +12,19 @@
 > runs `npm run bench` within noise of the recorded 3,182 ms; the PR body carries the
 > before/after metrics from § Baseline, including any that got worse and why.
 >
-> **Next:** D4, deslop the CLI.
-> **Branch:** `deslop-<slice>` per lane (e.g. `deslop-d1`), each off `main` as its own PR.
-> **Lanes:** A: D1 · D: D4 · E: D5→D6 · F: D7
+> **Next:** none, arc complete (2026-10-06). Leftovers are under § Follow-ups outside these slices.
+> **Branch:** none; every slice merged to `main` through its own PR (#7 to #16).
 
-- [D1 — Core placement](#d1)
+- [~~D1 — Core placement~~ — SHIPPED 2026-10-06](#d1)
 - [~~D2 — Core scan, detectors, literals, markers~~ — SHIPPED 2026-10-06](#d2)
 - [~~D3 — Core remainder~~ — SHIPPED 2026-10-06](#d3)
-- [D4 — CLI](#d4)
-- [D5 — VS Code extension source](#d5)
-- [D6 — Extension e2e, native harness, scripts](#d6)
-- [D7 — Design doc journal voice](#d7)
+- [~~D4 — CLI~~ — SHIPPED 2026-10-06](#d4)
+- [~~D5 — VS Code extension source~~ — SHIPPED 2026-10-06](#d5)
+- [~~D6 — Extension e2e, native harness, scripts~~ — SHIPPED 2026-10-06](#d6)
+- [~~D7 — Design doc journal voice~~ — SHIPPED 2026-10-06](#d7)
+- [~~D8 — Unterminated file loses a blank line between comment blocks~~ — SHIPPED 2026-10-06](#d8)
+- [~~D9 — Undo after a cut and paste loses the moved comments~~ — SHIPPED 2026-10-06](#d9)
+- [~~D10 — Promoting a string comment turns its neighbors stale~~ — SHIPPED 2026-10-06](#d10)
 
 ## Traps
 
@@ -39,6 +41,12 @@
   reads of the sidecar or the seen record is a behavior change, not a refactor.
 - **Untested code gets pinned before it moves** (test first). Commit the pin, then the
   refactor, so the diff shows the pin passing on the old code.
+- **The repository has no formatter.** D4 wrapped code at 120 characters with
+  `npx -y prettier@3 --print-width 120 --write <files>` and proved it changed no code by bundling each file
+  with `esbuild --minify --packages=external` before and after and comparing bytes. A lane that wraps does
+  the same, in a commit of its own. Expected-output strings and regex literals in tests stay on one line.
+- **Converting a `forEach` callback to a `for` loop can push the parent over the bar**, because the callback
+  was scored as its own function. Re-score after the change (D1 and D3 both hit this).
 
 ## Feeding the skill
 
@@ -53,6 +61,9 @@ in parallel against one `~/.claude` working tree, so lane agents never edit the 
   worse) so the coordinator can narrow them.
 - At close-out the coordinator appends the new rules to `SKILL.md`, merges near-duplicates
   into the existing rule instead of adding a second one, and commits in `~/.claude`.
+  Done 2026-10-06: 26 candidates from the ten PRs became rules 161 to 169, amendments to
+  rules 5, 7, 8, 9, 13, 16, 30, 44, and 110, and process items 14 to 17 (`~/.claude` d9427e6).
+  No rule misfired on TypeScript.
 
 ## Baseline
 
@@ -69,24 +80,27 @@ index; no plan-slice ids appear in code. Totals per slice, source / tests:
 | D5 | 2,034 / 354 | `activate` (243, a closure god function), `registerReviewTree` (187) | 19 / 1 | 63 / 6 |
 | D6 | – / 1,568 | `overlay.test.ts` body (542) | – / 109 | – / 76 |
 
-### D1 — Core placement · Opus 5.5 / high {#d1}
+### ~~D1 — Core placement~~ · Opus 5.5 / high — SHIPPED 2026-10-06 {#d1}
 
-**Status:** Not started. The largest module, and it runs inside `clean`.
+**Status:** Shipped in PR #9. `placement.ts`'s long functions are split by phase (longest now `resolve`, 31
+lines; worst score 14); non-null assertions went from 45 to 32. 476 tests pass on Windows and WSL, bench
+2,931 ms. Replay over one repository gave the same counts as `main` (149,437 exact, 934 diff, 3 rename, 484
+orphan), and an old-against-new probe over 409 files matched on every file. Found the bug that is now D8.
 **Note (from D2):** `stringStatementAt`'s refusal reasons are mostly tested through `demoteTarget` in
 `promote.test.ts`; the two that had no test ("sharing its line", "empty string") are pinned in `scan.test.ts`.
 **Touches:** `packages/core/src/placement.ts`; `packages/core/test/{placement,tag,promote,normalization}.test.ts`.
 **After:** none.
 
-- [ ] Re-run the metrics on the Touches and record them in the PR body
-- [ ] Comment pass (rules 5, 23, 26, 28, 30): every docstring verb checked against its body,
+- [x] Re-run the metrics on the Touches and record them in the PR body
+- [x] Comment pass (rules 5, 23, 26, 28, 30): every docstring verb checked against its body,
       every backticked name resolves, every stated number recomputed
-- [ ] `recordComments` (79 lines) and the other long functions split by phase (rule 4), each
+- [x] `recordComments` (79 lines) and the other long functions split by phase (rule 4), each
       piece scored under 15; pins added first where a phase has no direct test
-- [ ] The four `forEach` closures checked for outer writes (rule 13); the 45 non-null
+- [x] The four `forEach` closures checked for outer writes (rule 13); the 45 non-null
       assertions reduced where a type or guard states the fact instead
-- [ ] Verify: lint, `npm test`, `npm run bench`, `npm run replay -- --repo <path>` on one
+- [x] Verify: lint, `npm test`, `npm run bench`, `npm run replay -- --repo <path>` on one
       repository with placement counts identical to `main`
-- [ ] `## Skill notes` and `## Plan notes` in the PR body
+- [x] `## Skill notes` and `## Plan notes` in the PR body
 
 Cancel a split if its equivalence cannot be argued line by line; leave the code and say why.
 
@@ -125,58 +139,95 @@ Windows and WSL. No bench: `lines.ts` changed in comments only. `index.ts` is un
 - [x] Verify: lint, `npm test`, `npm run bench` if `lines.ts` changed
 - [x] `## Skill notes` and `## Plan notes` in the PR body
 
-### D4 — CLI · Opus 5.5 / medium {#d4}
+### ~~D4 — CLI~~ · Opus 5.5 / medium — SHIPPED 2026-10-06 {#d4}
 
-**Status:** Not started.
+**Status:** Shipped in PR #11. `applyReview` and the filter handshake are split by phase (worst score 13 to
+11); CLI code is wrapped at 120 characters, with minified bundles byte-identical before and after. 488 tests
+pass on Windows and WSL; bench 3,162 ms (process-to-off ratio 3.37, against 3.20 and 3.32 for D2 and D1).
+One behavior change, with its test: the `refresh` usage text now names all four hooks `init` installs. Two
+unreferenced `git.ts` exports (`grepTokens`, `ignoredByPattern`) are removed. `roundtrip.test.ts` and
+`process.test.ts` stay as they are: their `it` blocks share repository state, so none stands alone.
 **Touches:** `packages/cli/src/*.ts`; `packages/cli/test/*.ts` (harness included).
 **After:** none.
 
-- [ ] Metrics re-run and recorded
-- [ ] Comment pass as in D1; flags named in comments checked against the parser in `main.ts`
+- [x] Metrics re-run and recorded
+- [x] Comment pass as in D1; flags named in comments checked against the parser in `main.ts`
       (rule 107)
-- [ ] `main.ts` dispatch read against rule 11; `init.ts` (21 long lines), `check.ts`, and
+- [x] `main.ts` dispatch read against rule 11; `init.ts` (21 long lines), `check.ts`, and
       `scan.ts`'s `applyReview` read for phase splits
-- [ ] Long test bodies (`roundtrip.test.ts` 211 lines, `process.test.ts` 143) split into
+- [x] Long test bodies (`roundtrip.test.ts` 211 lines, `process.test.ts` 143) split into
       named `it` blocks only where each case stands alone; assertions unchanged
-- [ ] Every rewrite of a working file still ends with `restat` (AGENTS.md)
-- [ ] Verify: lint, `npm test` (bundle rebuilt), `npm run bench` if `process.ts`, `pktline.ts`,
+- [x] Every rewrite of a working file still ends with `restat` (AGENTS.md)
+- [x] Verify: lint, `npm test` (bundle rebuilt), `npm run bench` if `process.ts`, `pktline.ts`,
       or `git.ts` changed; WSL run
-- [ ] `## Skill notes` and `## Plan notes` in the PR body
+- [x] `## Skill notes` and `## Plan notes` in the PR body
 
-### D5 — VS Code extension source · Opus 5.5 / high {#d5}
+### ~~D5 — VS Code extension source~~ · Opus 5.5 / high — SHIPPED 2026-10-06 {#d5}
 
-**Status:** Not started. UI code whose real check is the e2e and native suites.
+**Status:** Shipped in PR #13. `activate` went from 243 lines to 49
+(`OverlayController`, `PasteSaves`/`UndoSaves`, a sidecar lookup), `registerReviewTree` became a `ReviewTree`
+class, worst score 14; source lines rose from 2,034 to 2,282. 490 tests pass on Windows and WSL at 172e654.
+One review-suite test failed once on Windows (promote returned `undefined`, at 4ed8cf5) and never again: 0 of
+11 on the branch and 0 of 10 on `main` on Windows, 0 of 18 and 0 of 19 in WSL, 0 of 1,200 at the CLI. Cause
+unknown; nothing separates the branch from `main`. One timing difference: with no workspace folder the review
+tree clears its model one microtask later, on a path no test reaches.
 **Touches:** `packages/vscode/src/*.ts`; `packages/vscode/test/*.ts`.
 **After:** none.
 
-- [ ] Metrics re-run and recorded
-- [ ] `activate` (243 lines of closures over shared state) split by phase with state passed
+- [x] Metrics re-run and recorded
+- [x] `activate` (243 lines of closures over shared state) split by phase with state passed
       explicitly (rules 4, 36); `registerReviewTree` (187) likewise
-- [ ] Comment pass as in D1; `TestApi` shape unchanged, or D6's Touches updated
-- [ ] Verify: lint, `npm test`, `npm run test:vscode` (tell the user first on Windows),
+- [x] Comment pass as in D1; `TestApi` shape unchanged, or D6's Touches updated
+- [x] Verify: lint, `npm test`, `npm run test:vscode` (tell the user first on Windows),
       `npm run test:native` (the user stays off the machine), then rebuild and install the
-      `.vsix` and open one Python file with the overlay on
-- [ ] `## Skill notes` and `## Plan notes` in the PR body
+      `.vsix` and open one Python file with the overlay on. The owner's check in the installed build found
+      the undo fault that became D9 (present before this slice too) and the stale tag that became D10;
+      `test:native` passed 3 of 3 at 4ed8cf5 and again on D9's branch, which contains every later merge.
+- [x] `## Skill notes` and `## Plan notes` in the PR body
 
-### D6 — Extension e2e, native harness, scripts · Sonnet 5.5 / high {#d6}
+### ~~D6 — Extension e2e, native harness, scripts~~ · Sonnet 5.5 / high — SHIPPED 2026-10-06 {#d6}
 
-**Status:** Not started. Runs after D5 because the e2e suite drives D5's `TestApi`.
+**Status:** Shipped in PR #16. `overlay.test.ts` is ten nested suites (largest 184 lines) with helpers in
+`overlay-helpers.ts` and no non-null assertions; the per-test assertion sequence is identical to `main`'s
+(290 calls over 42 tests, logged at runtime). The review e2e repository now sets `"git.enabled": false`.
+`replay-anchoring.ts` and `bench.ts` are split, with byte-identical replay output and identical bench
+scenario lists. A reset that waits for the file watcher was tried, measured no better (5 of 20 against 4 of
+20), and reverted. 507 tests on Windows and WSL at 94e1a2e; WSL e2e 20 of 20 against `main`'s 16 of 20;
+`test:vscode` 35 + 7; `test:native` 3 of 3.
+**Note (from D5):** the overlay e2e suite flakes on `main` in WSL under xvfb, 1 run in 20 (two undo-save tests
+timing out in `waitFor`, one cut test asserting `undefined !== 1`), and 0 in 20 on Windows. Measure the split
+suite against that rate, not against zero: 20 WSL runs before and 20 after.
+**Note (from D5):** the review e2e repository had no `.vscode/settings.json`, so VS Code's built-in git
+extension was on there while the overlay fixture set `"git.enabled": false`. D6 made them consistent in a
+commit of its own, recorded as a test-environment change, not a refactor.
+**Note (from D9):** `reset()` returns before the file watcher reports its `git checkout` of the sidecar; the
+late `sidecarChanged` forgets every document's state partway through the next test. An in-memory event log
+caught it 9 ms after an undo (console logging hid it: 0 failures in 18 logged runs against 3 in 20). It is
+the likely cause of the known 1-in-20 undo-save timeouts; a reset that waits for the watcher would fix it
+suite-wide. D9's two tracking tests carry `await settle(1_500)` as a guard that such a reset makes unneeded.
+**Note (from D9):** the new cases share four helpers above `suite("overlay")` (`cutAndPasteRefund`,
+`refundCommentShown`, `undoStep`, `recordRefundAnchors`); `cutAndPasteRefund` overlaps the `moveRefund`
+closure in "a cut function whose entry the paste leaves unchanged", so the split can merge them.
+**Note (from D9):** `test:native` passed 3 of 3 at f476961, which is `main` plus D9; that is the before-state.
 **Touches:** `packages/vscode/{e2e,native}/*.ts`, `packages/vscode/esbuild.mjs`, `scripts/*.ts`, `scripts/*.mjs`.
-**After:** D5.
+**After:** D5, D9 (D9 adds a case to `overlay.test.ts`, which this slice splits).
 
-- [ ] Metrics re-run and recorded
-- [ ] `overlay.test.ts` (one 542-line `describe` body, 88 of the 109 non-null assertions) split into
+- [x] Metrics re-run and recorded
+- [x] `overlay.test.ts` (one 542-line `describe` body, 88 of the 109 non-null assertions) split into
       named helpers and cases; every assertion kept
-- [ ] `scripts/bench.ts` and `replay-anchoring.ts`: comment numbers recomputed (rule 23),
+- [x] `scripts/bench.ts` and `replay-anchoring.ts`: comment numbers recomputed (rule 23),
       measured costs name their conditions (rule 25)
-- [ ] Verify: lint, `npm run test:vscode`, `npm run test:native`, `npm run bench` prints the
+- [x] Verify: lint, `npm run test:vscode`, `npm run test:native`, `npm run bench` prints the
       same scenario list
-- [ ] `## Skill notes` and `## Plan notes` in the PR body
+- [x] `## Skill notes` and `## Plan notes` in the PR body
 
-### D7 — Design doc journal voice · Opus 5.5 / medium {#d7}
+### ~~D7 — Design doc journal voice~~ · Opus 5.5 / medium — SHIPPED 2026-10-06 {#d7}
 
-**Status:** Not started. `design.md` cites v1 slice ids seven times ("built in v1 A17",
-"the A7 normalization", "fired A14's kill criterion").
+**Status:** Shipped in PR #10. The seven slice ids in `design.md` are replaced by dates or by the rule; no
+section title changed. Three claims were wrong and are corrected, each in its own commit: `@n` marks each
+later declaration of a path counting from 1 (not the nth); a comment on a line a formatter joins is kept as
+an orphan (the fallbacks do not cover it, shown by a run); AGENTS.md no longer names a `v1` branch. Every
+`design.md §` citation resolves except three in `docs/plans/v1.md` (§ Follow-ups).
 **Note (from D2):** § Known gaps still says "A14's fallbacks".
 **Note (from D3):** core comments cite these titles, which stay or are repointed together: § Promote and
 demote; § Anchoring "Who saw it" and "Renames"; § Staleness "Normalization"; § Sidecar merges; § Packaging,
@@ -184,20 +235,132 @@ bullet "The recorded CLI lives in a home the tool owns" (whose own text says "bu
 **Touches:** `docs/design.md`, `AGENTS.md`, `README.md`, `packages/*/README.md`.
 **After:** none.
 
-- [ ] Each slice id replaced by the rule as it stands now, or by a date when the history is
+- [x] Each slice id replaced by the rule as it stands now, or by a date when the history is
       the point (a decision record); hedge words checked (rule 133)
-- [ ] Section titles unchanged unless every citation in code and docs is updated (Traps)
-- [ ] `deslop-prose` pass over the edited sections; claims unchanged
-- [ ] Verify: `git grep -n -E '\b[AB][0-9]{1,2}\b' docs/design.md AGENTS.md README.md packages/*/README.md`
+- [x] Section titles unchanged unless every citation in code and docs is updated (Traps)
+- [x] `deslop-prose` pass over the edited sections; claims unchanged
+- [x] Verify: `git grep -n -E '\b[AB][0-9]{1,2}\b' docs/design.md AGENTS.md README.md packages/*/README.md`
       shows
       only intended hits; every `design.md §` citation in the tree resolves
-- [ ] `## Skill notes` and `## Plan notes` in the PR body
+- [x] `## Skill notes` and `## Plan notes` in the PR body
 
 Out of scope: commit history. Slice-code commit subjects stay; rewriting merged history is
 not a cleanup.
+
+### ~~D8 — Unterminated file loses a blank line between comment blocks~~ · Opus 5.5 / high — SHIPPED 2026-10-06 {#d8}
+
+**Status:** Shipped in PR #12. A bug D1 found: `x = 1\n#~ first\n\n#~ second` (no final newline) stripped to
+`x = 1\n` and placed back without the blank line and with a final newline. `stripComments` now leaves an empty
+line's terminator alone, and the sidecar records `eof=none` when no terminator was taken. A build without the
+fix ignores `eof=none` and cleans these files as before, so mixed versions flip such a file under `git
+status`. Over 40,000 generated unterminated files, none that round-trips on the old code fails on the new;
+490 tests pass on Windows and WSL; bench 2,922 ms. Replay counts match `main`, which says little: replay never
+inserts a comment at a file's end.
+**Touches:** `packages/core/src/placement.ts`; `packages/core/test/placement.test.ts`; `docs/design.md` if a
+round-trip rule changes.
+**After:** D1.
+
+- [x] A failing round-trip test for the unterminated case, committed before the fix, with the red run shown
+- [x] The fix, keeping every other line's terminator (`applySplices`) and `clean` pure in (path, source)
+- [x] The property tests and the `autocrlf=true` integration scenarios still pass; say in the PR whether any
+      existing blob's cleaned form changes, and for which inputs
+- [x] Verify: lint, `npm test` on Windows and WSL, `npm run bench`, `npm run replay -- --repo <path>` with
+      counts compared to `main`
+
+Cancel if the fix would change the cleaned form of a file that round-trips today; report the case instead.
+
+### ~~D9 — Undo after a cut and paste loses the moved comments~~ · Opus 5.5 / high — SHIPPED 2026-10-06 {#d9}
+
+**Status:** Shipped in PR #14. Found by the owner's overlay check of D5: cut a commented method, paste it
+elsewhere, undo until it is back (or redo), with no save in between, and the comments were not shown on it.
+The tests showed the fault identical on ed03167 and `main` (5 of 5 each), so PR #13 did not cause it. The rule
+is in design.md: after an undo or redo the next refresh places from anchors even in a dirty buffer, adding only
+the comments tracking lost; comments tracking still holds keep their site and stale flag; nothing is written.
+"Undo this File" keeps the sidecar and shows a restored comment where its anchors place it; it is not pinned
+by a test. A latent race (two refreshes overlapping after an undo) got its own red test and fix. 490 tests on
+Windows and WSL; WSL e2e 19 of 20 clean, the same as `main`; `test:vscode` 35 + 7; `test:native` 3 of 3; the
+owner confirmed undo and redo in the installed build.
+**Touches:** `packages/vscode/src/{placed,tracking,saves,controller}.ts`; one new case in
+`packages/vscode/e2e/overlay.test.ts`; `packages/vscode/native/run.ts` if real undo grouping needs pinning;
+`docs/design.md` § Overlay rendering, "Live tracking" and § Promote and demote, "Undo".
+**After:** D5.
+
+- [x] A failing e2e test for the owner's steps (dirty buffer, cut, paste, undo twice, assert the comment is
+      rendered on the original method), committed red; a clean-buffer variant beside it; and a redo case
+      (redo twice after the undo, assert the comment is rendered on the moved method)
+- [x] Both tests run on a build of ed03167 (before PR #13) and of `main`, to say whether D5 changed anything
+- [x] The rule written into design.md before the fix: what an undo of a cut shows in a dirty buffer, and what
+      happens to the sidecar when the owner undoes "this file only"
+- [x] The fix; placement stays exact or refused, with no best-guess site for re-inserted text
+- [x] Verify: lint, `npm test` on Windows and WSL, e2e 20 runs in WSL against `main`'s flake rate,
+      `test:vscode` and `test:native` on Windows, then the owner repeats the steps in the installed build
+
+Cancel the fix, keep the tests, and record a known gap if the only way to restore the display is a guess.
+
+### ~~D10 — Promoting a string comment turns its neighbors stale~~ · Opus 5.5 / high — SHIPPED 2026-10-06 {#d10}
+
+**Status:** Shipped in PR #15. Found by the owner: a string comment moved into or out of a method changed the
+method's `body` hash and tagged its neighbors `[stale?]`. Three triggers were pinned red: a demote in the
+owner's checkout (which records only the demoted string), a promote or demote merged from another branch,
+and a string promote that wrongly cleared a neighbor's rightful stale tag. The rule, decided by the owner:
+in Python a statement that is one string literal and nothing else counts for nothing in the hashes,
+docstrings included; f-strings and concatenated strings still count; other languages unchanged. Recorded
+hashes were left to go stale once (11 of the owner's 23 entries; Confirm clears each); an entry whose anchor
+node itself holds a string statement orphans instead, and design.md says so. 507 tests on Windows and WSL;
+bench within 0.8% of `main`; replay moved 39 placements from diff to exact and nothing else.
+**Touches:** `packages/core/src/anchors.ts` (and `literals.ts` if its string-statement test is shared);
+`packages/core/test/{normalization,placement,promote}.test.ts`; `docs/design.md` § Staleness.
+**After:** none.
+
+- [x] A failing test, committed red: a function with a trailing comment and a string comment; promote the
+      string comment; the trailing comment is placed, not stale. The same for demote.
+- [x] The rule written into design.md § Staleness before the fix, and agreed by the owner: which string
+      statements the hashes ignore (the bare ones promote and demote move; docstrings are a separate question,
+      since they are most functions' first statement) and for which languages
+- [x] What happens to hashes already recorded: every sidecar entry in a function the rule touches would turn
+      stale on upgrade unless the old hash is still accepted or the entry is re-recorded. Measure how many
+      entries that is on one real repository and choose with the owner
+- [x] The fix, with the formatter-only and real-change pairs in `normalization.test.ts` still passing and new
+      pairs for the string cases
+- [x] Verify: lint, `npm test` on Windows and WSL, `npm run bench` (hashing runs on placement), `npm run
+      replay -- --repo <path>` with counts compared to `main` and every difference explained
+
+Cancel if no rule separates a string comment from a string the program uses without guessing.
 
 ## Follow-ups outside these slices
 
 - **`ScannedComment` as a union on `style`** (from D2). `literal` is set only when `style === "string"`; a
   union would remove the `c.literal!` in `convertDemoted`. It changes an exported type, so it waits until no
   lane is open.
+- **CRLF lost when the stripped file has no terminator at all** (from D8; on `main` before it too). With one
+  unterminated code line, or no code, placed comments fall back to LF: `#~ note\r\npass` comes back as
+  `#~ note\npass`. design.md § Known gaps covers only the comment-only file. The fix records the comment's own
+  terminator, which is new sidecar metadata, so it is a slice of its own, test first.
+- **A promote can drop an entry the extension has not seen yet** (from D10, unverified). `SidecarStore` caches
+  a sidecar's disk copy until the watcher fires; an in-process promote run before that would write the
+  sidecar without an entry an agent had just added, losing the comment. Nothing tests it.
+- **The late sidecar event behind D9's two `settle(1_500)` guards** (from D6). A reset that waits for the file
+  watcher did not remove it (5 of 20 against 4 of 20, reverted). Suspect, untested: `trackDocuments` in
+  `extension.ts` calls `sidecarChanged` from `onDidCloseTextDocument` for a sidecar buffer, and VS Code closes
+  sidecar buffers that have no tab lazily.
+- **The review-suite promote returning `undefined`** (D5's one Windows failure) reproduced on `main` in WSL at
+  2 of 20 and 0 of 40 with the review repository's git extension off (D6). Suggestive only; the swallowed CLI
+  error (next item) is still what would show the cause.
+- **`native/competitor/extension.cjs`** (the stand-in paste provider) was outside every slice's Touches and
+  has not been read for these rules.
+- **Confirm pass in BoxelBuilderExperiment** (from D10): 11 of its 23 entries are stale after the hash rule
+  changed; each wants a Confirm, or a check that it is still true.
+- **Make a failed CLI run in the extension visible to tests** (from D5). `runOnFile` shows the error as a
+  notification and returns `undefined`, so an e2e failure on that path cannot show its cause. Log it to the
+  console as well. This is what would explain the one Windows failure if it recurs.
+- **A unit-test seam for the extension** (from D5). Every extension module imports `vscode`, so only the e2e
+  and native suites cover `activate` and the review tree. A small `vscode` mock for vitest, or the pure parts
+  (`UndoSaves` timing, `changedSpan`) moved behind an injected clock.
+- **An e2e launch with no workspace folder** (from D5); nothing tests that path or its message.
+- **A root `.prettierrc` (print width 120) and a format check** (from D4), so the wrapping holds. The owner
+  decides; nothing is added until then.
+- **Stale lines in `docs/plans/v1.md`** (from D7 and its review): line 30 says `v1` carries every slice and
+  merges to `main` once, but v1 merged as PR #1 on 2026-09-30 and later slices landed by PR; "Next up" at
+  line 33 still lists A9 and A17; line 117 cites "design.md § Rules settled in A3" (now § Languages); line 358
+  cites "Hiding marker lines outright" (now "Rejected: hiding lines by folding"); line 547 cites "§ Scan"
+  (now § Scan detectors).
