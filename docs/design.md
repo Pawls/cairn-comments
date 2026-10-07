@@ -823,6 +823,11 @@ heading and the second branch's `<!-- ... -->` metadata line read back as body t
   empty project, and runs the quickstart with it. The e2e suite also passes against an
   unpacked `.vsix` (`CAIRN_E2E_EXTENSION`), which holds no `node_modules`.
 - **Node 22 or later.** Node 20 left maintenance in April 2026; CI tests 22 on Linux and Windows; 24 is checked locally.
+  The extension carries the CLI but not a runtime, and git runs the recorded `node` command
+  outside the editor, so setup and repair first run `node --version` and stop with an
+  install link when it is missing or older (`packages/vscode/src/node.ts`). Running the CLI
+  on the editor's own runtime or shipping a standalone binary would remove the requirement;
+  neither is built.
 - **The recorded CLI lives in a home the tool owns** (decided 2026-09-26, built 2026-09-29).
   `init` writes an absolute `node "<path>/main.js"` into the filter, merge driver, and
   hooks, and git runs it in every initialized repository whether or not an editor is
@@ -966,8 +971,9 @@ Marginalia, Deslop, Unslop (all taken).
 **Decision (2026-09-23): Cairn Comments.** Renamed from Slopstash before publishing, to
 open the tool to human-written private notes as well as AI comments (docs/plans/v2.md).
 Display name "Cairn Comments"; npm package `cairn-comments`; CLI binary, filter driver, and
-command ids `cairn`; extension `cairn-comments.cairn-comments-vscode` (the workspace name
-must differ from the CLI package). "cAIrn" is a logo treatment only. The bare "Cairn" is not
+command ids `cairn`; extension `pawls.cairn-comments-vscode` (the workspace name must differ
+from the CLI package; the `pawls` publisher, chosen 2026-10-07, also carries the owner's other
+extensions). "cAIrn" is a logo treatment only. The bare "Cairn" is not
 the listing name: two small Marketplace extensions already use it (`valpet.cairn-extension`,
 `fractaldecoder.cairn`), and `cairn` on npm is an unrelated 2017 React Native package. The
 Slopstash tagline and search rationale above are superseded; the `<Brand>: Hide AI Comments`

@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import * as vscode from "vscode";
 import { BRAND, BRAND_TITLE, cliHome, homeCommand, installCli } from "@cairn-comments/core";
+import { requireNode } from "./node.js";
 import { findRepo, recordedMain, runCli, type Repo } from "./review.js";
 
 /**
@@ -17,8 +18,12 @@ export function installBundledCli(context: vscode.ExtensionContext): void {
   }
 }
 
-/** Runs `init` through the home's CLI, which is also what it records. */
-export function runInit(root: string, dryRun: boolean): Promise<string> {
+/**
+ * Runs `init` through the home's CLI, which is also what it records. Throws before running
+ * anything when no `node` on PATH can run that recorded command.
+ */
+export async function runInit(root: string, dryRun: boolean): Promise<string> {
+  await requireNode();
   return runCli(homeCommand(cliHome()), dryRun ? "init --dry-run" : "init", root);
 }
 

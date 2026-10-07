@@ -56,9 +56,12 @@ where it was. When the function around a comment changes, the comment still show
 possibly stale (see [Stale comments](#stale-comments)). Nothing is deleted at any point:
 every comment body is in a tracked, human-readable file, and one whose code is gone is
 kept and listed until you remove it.
+
 ## Quickstart
 
-Needs git and Node 22 or later.
+Needs git and Node 22 or later. Tested on Windows and Linux (WSL Ubuntu included). macOS
+support is experimental: the test suite passed there in CI, but nobody has used it by hand
+yet. Please [report what you find](https://github.com/Pawls/cairn-comments/issues).
 
 **From VS Code:** install **Cairn Comments: Hide AI Comments** from the Marketplace, open
 the repository, and open the AI Comments view in the Activity Bar. In a repository that is

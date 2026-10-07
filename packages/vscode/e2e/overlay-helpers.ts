@@ -12,7 +12,7 @@ import type { OwnLineStyle, PlacedComment, PlacedRender } from "../src/placed.js
 import { screenshot } from "./capture.js";
 import { settle, waitFor } from "./wait.js";
 
-const EXTENSION_ID = "cairn-comments.cairn-comments-vscode";
+const EXTENSION_ID = "pawls.cairn-comments-vscode";
 const TOGGLE = "cairn.toggleOverlay";
 /** Window pixels of the editor under the tab bar, down to the panel, in the test window. */
 const EDITOR_CROP = "0,40,780,530";

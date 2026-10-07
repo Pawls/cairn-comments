@@ -7,6 +7,15 @@ Cairn Comments's git filter moves each AI comment into a tracked markdown file, 
 record of the code it belongs to, and leaves no trace of it in the committed code. This
 extension draws the comments back over your plain code.
 
+Overlay off: the editor shows the plain code.
+
+![Overlay off](https://raw.githubusercontent.com/Pawls/cairn-comments/main/docs/images/overlay-off.png)
+
+Overlay on: each comment shows above the line it describes, and trailing ones at the end
+of their line.
+
+![Overlay on](https://raw.githubusercontent.com/Pawls/cairn-comments/main/docs/images/overlay-on.png)
+
 - **Overlay.** Toggle with the `AI comments` status bar item, **Cairn Comments: Toggle AI
   Comment Overlay**, or `Ctrl+Alt+`` ` (`Cmd+Alt+`` ` on macOS). Off, the editor shows the
   plain code. On, each comment shows as a CodeLens above the line it describes, and a
@@ -31,16 +40,19 @@ extension draws the comments back over your plain code.
 
 ## Requirements
 
-The `cairn` CLI, set up in the repository:
+Git and Node 22 or later. The extension carries the `cairn` CLI; nothing else to install.
 
-```sh
-npm install -g cairn-comments
-cd your-repo
-cairn init
-```
+Tested on Windows and Linux (WSL Ubuntu included). macOS support is experimental: the test
+suite passed there in CI, but nobody has used it by hand yet. Please
+[report what you find](https://github.com/Pawls/cairn-comments/issues).
 
-The overlay works on any checkout with sidecars. Scanning, demoting, and the stale and
-orphan lists run the CLI that `cairn init` recorded for the repository.
+Open the repository and the **AI Comments** view in the Activity Bar. In a repository that
+is not set up yet, it offers **Set Up Cairn Comments in This Repository**, lists every
+change it will make, and makes them when you confirm. Commit the `.gitattributes` it
+writes; everyone who clones the repository sets it up once.
+
+The overlay works on any checkout with sidecars. Agent setup, worktrees, and the CLI
+reference are in the [project README](https://github.com/Pawls/cairn-comments#readme).
 
 Languages: Python, TypeScript, TSX, JavaScript, C#, Java, and Kotlin.
 
