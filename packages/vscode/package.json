@@ -11,6 +11,8 @@
     "url": "https://github.com/Pawls/cairn-comments.git",
     "directory": "packages/vscode"
   },
+  "homepage": "https://github.com/Pawls/cairn-comments#readme",
+  "bugs": "https://github.com/Pawls/cairn-comments/issues",
   "type": "module",
   "main": "./dist/extension.cjs",
   "engines": {
