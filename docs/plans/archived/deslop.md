@@ -12,7 +12,7 @@
 > runs `npm run bench` within noise of the recorded 3,182 ms; the PR body carries the
 > before/after metrics from § Baseline, including any that got worse and why.
 >
-> **Next:** none, arc complete (2026-10-06). Leftovers are under § Follow-ups outside these slices.
+> **Next:** none, arc complete (2026-10-06). Archived 2026-10-07; the leftovers moved to docs/plans/v2.md § Later.
 > **Branch:** none; every slice merged to `main` through its own PR (#7 to #16).
 
 - [~~D1 — Core placement~~ — SHIPPED 2026-10-06](#d1)
