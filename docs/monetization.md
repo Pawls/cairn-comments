@@ -13,8 +13,9 @@ if adoption justifies one, covers what needs coordination across a team.
 ## Free (MIT, public repo)
 
 - The CLI, the git filter, and the editor overlay (the VS Code extension).
-- Published to the VS Code Marketplace, Open VSX (Cursor, Windsurf and VSCodium install
-  from it, not from Microsoft's Marketplace), and npm.
+- To be published to the VS Code Marketplace, Open VSX (Cursor, Windsurf and VSCodium
+  install from it, not from Microsoft's Marketplace), and npm. None is live yet; publishing
+  is the last item of [A9 in plans/v1.md](plans/v1.md#a9).
 
 Why it stays free and public:
 
