@@ -35,11 +35,11 @@ function nodeVersion(): Promise<string | undefined> {
   return new Promise((resolve, reject) => {
     const options = { encoding: "utf8" as const, timeout: VERSION_TIMEOUT_MS };
     // Looked up on PATH on purpose (typescript:S4036): this must find the same `node` git runs for the filter.
-    execFile("node", ["--version"], options, (error, stdout) => { // NOSONAR
+    execFile("node", ["--version"], options, (execError, stdout) => { // NOSONAR
       try {
-        resolve(versionOutput(error, stdout));
-      } catch (failure) {
-        reject(failure instanceof Error ? failure : new Error(String(failure)));
+        resolve(versionOutput(execError, stdout));
+      } catch (error) {
+        reject(error instanceof Error ? error : new Error(String(error)));
       }
     });
   });
