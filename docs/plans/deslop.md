@@ -197,9 +197,9 @@ scenario lists. A reset that waits for the file watcher was tried, measured no b
 **Note (from D5):** the overlay e2e suite flakes on `main` in WSL under xvfb, 1 run in 20 (two undo-save tests
 timing out in `waitFor`, one cut test asserting `undefined !== 1`), and 0 in 20 on Windows. Measure the split
 suite against that rate, not against zero: 20 WSL runs before and 20 after.
-**Note (from D5):** the review e2e repository has no `.vscode/settings.json`, so VS Code's built-in git
-extension is on there, while the overlay fixture sets `"git.enabled": false`. Make them consistent in a commit
-of its own; it is a test-environment change, not a refactor.
+**Note (from D5):** the review e2e repository had no `.vscode/settings.json`, so VS Code's built-in git
+extension was on there while the overlay fixture set `"git.enabled": false`. D6 made them consistent in a
+commit of its own, recorded as a test-environment change, not a refactor.
 **Note (from D9):** `reset()` returns before the file watcher reports its `git checkout` of the sidecar; the
 late `sidecarChanged` forgets every document's state partway through the next test. An in-memory event log
 caught it 9 ms after an undo (console logging hid it: 0 failures in 18 logged runs against 3 in 20). It is
