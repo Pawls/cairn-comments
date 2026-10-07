@@ -12,20 +12,19 @@
 > runs `npm run bench` within noise of the recorded 3,182 ms; the PR body carries the
 > before/after metrics from § Baseline, including any that got worse and why.
 >
-> **Next:** D6, deslop the extension e2e suite, the native harness, and the scripts.
-> **Branch:** `deslop-<slice>` per lane (e.g. `deslop-d1`), each off `main` as its own PR.
-> **Lanes:** E: D6 · G: D10
+> **Next:** none, arc complete (2026-10-06). Leftovers are under § Follow-ups outside these slices.
+> **Branch:** none; every slice merged to `main` through its own PR (#7 to #16).
 
 - [~~D1 — Core placement~~ — SHIPPED 2026-10-06](#d1)
 - [~~D2 — Core scan, detectors, literals, markers~~ — SHIPPED 2026-10-06](#d2)
 - [~~D3 — Core remainder~~ — SHIPPED 2026-10-06](#d3)
 - [~~D4 — CLI~~ — SHIPPED 2026-10-06](#d4)
 - [~~D5 — VS Code extension source~~ — SHIPPED 2026-10-06](#d5)
-- [D6 — Extension e2e, native harness, scripts](#d6)
+- [~~D6 — Extension e2e, native harness, scripts~~ — SHIPPED 2026-10-06](#d6)
 - [~~D7 — Design doc journal voice~~ — SHIPPED 2026-10-06](#d7)
 - [~~D8 — Unterminated file loses a blank line between comment blocks~~ — SHIPPED 2026-10-06](#d8)
 - [~~D9 — Undo after a cut and paste loses the moved comments~~ — SHIPPED 2026-10-06](#d9)
-- [D10 — Promoting a string comment turns its neighbors stale](#d10)
+- [~~D10 — Promoting a string comment turns its neighbors stale~~ — SHIPPED 2026-10-06](#d10)
 
 ## Traps
 
@@ -62,6 +61,9 @@ in parallel against one `~/.claude` working tree, so lane agents never edit the 
   worse) so the coordinator can narrow them.
 - At close-out the coordinator appends the new rules to `SKILL.md`, merges near-duplicates
   into the existing rule instead of adding a second one, and commits in `~/.claude`.
+  Done 2026-10-06: 26 candidates from the ten PRs became rules 161 to 169, amendments to
+  rules 5, 7, 8, 9, 13, 16, 30, 44, and 110, and process items 14 to 17 (`~/.claude` d9427e6).
+  No rule misfired on TypeScript.
 
 ## Baseline
 
@@ -183,9 +185,15 @@ tree clears its model one microtask later, on a path no test reaches.
       `test:native` passed 3 of 3 at 4ed8cf5 and again on D9's branch, which contains every later merge.
 - [x] `## Skill notes` and `## Plan notes` in the PR body
 
-### D6 — Extension e2e, native harness, scripts · Sonnet 5.5 / high {#d6}
+### ~~D6 — Extension e2e, native harness, scripts~~ · Sonnet 5.5 / high — SHIPPED 2026-10-06 {#d6}
 
-**Status:** Not started. Runs after D5 because the e2e suite drives D5's `TestApi`.
+**Status:** Shipped in PR #16. `overlay.test.ts` is ten nested suites (largest 184 lines) with helpers in
+`overlay-helpers.ts` and no non-null assertions; the per-test assertion sequence is identical to `main`'s
+(290 calls over 42 tests, logged at runtime). The review e2e repository now sets `"git.enabled": false`.
+`replay-anchoring.ts` and `bench.ts` are split, with byte-identical replay output and identical bench
+scenario lists. A reset that waits for the file watcher was tried, measured no better (5 of 20 against 4 of
+20), and reverted. 507 tests on Windows and WSL at 94e1a2e; WSL e2e 20 of 20 against `main`'s 16 of 20;
+`test:vscode` 35 + 7; `test:native` 3 of 3.
 **Note (from D5):** the overlay e2e suite flakes on `main` in WSL under xvfb, 1 run in 20 (two undo-save tests
 timing out in `waitFor`, one cut test asserting `undefined !== 1`), and 0 in 20 on Windows. Measure the split
 suite against that rate, not against zero: 20 WSL runs before and 20 after.
@@ -204,14 +212,14 @@ closure in "a cut function whose entry the paste leaves unchanged", so the split
 **Touches:** `packages/vscode/{e2e,native}/*.ts`, `packages/vscode/esbuild.mjs`, `scripts/*.ts`, `scripts/*.mjs`.
 **After:** D5, D9 (D9 adds a case to `overlay.test.ts`, which this slice splits).
 
-- [ ] Metrics re-run and recorded
-- [ ] `overlay.test.ts` (one 542-line `describe` body, 88 of the 109 non-null assertions) split into
+- [x] Metrics re-run and recorded
+- [x] `overlay.test.ts` (one 542-line `describe` body, 88 of the 109 non-null assertions) split into
       named helpers and cases; every assertion kept
-- [ ] `scripts/bench.ts` and `replay-anchoring.ts`: comment numbers recomputed (rule 23),
+- [x] `scripts/bench.ts` and `replay-anchoring.ts`: comment numbers recomputed (rule 23),
       measured costs name their conditions (rule 25)
-- [ ] Verify: lint, `npm run test:vscode`, `npm run test:native`, `npm run bench` prints the
+- [x] Verify: lint, `npm run test:vscode`, `npm run test:native`, `npm run bench` prints the
       same scenario list
-- [ ] `## Skill notes` and `## Plan notes` in the PR body
+- [x] `## Skill notes` and `## Plan notes` in the PR body
 
 ### ~~D7 — Design doc journal voice~~ · Opus 5.5 / medium — SHIPPED 2026-10-06 {#d7}
 
@@ -289,28 +297,32 @@ owner confirmed undo and redo in the installed build.
 
 Cancel the fix, keep the tests, and record a known gap if the only way to restore the display is a guess.
 
-### D10 — Promoting a string comment turns its neighbors stale · Opus 5.5 / high {#d10}
+### ~~D10 — Promoting a string comment turns its neighbors stale~~ · Opus 5.5 / high — SHIPPED 2026-10-06 {#d10}
 
-**Status:** Not started. Found by the owner (2026-10-06): promoting a `'''` comment inside a method tagged a
-new end-of-line comment in the same method `[stale?]`. The staleness hashes skip comment nodes only
-(`packages/core/src/anchors.ts`), and a promoted Python string comment is a string statement, which is code to
-the hash. So promote, and demote in the other direction, change the function's `body` hash without changing
-what the code does. That cause is read from the code and the owner's steps, not yet shown by a test.
+**Status:** Shipped in PR #15. Found by the owner: a string comment moved into or out of a method changed the
+method's `body` hash and tagged its neighbors `[stale?]`. Three triggers were pinned red: a demote in the
+owner's checkout (which records only the demoted string), a promote or demote merged from another branch,
+and a string promote that wrongly cleared a neighbor's rightful stale tag. The rule, decided by the owner:
+in Python a statement that is one string literal and nothing else counts for nothing in the hashes,
+docstrings included; f-strings and concatenated strings still count; other languages unchanged. Recorded
+hashes were left to go stale once (11 of the owner's 23 entries; Confirm clears each); an entry whose anchor
+node itself holds a string statement orphans instead, and design.md says so. 507 tests on Windows and WSL;
+bench within 0.8% of `main`; replay moved 39 placements from diff to exact and nothing else.
 **Touches:** `packages/core/src/anchors.ts` (and `literals.ts` if its string-statement test is shared);
 `packages/core/test/{normalization,placement,promote}.test.ts`; `docs/design.md` § Staleness.
 **After:** none.
 
-- [ ] A failing test, committed red: a function with a trailing comment and a string comment; promote the
+- [x] A failing test, committed red: a function with a trailing comment and a string comment; promote the
       string comment; the trailing comment is placed, not stale. The same for demote.
-- [ ] The rule written into design.md § Staleness before the fix, and agreed by the owner: which string
+- [x] The rule written into design.md § Staleness before the fix, and agreed by the owner: which string
       statements the hashes ignore (the bare ones promote and demote move; docstrings are a separate question,
       since they are most functions' first statement) and for which languages
-- [ ] What happens to hashes already recorded: every sidecar entry in a function the rule touches would turn
+- [x] What happens to hashes already recorded: every sidecar entry in a function the rule touches would turn
       stale on upgrade unless the old hash is still accepted or the entry is re-recorded. Measure how many
       entries that is on one real repository and choose with the owner
-- [ ] The fix, with the formatter-only and real-change pairs in `normalization.test.ts` still passing and new
+- [x] The fix, with the formatter-only and real-change pairs in `normalization.test.ts` still passing and new
       pairs for the string cases
-- [ ] Verify: lint, `npm test` on Windows and WSL, `npm run bench` (hashing runs on placement), `npm run
+- [x] Verify: lint, `npm test` on Windows and WSL, `npm run bench` (hashing runs on placement), `npm run
       replay -- --repo <path>` with counts compared to `main` and every difference explained
 
 Cancel if no rule separates a string comment from a string the program uses without guessing.
@@ -324,6 +336,20 @@ Cancel if no rule separates a string comment from a string the program uses with
   unterminated code line, or no code, placed comments fall back to LF: `#~ note\r\npass` comes back as
   `#~ note\npass`. design.md § Known gaps covers only the comment-only file. The fix records the comment's own
   terminator, which is new sidecar metadata, so it is a slice of its own, test first.
+- **A promote can drop an entry the extension has not seen yet** (from D10, unverified). `SidecarStore` caches
+  a sidecar's disk copy until the watcher fires; an in-process promote run before that would write the
+  sidecar without an entry an agent had just added, losing the comment. Nothing tests it.
+- **The late sidecar event behind D9's two `settle(1_500)` guards** (from D6). A reset that waits for the file
+  watcher did not remove it (5 of 20 against 4 of 20, reverted). Suspect, untested: `trackDocuments` in
+  `extension.ts` calls `sidecarChanged` from `onDidCloseTextDocument` for a sidecar buffer, and VS Code closes
+  sidecar buffers that have no tab lazily.
+- **The review-suite promote returning `undefined`** (D5's one Windows failure) reproduced on `main` in WSL at
+  2 of 20 and 0 of 40 with the review repository's git extension off (D6). Suggestive only; the swallowed CLI
+  error (next item) is still what would show the cause.
+- **`native/competitor/extension.cjs`** (the stand-in paste provider) was outside every slice's Touches and
+  has not been read for these rules.
+- **Confirm pass in BoxelBuilderExperiment** (from D10): 11 of its 23 entries are stale after the hash rule
+  changed; each wants a Confirm, or a check that it is still true.
 - **Make a failed CLI run in the extension visible to tests** (from D5). `runOnFile` shows the error as a
   notification and returns `undefined`, so an e2e failure on that path cannot show its cause. Log it to the
   console as well. This is what would explain the one Windows failure if it recurs.
