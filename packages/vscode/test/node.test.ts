@@ -1,6 +1,27 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { MIN_NODE_MAJOR, nodeProblem } from "../src/node.js";
+import { MIN_NODE_MAJOR, nodeProblem, versionOutput } from "../src/node.js";
+
+describe("versionOutput", () => {
+  const failure = (fields: Record<string, unknown>) => Object.assign(new Error("spawn failed"), fields);
+
+  it("passes through what `node --version` printed", () => {
+    expect(versionOutput(null, "v22.3.0\n")).toBe("v22.3.0\n");
+  });
+
+  it("reports a `node` that is not on PATH as missing", () => {
+    expect(versionOutput(failure({ code: "ENOENT" }), "")).toBeUndefined();
+  });
+
+  it("throws, rather than calling Node missing, when a `node` on PATH fails to run", () => {
+    expect(() => versionOutput(failure({ code: "EACCES", message: "spawn node EACCES" }), "")).toThrow(/`node --version` failed: spawn node EACCES/);
+    expect(() => versionOutput(failure({ code: 1, message: "Command failed" }), "")).toThrow(/`node --version` failed/);
+  });
+
+  it("throws a timeout message when `node --version` is killed for running too long", () => {
+    expect(() => versionOutput(failure({ killed: true, signal: "SIGTERM" }), "")).toThrow(/`node --version` did not finish within 10 s/);
+  });
+});
 
 describe("nodeProblem", () => {
   it("says Node is missing when `node --version` could not run", () => {
