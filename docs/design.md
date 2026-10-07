@@ -966,8 +966,9 @@ Marginalia, Deslop, Unslop (all taken).
 **Decision (2026-09-23): Cairn Comments.** Renamed from Slopstash before publishing, to
 open the tool to human-written private notes as well as AI comments (docs/plans/v2.md).
 Display name "Cairn Comments"; npm package `cairn-comments`; CLI binary, filter driver, and
-command ids `cairn`; extension `cairn-comments.cairn-comments-vscode` (the workspace name
-must differ from the CLI package). "cAIrn" is a logo treatment only. The bare "Cairn" is not
+command ids `cairn`; extension `pawls.cairn-comments-vscode` (the workspace name must differ
+from the CLI package; the `pawls` publisher, chosen 2026-10-07, also carries the owner's other
+extensions). "cAIrn" is a logo treatment only. The bare "Cairn" is not
 the listing name: two small Marketplace extensions already use it (`valpet.cairn-extension`,
 `fractaldecoder.cairn`), and `cairn` on npm is an unrelated 2017 React Native package. The
 Slopstash tagline and search rationale above are superseded; the `<Brand>: Hide AI Comments`

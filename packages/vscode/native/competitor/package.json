@@ -13,6 +13,6 @@
     "onLanguage:python"
   ],
   "extensionDependencies": [
-    "cairn-comments.cairn-comments-vscode"
+    "pawls.cairn-comments-vscode"
   ]
 }

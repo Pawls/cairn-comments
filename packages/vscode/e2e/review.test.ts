@@ -8,7 +8,7 @@ import { cairnActions } from "./actions.js";
 import { screenshot } from "./capture.js";
 import { settle } from "./wait.js";
 
-const EXTENSION_ID = "cairn-comments.cairn-comments-vscode";
+const EXTENSION_ID = "pawls.cairn-comments-vscode";
 const SIDECAR = ".agents/comments/src/app.py.md";
 
 function requiredEnv(name: string): string {
