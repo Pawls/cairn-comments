@@ -1,7 +1,8 @@
 # Free vs paid
 
-Status: direction agreed in conversation on 2026-09-23, not yet built. Nothing here is
-committed work; no slice in [plans/v1.md](plans/v1.md) or [plans/v2.md](plans/v2.md)
+Status: direction agreed in conversation on 2026-09-23; the paid team tier was accepted on
+2026-10-06, the same day the repository went public. The tier is not built. Nothing here
+is committed work; no slice in [plans/v1.md](plans/v1.md) or [plans/v2.md](plans/v2.md)
 depends on it.
 
 ## Decision
@@ -25,9 +26,9 @@ Why it stays free and public:
   the idea is easy to copy. The defense is being the reference implementation and shipping
   quickly.
 
-## Possible paid team tier
+## Paid team tier
 
-None of these conflict with an MIT core:
+Accepted 2026-10-06 as the plan if adoption justifies it. Candidate features; none of these conflict with an MIT core:
 
 - A GitHub App or PR view that shows the stored comments during code review.
 - A CI gate that blocks unmarked AI comments (enforcing a "no slop" policy).
