@@ -823,6 +823,11 @@ heading and the second branch's `<!-- ... -->` metadata line read back as body t
   empty project, and runs the quickstart with it. The e2e suite also passes against an
   unpacked `.vsix` (`CAIRN_E2E_EXTENSION`), which holds no `node_modules`.
 - **Node 22 or later.** Node 20 left maintenance in April 2026; CI tests 22 on Linux and Windows; 24 is checked locally.
+  The extension carries the CLI but not a runtime, and git runs the recorded `node` command
+  outside the editor, so setup and repair first run `node --version` and stop with an
+  install link when it is missing or older (`packages/vscode/src/node.ts`). Running the CLI
+  on the editor's own runtime or shipping a standalone binary would remove the requirement;
+  neither is built.
 - **The recorded CLI lives in a home the tool owns** (decided 2026-09-26, built 2026-09-29).
   `init` writes an absolute `node "<path>/main.js"` into the filter, merge driver, and
   hooks, and git runs it in every initialized repository whether or not an editor is
