@@ -40,7 +40,11 @@ of their line.
 
 ## Requirements
 
-Git and Node 22 or later. The extension carries the `cairn` CLI; nothing else to install.
+Git. The extension carries the `cairn` CLI and runs it on VS Code's own runtime, so there is
+no Node to install: git's filter uses `node` when it finds Node 22 or later on PATH, and
+VS Code's runtime otherwise. Agent hooks (Claude Code, Codex, Cursor) on Windows are the
+exception: those harnesses may run hooks through PowerShell, so the hooks call `node` and
+need Node 22 or later on PATH.
 
 Tested on Windows and Linux (WSL Ubuntu included). macOS support is experimental: the test
 suite passed there in CI, but nobody has used it by hand yet. Please
