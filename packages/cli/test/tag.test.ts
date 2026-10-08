@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseSidecar } from "@cairn-comments/core";
+import { LAUNCHER, parseSidecar } from "@cairn-comments/core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { agentsSnippet } from "../src/init.js";
 import { Sandbox } from "./harness.js";
@@ -110,10 +110,12 @@ describe.each([false, true])("tag and hook adapters (autocrlf=%s)", (autocrlf) =
     expect(report).toContain(".cursor/hooks.json: create with the cursor hook");
     const claude = JSON.parse(readFileSync(settings, "utf8"));
     expect(claude.permissions).toEqual({ allow: ["Bash(ls)"] });
+    // Agent hooks on Windows run `node "<home>/main.js"`; elsewhere the launcher (design.md § Packaging).
+    const recorded = process.platform === "win32" ? String.raw`/main\.js"` : `/${LAUNCHER}"`;
     expect(claude.hooks.PostToolUse).toEqual([
       {
         matcher: "Edit|Write|MultiEdit",
-        hooks: [{ type: "command", command: expect.stringMatching(/main\.js" hook claude-code$/) }],
+        hooks: [{ type: "command", command: expect.stringMatching(new RegExp(`${recorded} hook claude-code$`)) }],
       },
     ]);
     const cursor = JSON.parse(read("main", ".cursor/hooks.json"));
