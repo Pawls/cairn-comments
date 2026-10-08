@@ -837,6 +837,11 @@ heading and the second branch's `<!-- ... -->` metadata line read back as body t
   either, the launcher fails with a message saying what is missing, and the pre-commit
   hook stops the commit. Measured 2026-10-07 on Windows, VS Code 1.140: Electron run this
   way took 69 ms per one-shot `clean` against 76 ms for `node`, with byte-identical output.
+  The launcher itself costs one more sh process per filter start. `npm run bench` with
+  Node on PATH (Windows, 5 runs each, the two commands alternated, same bundle): process
+  checkout 3,225 to 3,246 ms against 3,166 to 3,185 ms for `node` recorded directly, about
+  +2%, and warm status unchanged at 55 ms. One-shot mode starts it per file, about +38 ms
+  each (319 s against 241 s for 2,000 files, single runs).
   - The extension records the runtime only after `ELECTRON_RUN_AS_NODE=1 <runtime>
     --version` prints a Node version of 22 or later. An editor can turn Electron's
     `RunAsNode` fuse off, and its binary would then start the editor instead.

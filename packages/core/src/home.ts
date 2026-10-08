@@ -14,7 +14,7 @@ export const MIN_NODE_MAJOR = 22;
 export { BRAND as LAUNCHER } from "./brand.js";
 /** Where the extension records its editor's runtime, the launcher's fallback when PATH has no usable `node`. */
 export const RUNTIME_FILE = "runtime";
-/** Set by the launcher while it tries `node` from PATH, so the home's main.js answers a too-old Node with `OLD_NODE_EXIT`. */
+/** Set by the launcher while it tries `node` from PATH; main.js then reports a too-old Node with `OLD_NODE_EXIT`. */
 export const LAUNCHER_ENV = `${BRAND.toUpperCase()}_LAUNCHER`;
 /** The home's main.js exits with this, before reading stdin, to send the launcher on to the recorded runtime. */
 export const OLD_NODE_EXIT = 85;
@@ -58,7 +58,8 @@ export function nodeCommand(home: string): string {
 /**
  * The launcher: `node` from PATH first, then the runtime the extension recorded, run as Node
  * (design.md § Packaging, "Running without Node"). Plain sh, because git runs it through
- * sh on every platform; `read` and the tests are builtins, so it starts no process of its own.
+ * sh on every platform. `command -v`, `read`, and `[` are builtins, so the only processes
+ * it starts are the runtimes it tries.
  */
 function launcherScript(): string {
   return [
@@ -75,15 +76,17 @@ function launcherScript(): string {
     "# A VS Code Server update replaces the commit folder the runtime was recorded in.",
     'if [ -n "$runtime" ] && [ ! -x "$runtime" ]; then',
     "  case $runtime in",
-    "    */.*-server/bin/*/node) candidates=${runtime%/*/*} ;;",
-    "    */.*-server/cli/servers/*/server/node) candidates=${runtime%/*/*/*} ;;",
-    "    *) candidates= ;;",
+    "    */.*-server/bin/*/node)",
+    '      for candidate in "${runtime%/*/*}"/*/node; do',
+    '        if [ -x "$candidate" ]; then runtime=$candidate; fi',
+    "      done",
+    "      ;;",
+    "    */.*-server/cli/servers/*/server/node)",
+    '      for candidate in "${runtime%/*/*/*}"/*/server/node; do',
+    '        if [ -x "$candidate" ]; then runtime=$candidate; fi',
+    "      done",
+    "      ;;",
     "  esac",
-    '  if [ -n "$candidates" ]; then',
-    '    for candidate in "$candidates"/*/node "$candidates"/*/server/node; do',
-    '      if [ -x "$candidate" ]; then runtime=$candidate; fi',
-    "    done",
-    "  fi",
     "fi",
     'if [ -z "$runtime" ] || [ ! -x "$runtime" ]; then',
     `  echo "${BRAND}: needs Node.js ${MIN_NODE_MAJOR} or later on PATH, or an editor where the ${BRAND} extension has run since it was installed" >&2`,
