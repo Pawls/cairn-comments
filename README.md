@@ -231,7 +231,7 @@ none do.
 ## Development
 
 - [Design, decisions, and measurements](docs/design.md)
-- [v1 plan](docs/plans/v1.md)
+- [v1 plan](docs/plans/archived/v1.md) (archived)
 - [Notes for contributors and agents](AGENTS.md)
 
 ```sh

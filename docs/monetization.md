@@ -2,7 +2,7 @@
 
 Status: direction agreed in conversation on 2026-09-23; the paid team tier was accepted on
 2026-10-06, the same day the repository went public. The tier is not built. Nothing here
-is committed work; no slice in [plans/v1.md](plans/v1.md) or [plans/v2.md](plans/v2.md)
+is committed work; no slice in [plans/archived/v1.md](plans/archived/v1.md) or [plans/v2.md](plans/v2.md)
 depends on it.
 
 ## Decision
@@ -13,9 +13,9 @@ if adoption justifies one, covers what needs coordination across a team.
 ## Free (MIT, public repo)
 
 - The CLI, the git filter, and the editor overlay (the VS Code extension).
-- To be published to the VS Code Marketplace, Open VSX (Cursor, Windsurf and VSCodium
-  install from it, not from Microsoft's Marketplace), and npm. None is live yet; publishing
-  is the last item of [A9 in plans/v1.md](plans/v1.md#a9).
+- Published 2026-10-07 to the VS Code Marketplace (as a Preview,
+  `pawls.cairn-comments-vscode`) and to npm (`cairn-comments`). Open VSX, where Cursor,
+  Windsurf and VSCodium install from, is not set up yet.
 
 Why it stays free and public:
 
