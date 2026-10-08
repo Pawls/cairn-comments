@@ -62,7 +62,9 @@ async function runSuite(
   await runTests({
     extensionDevelopmentPath: extensionPath,
     extensionTestsPath: path.join(packageRoot, "dist/e2e/index.cjs"),
-    launchArgs: [target.repo, "--disable-extensions"],
+    // --force-disable-user-env: on Linux and macOS VS Code otherwise reads the login shell's
+    // environment, which would put back the node `withoutNode` took off PATH.
+    launchArgs: [target.repo, "--disable-extensions", "--force-disable-user-env"],
     extensionTestsEnv: {
       CAIRN_SUITE: suite,
       CAIRN_SCREENSHOTS: process.env.CAIRN_SCREENSHOTS ?? "",
