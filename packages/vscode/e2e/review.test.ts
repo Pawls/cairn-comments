@@ -22,8 +22,12 @@ const read = (file: string) => readFileSync(path.join(repo(), file), "utf8");
 const git = (...args: string[]) => execFileSync("git", args, { cwd: repo(), encoding: "utf8" });
 
 // The CLI home comes from scratch.ts, so these tests never touch the developer's own.
-const homeMain = () => path.join(requiredEnv("CAIRN_CLI_HOME"), "main.js");
-const recordedClean = () => `node "${homeMain().split(path.sep).join("/")}" clean %f`;
+const homeFile = (name: string) => path.join(requiredEnv("CAIRN_CLI_HOME"), name);
+const forwardSlashes = (file: string) => file.split(path.sep).join("/");
+const recordedClean = () => `"${forwardSlashes(homeFile("cairn"))}" clean %f`;
+/** Runs the home's CLI on this editor's runtime; run.ts takes node off PATH for this suite. */
+const homeCli = (...args: string[]) =>
+  execFileSync(process.execPath, [homeFile("main.js"), ...args], { cwd: repo(), env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } });
 
 async function api(): Promise<TestApi> {
   const extension = vscode.extensions.getExtension<TestApi>(EXTENSION_ID);
@@ -171,8 +175,22 @@ suite("scan review", () => {
 
   test("the extension installs its CLI into the home, which is what the repository records", async () => {
     await api();
-    assert.equal(existsSync(homeMain()), true);
+    assert.equal(existsSync(homeFile("main.js")), true);
     assert.equal(git("config", "--get", "filter.cairn.clean").trim(), recordedClean());
+  });
+
+  test("the suite runs with no node on PATH", () => {
+    assert.equal(process.env.CAIRN_E2E_NO_NODE, "1");
+    const nodeFile = process.platform === "win32" ? "node.exe" : "node";
+    const found = (process.env.PATH ?? "").split(path.delimiter).filter((dir) => dir && existsSync(path.join(dir, nodeFile)));
+    assert.deepEqual(found, []);
+  });
+
+  test("the extension records its own runtime in the home, for the launcher git runs", async () => {
+    await api();
+    const runtime = process.platform === "win32" ? forwardSlashes(process.execPath) : process.execPath;
+    for (let i = 0; i < 50 && !existsSync(homeFile("runtime")); i++) await settle(100);
+    assert.equal(readFileSync(homeFile("runtime"), "utf8"), runtime + "\n");
   });
 
   test("a repository whose recorded CLI is gone is repaired to the home's copy", async () => {
@@ -192,7 +210,7 @@ suite("scan review", () => {
   // Last: it uninstalls the repository.
   test("in a repository never set up, the review view offers setup, which runs init after its dry run and then scans", async () => {
     const a = await api();
-    execFileSync("node", [homeMain(), "uninstall"], { cwd: repo() });
+    homeCli("uninstall");
     await a.review.scan();
     assert.equal(a.review.message(), undefined, "the setup welcome takes the view's place");
 
@@ -208,5 +226,11 @@ suite("scan review", () => {
     assert.match(report, /git config: set filter\.cairn\.clean/);
     assert.equal(git("config", "--get", "filter.cairn.clean").trim(), recordedClean());
     assert.notEqual(a.review.message(), undefined, "setup scans, so the view shows the review again");
+
+    // Without node on PATH, git still filters through the launcher and the recorded runtime.
+    writeFileSync(path.join(repo(), "src/note.py"), "def f():\n    #~ explains f\n    return 1\n");
+    git("add", "src/note.py");
+    git("commit", "-qm", "note");
+    assert.equal(git("show", "HEAD:src/note.py"), "def f():\n    return 1\n");
   });
 });

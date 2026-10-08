@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ReviewModel, cliFromCleanConfig, orphansOf, recordedMain, shellQuote, type ReviewComment } from "../src/review.js";
+import { ReviewModel, cliFromCleanConfig, orphansOf, recordedScript, type ReviewComment } from "../src/review.js";
 
 const comment = (file: string, line: number): ReviewComment => ({
   file,
@@ -98,10 +98,13 @@ it("recovers the CLI invocation from the clean filter config", () => {
   expect(cliFromCleanConfig("something else")).toBeUndefined();
 });
 
-it("recordedMain reads the script out of a recorded node command, and nothing else", () => {
-  expect(recordedMain('node "C:/x/main.js"')).toBe("C:/x/main.js");
-  expect(recordedMain("node /x/main.js")).toBe("/x/main.js");
-  expect(recordedMain("cairn")).toBeUndefined();
+it("recordedScript reads the file a recorded launcher or node command runs, and nothing looked up on PATH", () => {
+  expect(recordedScript('"C:/x/cli/cairn"')).toBe("C:/x/cli/cairn");
+  expect(recordedScript("/x/cli/cairn")).toBe("/x/cli/cairn");
+  expect(recordedScript('node "C:/x/main.js"')).toBe("C:/x/main.js");
+  expect(recordedScript("node /x/main.js")).toBe("/x/main.js");
+  expect(recordedScript("cairn")).toBeUndefined();
+  expect(recordedScript("npx cairn-comments")).toBeUndefined();
 });
 
 describe("orphansOf", () => {
@@ -117,19 +120,5 @@ describe("orphansOf", () => {
       { source: "a.py", id: "r3cn", scope: "reconcile", text: "runs after settle" },
       { source: "b.py", id: "x1y2", scope: undefined, text: "module note" },
     ]);
-  });
-});
-
-describe("shellQuote", () => {
-  it("single-quotes a POSIX argument so the shell expands nothing in it", () => {
-    expect(shellQuote("src/a.py:12", "linux")).toBe("'src/a.py:12'");
-    expect(shellQuote("src/$(id).py:1", "linux")).toBe("'src/$(id).py:1'");
-    expect(shellQuote("src/`id`.py:1", "darwin")).toBe("'src/`id`.py:1'");
-    expect(shellQuote("it's.py:1", "linux")).toBe(String.raw`'it'\''s.py:1'`);
-  });
-
-  it("double-quotes a Windows argument and refuses the characters cmd.exe expands inside quotes", () => {
-    expect(shellQuote("src/a b.py:3", "win32")).toBe('"src/a b.py:3"');
-    for (const bad of ["100%.py:1", "x%PATH%.py:1", 'a"b.py:1', "a^b.py:1"]) expect(() => shellQuote(bad, "win32")).toThrow(/cannot be passed/);
   });
 });

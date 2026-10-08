@@ -1,6 +1,8 @@
 // Review model for the scan tree: no `vscode` import, so vitest covers it (test/review.test.ts).
-import { exec, execFile } from "node:child_process";
-import { FILTER_DRIVER } from "@cairn-comments/core";
+import { execFile } from "node:child_process";
+import path from "node:path";
+import { FILTER_DRIVER, cliHome } from "@cairn-comments/core";
+import { cliEnv } from "./runtime.js";
 
 /** One `scan --json` entry; the CLI owns the format (packages/cli/src/scan.ts). */
 export interface ReviewComment {
@@ -107,10 +109,14 @@ export function cliFromCleanConfig(clean: string): string | undefined {
   return clean.trim().endsWith(suffix) ? clean.trim().slice(0, -suffix.length) : undefined;
 }
 
-/** The script a recorded `node <main.js>` command runs; undefined for any other command, which may be on PATH. */
-export function recordedMain(cli: string): string | undefined {
-  const match = /^node\s+(?:"([^"]+)"|(\S+))$/.exec(cli.trim());
-  return match ? (match[1] ?? match[2]) : undefined;
+/**
+ * The file a recorded command runs: the launcher by path, or the script after `node`.
+ * Undefined for a command looked up on PATH, which this cannot check.
+ */
+export function recordedScript(cli: string): string | undefined {
+  const match = /^(?:node\s+)?(?:"([^"]+)"|(\S+))$/.exec(cli.trim());
+  const script = match?.[1] ?? match?.[2];
+  return script?.includes("/") ? script : undefined;
 }
 
 function run(file: string, args: string[], cwd: string): Promise<string> {
@@ -161,25 +167,15 @@ export function orphansOf(report: { problems: { kind: string }[] }): OrphanComme
 }
 
 /**
- * One argument for `runCli`'s shell line. POSIX single quotes expand nothing; cmd.exe expands
- * `%VAR%` even inside double quotes, so a Windows argument holding such a character is refused.
+ * Runs the CLI home's copy with `args` on this editor's own runtime, so it needs no `node`
+ * on PATH and no shell, feeding `input` on stdin. An exit code in `okCodes` resolves with
+ * stdout, for commands like `check` whose exit code is part of the answer.
  */
-export function shellQuote(arg: string, platform: NodeJS.Platform = process.platform): string {
-  if (platform === "win32") {
-    if (/[%"^]/.test(arg)) throw new Error(`${arg} cannot be passed through cmd.exe; rename the file.`);
-    return `"${arg}"`;
-  }
-  return "'" + arg.replaceAll("'", String.raw`'\''`) + "'";
-}
-
-/**
- * Runs `<cli> <args>` through the shell, as git and the pre-commit hook do, feeding `input`
- * on stdin. An exit code in `okCodes` resolves with stdout, for commands like `check`
- * whose exit code is part of the answer.
- */
-export function runCli(cli: string, args: string, cwd: string, input?: string, okCodes: readonly number[] = [0]): Promise<string> {
+export function runCli(args: string[], cwd: string, input?: string, okCodes: readonly number[] = [0]): Promise<string> {
+  const main = path.join(cliHome(), "main.js");
   return new Promise((resolve, reject) => {
-    const child = exec(`${cli} ${args}`, { cwd, encoding: "utf8", maxBuffer: 1 << 28 }, (error, stdout, stderr) => {
+    const options = { cwd, env: cliEnv(), encoding: "utf8" as const, maxBuffer: 1 << 28 };
+    const child = execFile(process.execPath, [main, ...args], options, (error, stdout, stderr) => {
       const code = typeof error?.code === "number" ? error.code : -1;
       if (error && !okCodes.includes(code)) reject(new Error(stderr.trim() || error.message));
       else resolve(stdout);

@@ -1,9 +1,8 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import * as vscode from "vscode";
-import { BRAND, BRAND_TITLE, cliHome, homeCommand, installCli } from "@cairn-comments/core";
-import { requireNode } from "./node.js";
-import { findRepo, recordedMain, runCli, type Repo } from "./review.js";
+import { BRAND, BRAND_TITLE, cliHome, installCli } from "@cairn-comments/core";
+import { findRepo, recordedScript, runCli, type Repo } from "./review.js";
 
 /**
  * Installs the CLI bundled in the extension into the CLI home, unless the home has the same
@@ -18,19 +17,15 @@ export function installBundledCli(context: vscode.ExtensionContext): void {
   }
 }
 
-/**
- * Runs `init` through the home's CLI, which is also what it records. Throws before running
- * anything when no `node` on PATH can run that recorded command.
- */
-export async function runInit(root: string, dryRun: boolean): Promise<string> {
-  await requireNode();
-  return runCli(homeCommand(cliHome()), dryRun ? "init --dry-run" : "init", root);
+/** Runs `init` through the home's CLI, whose launcher is what it records. */
+export function runInit(root: string, dryRun: boolean): Promise<string> {
+  return runCli(dryRun ? ["init", "--dry-run"] : ["init"], root);
 }
 
-/** The recorded CLI script when it no longer exists, so every commit in `repo` fails its hook. */
+/** The recorded launcher or script when it no longer exists, so every commit in `repo` fails its hook. */
 export function missingCli(repo: Repo): string | undefined {
-  const main = repo.cli && recordedMain(repo.cli);
-  return main && !existsSync(main) ? main : undefined;
+  const script = repo.cli && recordedScript(repo.cli);
+  return script && !existsSync(script) ? script : undefined;
 }
 
 async function askRepair(root: string, missing: string): Promise<boolean> {

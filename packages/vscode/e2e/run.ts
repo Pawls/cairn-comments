@@ -4,7 +4,7 @@
 // README. Set CAIRN_E2E_EXTENSION=<dir> to test an unpacked .vsix (its `extension/`
 // folder) instead of this package.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { runTests } from "@vscode/test-electron";
 import { extensionPath, fixtureRepo, packageRoot, scratchRepo, type ScratchRepo } from "./scratch.js";
@@ -72,6 +72,25 @@ async function runSuite(
   });
 }
 
+/**
+ * Runs `suite` with every folder that holds a `node` left off PATH, as on a machine without
+ * Node: the extension, its CLI calls, and git's filter must all run on the editor's runtime.
+ * Set on process.env itself, whose PATH spelling Windows does not care about.
+ */
+async function withoutNode(suite: () => Promise<void>): Promise<void> {
+  const original = process.env.PATH;
+  const nodeFile = process.platform === "win32" ? "node.exe" : "node";
+  process.env.PATH = (original ?? "")
+    .split(path.delimiter)
+    .filter((dir) => dir && !existsSync(path.join(dir, nodeFile)))
+    .join(path.delimiter);
+  try {
+    await suite();
+  } finally {
+    process.env.PATH = original;
+  }
+}
+
 const scratch: ScratchRepo[] = [];
 try {
   const overlay = fixtureRepo();
@@ -79,7 +98,7 @@ try {
   const review = scratchRepo(writeReviewFiles);
   scratch.push(review);
   await runSuite("overlay", overlay);
-  await runSuite("review", review, { CAIRN_E2E_REPO: review.repo });
+  await withoutNode(() => runSuite("review", review, { CAIRN_E2E_REPO: review.repo, CAIRN_E2E_NO_NODE: "1" }));
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;

@@ -10,6 +10,7 @@ import {
   cliHome,
   homeCommand,
   installCli,
+  nodeCommand,
   pendingInstall,
 } from "@cairn-comments/core";
 import {
@@ -332,6 +333,8 @@ function settingsWhat(change: SettingsChange, harness: string, installing: boole
 export function planInit(root: string, options: InitOptions = {}): Change[] {
   const home = cliHome();
   const command = options.command ?? homeCommand(home);
+  // Agent harnesses on Windows may run hooks under PowerShell or cmd, which cannot start the sh launcher.
+  const hookCommand = options.command ?? (process.platform === "win32" ? nodeCommand(home) : command);
   // Installed adapters are rewritten too, so a repository recording an old CLI path is fixed whole.
   const installed = Object.keys(ADAPTERS).filter((h) => adapterInstalled(root, h));
   const hooks = [...new Set([...(options.hooks ?? []), ...installed])];
@@ -351,7 +354,7 @@ export function planInit(root: string, options: InitOptions = {}): Change[] {
     attributesChange(root, attributeLines(), LEGACY_ATTRIBUTES),
     ...hookChanges(root, command),
     ...hooks.flatMap((h) =>
-      adapterRoots(root, h).map((wt) => settingsChange(root, h, planAdapterInstall(wt, h, command), true)),
+      adapterRoots(root, h).map((wt) => settingsChange(root, h, planAdapterInstall(wt, h, hookCommand), true)),
     ),
     options.agentsMd ? agentsMdChange(root, false) : undefined,
   ];
