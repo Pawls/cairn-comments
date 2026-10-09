@@ -176,6 +176,21 @@
         "command": "cairn.setup",
         "title": "Set Up in This Repository",
         "category": "Cairn Comments"
+      },
+      {
+        "command": "cairn.makePrivate",
+        "title": "Make Comments Private",
+        "category": "Cairn Comments"
+      },
+      {
+        "command": "cairn.shareComments",
+        "title": "Share Comments",
+        "category": "Cairn Comments"
+      },
+      {
+        "command": "cairn.getSharedComments",
+        "title": "Get Shared Comments",
+        "category": "Cairn Comments"
       }
     ],
     "views": {
@@ -227,6 +242,21 @@
           "command": "cairn.refreshLists",
           "when": "view == cairn.stale || view == cairn.orphans",
           "group": "navigation@1"
+        },
+        {
+          "command": "cairn.makePrivate",
+          "when": "view == cairn.review && !cairn.private && !cairn.setupNeeded",
+          "group": "storage@1"
+        },
+        {
+          "command": "cairn.shareComments",
+          "when": "view == cairn.review && cairn.private",
+          "group": "storage@1"
+        },
+        {
+          "command": "cairn.getSharedComments",
+          "when": "view == cairn.review && cairn.private",
+          "group": "storage@2"
         }
       ],
       "commandPalette": [
@@ -273,6 +303,18 @@
         {
           "command": "cairn.review.skip",
           "when": "false"
+        },
+        {
+          "command": "cairn.makePrivate",
+          "when": "!cairn.private && !cairn.setupNeeded"
+        },
+        {
+          "command": "cairn.shareComments",
+          "when": "cairn.private"
+        },
+        {
+          "command": "cairn.getSharedComments",
+          "when": "cairn.private"
         }
       ],
       "comments/comment/title": [
@@ -365,7 +407,7 @@
       {
         "view": "cairn.review",
         "when": "cairn.setupNeeded",
-        "contents": "This repository is not set up for Cairn Comments yet. Setup adds a git filter, git hooks, and lines in .gitattributes, and shows you the full list before it changes anything.\n[Set Up Cairn Comments in This Repository](command:cairn.setup)"
+        "contents": "This repository is not set up for Cairn Comments yet. Setup adds a git filter and git hooks, asks whether the comments go on the branch or stay private in .git, and shows you the full list before it changes anything.\n[Set Up Cairn Comments in This Repository](command:cairn.setup)"
       }
     ]
   },

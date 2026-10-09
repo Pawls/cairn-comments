@@ -58,6 +58,11 @@ export function scratchRepo(populate: (repo: string) => void, options: { private
   }
   execFileSync("git", ["add", "-A"], opts);
   execFileSync("git", ["commit", "-qm", "base"], opts);
+  // A private repository's comments are shared through a remote; a bare one stands in for it.
+  if (options.private) {
+    execFileSync("git", ["init", "-q", "--bare", path.join(dir, "remote.git")], opts);
+    execFileSync("git", ["remote", "add", "origin", path.join(dir, "remote.git")], opts);
+  }
   return { dir, repo, env };
 }
 

@@ -8,7 +8,6 @@ import {
   cliHome,
   demoteTarget,
   parseSidecar,
-  privateSidecarDir,
   serializeSidecar,
   type CommentSite,
   type Marker,
@@ -22,6 +21,7 @@ import { CommentPaste } from "./paste.js";
 import { PlacedComment, SHOW_COMMENT, type PlacedView } from "./placed.js";
 import { findRepo, orphansOf, runCli, type OrphanComment, type Repo, type StaleComment } from "./review.js";
 import { registerReviewTree, type ReviewApi } from "./reviewTree.js";
+import { PrivateMode, registerPrivateMode, type PrivateModeApi } from "./privateMode.js";
 import { PasteSaves, UndoSaves } from "./saves.js";
 import { recordEditorRuntime } from "./runtime.js";
 import { installBundledCli, offerRepair } from "./setup.js";
@@ -55,6 +55,7 @@ export interface TestApi {
   /** Recomputes and applies the overlay for one editor, returning what was applied. */
   refresh(editor: vscode.TextEditor): Promise<Applied>;
   review: ReviewApi;
+  privateMode: PrivateModeApi;
   /** The repair offer for a repository whose recorded CLI is gone, with `ask` in place of the prompt. */
   repair(ask: (root: string, missing: string) => Promise<boolean>): Promise<boolean>;
   /** What the stale comment list offers, from `check --stale --json`; a string explains an empty list. */
@@ -77,11 +78,23 @@ export function activate(context: vscode.ExtensionContext): TestApi {
   void recordEditorRuntime(cliHome());
   const overlay = new OverlayController(context, COMMANDS.toggle);
   const lists = registerLists(context, { stale: staleComments, orphans: orphanComments }, COMMANDS.edit);
-  const watchers = sidecarWatchers();
   const sidecarChanged = (uri: vscode.Uri) => {
     overlay.sidecarChanged(uri);
     lists.scheduleRefresh();
   };
+  const watch = (watcher: vscode.FileSystemWatcher) => [
+    watcher,
+    watcher.onDidChange(sidecarChanged),
+    watcher.onDidCreate(sidecarChanged),
+    watcher.onDidDelete(sidecarChanged),
+  ];
+  // A private store sits in the git dir, out of the glob's reach; each gets its own watcher.
+  const privateMode = new PrivateMode((store) =>
+    watch(vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(store), "**/*.md"))),
+  );
+  for (const folder of vscode.workspace.workspaceFolders ?? [])
+    privateMode.update(findSidecarRoot(folder.uri.fsPath, folder.uri.fsPath));
+  const privateCommands = registerPrivateMode(privateMode);
   const actions = new PlacedActions({
     view: overlay.view,
     locate,
@@ -94,12 +107,9 @@ export function activate(context: vscode.ExtensionContext): TestApi {
   const paste = createPaste(overlay, pasteSaves);
 
   context.subscriptions.push(
-    ...watchers.flatMap((watcher) => [
-      watcher,
-      watcher.onDidChange(sidecarChanged),
-      watcher.onDidCreate(sidecarChanged),
-      watcher.onDidDelete(sidecarChanged),
-    ]),
+    ...watch(vscode.workspace.createFileSystemWatcher(`**/${SIDECAR_ROOT}/**/*.md`)),
+    privateMode,
+    ...privateCommands.disposables,
     pasteSaves,
     ...trackDocuments(overlay, new UndoSaves(), pasteSaves, sidecarChanged),
     ...registerCommentCommands(overlay, actions),
@@ -111,7 +121,8 @@ export function activate(context: vscode.ExtensionContext): TestApi {
   return {
     mode: () => overlay.mode(),
     refresh: (editor) => overlay.refresh(editor),
-    review: registerReviewTree(context),
+    review: registerReviewTree(context, privateMode),
+    privateMode: privateCommands.api,
     repair: async (ask) => {
       const at = firstFolder();
       return at ? offerRepair(at, ask) : false;
@@ -126,27 +137,6 @@ export function activate(context: vscode.ExtensionContext): TestApi {
 
 export function deactivate(): void {
   // Nothing to release: activate registers every disposable on context.subscriptions.
-}
-
-/**
- * Watchers for every sidecar the workspace can see: tracked ones under any folder, and the
- * private store of each folder's repository, which sits in the git dir outside the glob's
- * reach. A repository switched to private mode while the window is open is watched after a
- * reload.
- */
-function sidecarWatchers(): vscode.FileSystemWatcher[] {
-  const stores = new Set<string>();
-  for (const folder of vscode.workspace.workspaceFolders ?? []) {
-    const root = findSidecarRoot(folder.uri.fsPath, folder.uri.fsPath);
-    const store = privateSidecarDir(root);
-    if (store) stores.add(store);
-  }
-  return [
-    vscode.workspace.createFileSystemWatcher(`**/${SIDECAR_ROOT}/**/*.md`),
-    ...[...stores].map((store) =>
-      vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(store), "**/*.md")),
-    ),
-  ];
 }
 
 function firstFolder(): string | undefined {

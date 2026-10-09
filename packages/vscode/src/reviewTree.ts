@@ -3,7 +3,9 @@ import path from "node:path";
 import * as vscode from "vscode";
 import { BRAND, BRAND_TITLE, SIDECAR_ROOT, privateSidecarDir } from "@cairn-comments/core";
 import { applyPrinted, saveOpen } from "./edits.js";
+import type { PrivateMode } from "./privateMode.js";
 import { runInit } from "./setup.js";
+import { existingStorage, type Storage } from "./storage.js";
 import { ReviewModel, findRepo, runCli, type Decision, type Repo, type ReviewComment, type ReviewFile, type ReviewItem } from "./review.js";
 
 export const REVIEW_VIEW = `${BRAND}.review`;
@@ -34,10 +36,20 @@ export interface ReviewApi {
   skip(file: string, line: number | undefined): void;
   /** Runs `scan --apply` on the decided comments (and, with `rest`, the undecided ones) and rescans; resolves to the CLI's report. */
   apply(rest?: Decision): Promise<string>;
-  /** Runs `init` once `confirm` accepts its dry run, then scans; resolves to the report, or "" when declined. */
-  setup(confirm?: (root: string, plan: string) => Promise<boolean>): Promise<string>;
+  /**
+   * Runs `init`, asking a fresh repository where its comments go, once `confirm` accepts the
+   * dry run; then scans. Resolves to the report, or "" when declined.
+   */
+  setup(choices?: SetupChoices): Promise<string>;
   message(): string | undefined;
   visible(): boolean;
+}
+
+export interface SetupChoices {
+  /** Where a fresh repository keeps its comments; undefined cancels. */
+  choose?: (root: string) => Promise<Storage | undefined>;
+  /** Accepts the plan `init --dry-run` printed. */
+  confirm?: (root: string, plan: string) => Promise<boolean>;
 }
 
 const DECISION_ICON: Record<Decision, string> = { ai: "eye-closed", keep: "comment" };
@@ -49,8 +61,8 @@ const DECISION_LABEL: Record<Decision, string> = { ai: "→ AI comment", keep: "
  * buttons apply the decisions in one pass, optionally deciding everything left undecided.
  * The CLI does the work (see ./review.ts).
  */
-export function registerReviewTree(context: vscode.ExtensionContext): ReviewApi {
-  const tree = new ReviewTree();
+export function registerReviewTree(context: vscode.ExtensionContext, privateMode: PrivateMode): ReviewApi {
+  const tree = new ReviewTree(privateMode);
   context.subscriptions.push(
     tree,
     // From the palette the view may be collapsed or closed, so bring it forward first.
@@ -77,7 +89,7 @@ export function registerReviewTree(context: vscode.ExtensionContext): ReviewApi 
     decide: (file, line, decision) => tree.decide(file, line, decision),
     skip: (file, line) => tree.skip(file, line),
     apply: (rest) => tree.apply(rest),
-    setup: (confirm) => tree.setup(confirm),
+    setup: (choices) => tree.setup(choices),
     message: () => tree.view.message,
     visible: () => tree.view.visible,
   };
@@ -92,6 +104,8 @@ class ReviewTree implements vscode.TreeDataProvider<Node>, vscode.Disposable {
   private readonly changed = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this.changed.event;
   readonly view = vscode.window.createTreeView(REVIEW_VIEW, { treeDataProvider: this });
+
+  constructor(private readonly privateMode: PrivateMode) {}
 
   dispose(): void {
     this.changed.dispose();
@@ -132,6 +146,8 @@ class ReviewTree implements vscode.TreeDataProvider<Node>, vscode.Disposable {
     this.loaded = false;
     this.model.load([], options);
     void vscode.commands.executeCommand("setContext", SETUP_NEEDED, !!this.repo && !this.repo.cli);
+    this.privateMode.update(this.repo?.root);
+    this.view.description = this.repo && privateSidecarDir(this.repo.root) ? "private" : undefined;
     if (!this.repo) {
       this.setMessage("Open a git repository to review AI comments.");
     } else if (!this.repo.cli) {
@@ -154,11 +170,13 @@ class ReviewTree implements vscode.TreeDataProvider<Node>, vscode.Disposable {
     return report;
   }
 
-  async setup(confirm = confirmSetup): Promise<string> {
+  async setup({ choose = chooseStorage, confirm = confirmSetup }: SetupChoices = {}): Promise<string> {
     const found = await scanRepo();
     if (!found) throw new Error(`open a git repository to set up ${BRAND_TITLE}`);
-    if (!(await confirm(found.root, await runInit(found.root, true)))) return "";
-    const report = await runInit(found.root, false);
+    const storage = existingStorage(found.root) ?? (await choose(found.root));
+    if (!storage) return "";
+    if (!(await confirm(found.root, await runInit(found.root, true, storage)))) return "";
+    const report = await runInit(found.root, false, storage);
     await this.scan();
     return report;
   }
@@ -195,7 +213,8 @@ class ReviewTree implements vscode.TreeDataProvider<Node>, vscode.Disposable {
 }
 
 /** The repository of the active editor's workspace folder, else of the first folder. */
-async function scanRepo(): Promise<Repo | undefined> {
+/** The repository of the active editor's folder, else of the first folder. */
+export async function scanRepo(): Promise<Repo | undefined> {
   const active = vscode.window.activeTextEditor?.document.uri;
   const folder = (active && vscode.workspace.getWorkspaceFolder(active)) || vscode.workspace.workspaceFolders?.[0];
   return folder ? findRepo(folder.uri.fsPath) : undefined;
@@ -242,6 +261,22 @@ function reviewMessage(model: ReviewModel): string {
   return skipped ? `No comments left to decide.${later}` : "No likely AI comments found.";
 }
 
+async function chooseStorage(root: string): Promise<Storage | undefined> {
+  const choice = await vscode.window.showInformationMessage(
+    `Where should ${BRAND_TITLE} keep the comments in ${path.basename(root)}?`,
+    {
+      modal: true,
+      detail:
+        "On the Branch: the comment text is committed beside the code, so teammates and cloud agents get it by cloning.\n\n" +
+        "Private: everything stays in the repository's .git folder and nothing of Cairn Comments reaches the branch. Share Comments sends them to the remote when you choose.",
+    },
+    "On the Branch",
+    "Private",
+  );
+  if (choice === "On the Branch") return "branch";
+  return choice === "Private" ? "private" : undefined;
+}
+
 async function confirmSetup(root: string, plan: string): Promise<boolean> {
   const choice = await vscode.window.showInformationMessage(
     `Set up ${BRAND_TITLE} in ${path.basename(root)}?`,
@@ -252,7 +287,7 @@ async function confirmSetup(root: string, plan: string): Promise<boolean> {
 }
 
 /** A command that shows its string result, or its error, as a notification. */
-function guarded(fn: () => Promise<unknown>): () => Promise<void> {
+export function guarded(fn: () => Promise<unknown>): () => Promise<void> {
   return async () => {
     try {
       const result = await fn();

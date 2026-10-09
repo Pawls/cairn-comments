@@ -3,6 +3,7 @@ import path from "node:path";
 import * as vscode from "vscode";
 import { BRAND, BRAND_TITLE, cliHome, installCli } from "@cairn-comments/core";
 import { findRepo, recordedScript, runCli, type Repo } from "./review.js";
+import { initArgs, type Storage } from "./storage.js";
 
 /**
  * Installs the CLI bundled in the extension into the CLI home, unless the home has the same
@@ -17,9 +18,13 @@ export function installBundledCli(context: vscode.ExtensionContext): void {
   }
 }
 
-/** Runs `init` through the home's CLI, whose launcher is what it records. */
-export function runInit(root: string, dryRun: boolean): Promise<string> {
-  return runCli(dryRun ? ["init", "--dry-run"] : ["init"], root);
+/**
+ * Runs `init` through the home's CLI, whose launcher is what it records. Without `storage`,
+ * `init` keeps the mode the repository has, as repair needs.
+ */
+export function runInit(root: string, dryRun: boolean, storage?: Storage): Promise<string> {
+  const args = storage ? initArgs(storage) : ["init"];
+  return runCli(dryRun ? [...args, "--dry-run"] : args, root);
 }
 
 /** The recorded launcher or script when it no longer exists, so every commit in `repo` fails its hook. */
