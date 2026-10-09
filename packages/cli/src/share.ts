@@ -105,7 +105,8 @@ export async function fetchComments(root: string, remote: string): Promise<Fetch
     encoding: "utf8",
   });
   if (fetched.status !== 0) {
-    if (/couldn't find remote ref/i.test(fetched.stderr)) return { summary: `${remote} has no comments yet\n`, conflicts: [] };
+    if (/couldn't find remote ref/i.test(fetched.stderr))
+      return { summary: `${remote} has no comments yet\n`, conflicts: [] };
     throw new Error(fetched.stderr.trim() || `git fetch from ${remote} failed`);
   }
   const theirs = refCommit(root, remoteRef(remote));
@@ -156,7 +157,11 @@ function mergeIntoStore(root: string, store: string, ours: string, theirs: strin
       continue;
     }
     const source = file.slice(0, -".md".length);
-    const merged = mergeSidecars(parseSidecar(baseText ?? ""), parseSidecar(ourText ?? ""), parseSidecar(theirText ?? ""));
+    const merged = mergeSidecars(
+      parseSidecar(baseText ?? ""),
+      parseSidecar(ourText ?? ""),
+      parseSidecar(theirText ?? ""),
+    );
     writeSidecar(root, source, merged.sidecar);
     conflicts.push(...merged.conflicts.map((id) => `${source}:${id}`));
   }

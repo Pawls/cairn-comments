@@ -375,7 +375,10 @@ function refuseTrackedSetup(root: string): void {
   const lines = existsSync(attributes) ? readFileSync(attributes, "utf8").split(/\r?\n/) : [];
   const ownLines = lines.filter((l) => OWN_ATTRIBUTES.includes(l.trim()));
   if (!files.length && !ownLines.length) return;
-  const found = [files.length && `${files.length} tracked file(s) under .agents/`, ownLines.length && ".gitattributes lines"]
+  const found = [
+    files.length && `${files.length} tracked file(s) under .agents/`,
+    ownLines.length && ".gitattributes lines",
+  ]
     .filter(Boolean)
     .join(" and ");
   throw new Error(
@@ -406,10 +409,16 @@ function privateChanges(root: string, harnesses: string[], migrate: boolean): (C
 }
 
 function storeCreation(root: string, store: string): Change {
-  return { what: `${shownPath(root, store)}: create (sidecars live here)`, apply: () => mkdirSync(store, { recursive: true }) };
+  return {
+    what: `${shownPath(root, store)}: create (sidecars live here)`,
+    apply: () => mkdirSync(store, { recursive: true }),
+  };
 }
 
-/** Copies the tracked sidecars and scan-ignore file into the store, as the worktree has them, and stages their removal. */
+/**
+ * Copies the tracked sidecars and scan-ignore file into the store, as the worktree has them,
+ * and stages their removal.
+ */
 function migrationChange(root: string, store: string, scanIgnore: string): Change | undefined {
   const files = trackedToolFiles(root);
   if (!files.length) return undefined;

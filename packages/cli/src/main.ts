@@ -176,7 +176,9 @@ async function runScan(args: string[]): Promise<void> {
   const root = repoRoot();
   if (values.apply !== undefined) {
     const text = values.apply === "-" ? (await readStdin()).toString("utf8") : readFileSync(values.apply, "utf8");
-    await printingIf(values.print, root, async () => formatApply(await applyReview(root, parseReview(text)), shownIgnoreFile(root)));
+    await printingIf(values.print, root, async () =>
+      formatApply(await applyReview(root, parseReview(text)), shownIgnoreFile(root)),
+    );
     return;
   }
   if (values["mark-all"]) {
@@ -356,7 +358,8 @@ function runInit(args: string[]): void {
       migrate: { type: "boolean", default: false },
     },
   });
-  if (values.migrate && !values.private) throw new Error("--migrate moves tracked sidecars only together with --private");
+  if (values.migrate && !values.private)
+    throw new Error("--migrate moves tracked sidecars only together with --private");
   const hooks = values.hooks
     ?.split(",")
     .map((h) => h.trim())

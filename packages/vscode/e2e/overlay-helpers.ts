@@ -161,7 +161,8 @@ const sidecarTabs = () =>
     .map((t) => t.input)
     .filter(
       (input): input is vscode.TabInputText =>
-        input instanceof vscode.TabInputText && input.uri.fsPath.includes(".agents"),
+        input instanceof vscode.TabInputText &&
+        (input.uri.fsPath.includes(".agents") || input.uri.fsPath.includes(path.join(".git", "cairn"))),
     );
 
 /**
