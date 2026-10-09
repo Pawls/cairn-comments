@@ -85,6 +85,32 @@ describe.each([false, true])("private mode (autocrlf=%s)", (autocrlf) => {
     });
   });
 
+  it("check --fix follows a rename and a deletion in the store", () => {
+    const box = new Sandbox({ autocrlf });
+    try {
+      const repo = box.path("repo");
+      const store = (...parts: string[]) => box.path("repo", ".git", "cairn", "comments", ...parts);
+      box.git(box.dir, "init", "-q", "repo");
+      box.cli(repo, "init", "--private");
+      box.write(box.path("repo", "a.py"), "def f():\n    #~ explains f\n    return 1\n");
+      box.write(box.path("repo", "c.py"), "def g():\n    #~ explains g\n    return 3\n");
+      box.git(repo, "add", "-A");
+      box.git(repo, "commit", "-qm", "two files with comments");
+
+      box.git(repo, "mv", "a.py", "b.py");
+      box.git(repo, "rm", "-q", "c.py");
+      box.git(repo, "commit", "-qm", "rename one, delete the other");
+
+      expect(existsSync(store("a.py.md"))).toBe(false);
+      expect(readFileSync(store("b.py.md"), "utf8")).toContain("explains f");
+      expect(existsSync(store("c.py.md"))).toBe(false);
+      expect(box.cliResult(repo, "check").status).toBe(0);
+      expect(box.status(repo)).toBe("");
+    } finally {
+      box.dispose();
+    }
+  });
+
   describe("init --private in a repository with tracked sidecars", () => {
     let box: Sandbox;
     let repo: string;
