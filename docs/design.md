@@ -821,8 +821,10 @@ suite.
   for every worktree; the adapters' settings files in `<common dir>/info/exclude`, so
   `--hooks` leaves `git status` clean. No merge driver: private sidecars never meet a git
   merge. `init` refuses while tracked sidecars, a tracked `.agents/scan-ignore`, or its own
-  `.gitattributes` lines exist; `--migrate` copies the files into the store, `git rm`s
-  them, and stages `.gitattributes` without the tool's lines. A repository in private mode
+  `.gitattributes` lines exist; `--migrate` copies every sidecar on disk into the store,
+  committed or not (one `sync` wrote and no one committed would otherwise be lost),
+  `git rm`s the tracked ones, deletes the rest, and stages `.gitattributes` without the
+  tool's lines. A repository in private mode
   stays there when `init` runs again without the flag, so the extension's **Set Up** keeps
   it. `--agents-md` is refused, since `AGENTS.md` is tracked.
 - **Commits record nothing of the tool.** The pre-commit hook's `sync --staged --add`
@@ -844,9 +846,19 @@ suite.
   leaves conflict markers in it and exits 1. Every smudged worktree then runs `refresh`.
   Nothing writes the ref during a commit, so git's own ref locks are never contended.
 - **The extension** finds a document's sidecar through the same resolver, recognizes a file
-  under `.git/cairn/comments/` as a sidecar, and adds a watcher on each workspace folder's
-  store at activation; a repository switched to private mode with the window open is
-  watched after a reload.
+  under `.git/cairn/comments/` as a sidecar, and watches each private store it learns of
+  (`PrivateMode` in `packages/vscode/src/privateMode.ts`): at activation, after a scan, and
+  after Set Up or **Make Comments Private** creates one. No extension user needs the CLI:
+  - **Set Up** asks "On the Branch" or "Private" only in a fresh repository. A private
+    store, sidecar files under `.agents/comments/`, or the filter in `.gitattributes` mean
+    the repository already chose (`existingStorage`, `packages/vscode/src/storage.ts`); a
+    clone of a team's repository keeps the team's mode. The empty folder the scan view
+    creates says nothing.
+  - **Make Comments Private** runs `init --private --migrate` after a modal with its dry
+    run. **Share Comments** and **Get Shared Comments** run `push` and `fetch` against
+    `origin`. A `cairn.private` context key shows each only where it applies.
+  - No setting: the mode is a fact about the repository, which a setting could contradict,
+    and switching it moves files.
 - **Known gap: concurrent writes.** Two worktrees syncing the same sidecar at the same
   moment can lose one side's entries, since each rewrites the whole file. Tracked mode
   cannot, because each worktree has its own copy. Not seen in practice yet; if it is, add a

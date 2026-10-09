@@ -186,7 +186,10 @@ comments too.
 
 ## Private mode: nothing on the branch
 
-For a team that wants no trace of the tool in the repository, set it up with `--private`:
+For a team that wants no trace of the tool in the repository, choose **Private** when
+**Set Up** in VS Code asks where the comments go. Its **Share Comments**, **Get Shared
+Comments**, and **Make Comments Private** commands do the rest of this section without a
+terminal. From the CLI, set it up with `--private`:
 
 ```sh
 cairn init --private                  # config, attributes, and sidecars all inside .git
