@@ -3,10 +3,11 @@ import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { FILTER_DRIVER } from "@cairn-comments/core";
 
-export function git(args: string[], options: { cwd?: string; input?: string } = {}): string {
+export function git(args: string[], options: { cwd?: string; input?: string; env?: NodeJS.ProcessEnv } = {}): string {
   return execFileSync("git", args, {
     cwd: options.cwd,
     input: options.input,
+    env: options.env,
     encoding: "utf8",
     stdio: ["pipe", "pipe", "inherit"],
     maxBuffer: 1 << 28,

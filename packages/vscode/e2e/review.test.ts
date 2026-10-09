@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import * as vscode from "vscode";
 import type { TestApi } from "../src/extension.js";
@@ -207,20 +207,31 @@ suite("scan review", () => {
     assert.equal(await a.repair(async () => true), false, "nothing to repair once it records the home");
   });
 
-  // Last: it uninstalls the repository.
+  // The last three run in order: setup after an uninstall, then private mode in two ways.
   test("in a repository never set up, the review view offers setup, which runs init after its dry run and then scans", async () => {
     const a = await api();
     homeCli("uninstall");
     await a.review.scan();
     assert.equal(a.review.message(), undefined, "the setup welcome takes the view's place");
 
-    assert.equal(await a.review.setup(async () => false), "", "declining the dry run changes nothing");
+    // The earlier tests left sidecars on the branch, so setup keeps them there without asking.
+    const keepsBranch = async () => {
+      throw new Error("setup asked where the comments go in a repository that already has them on the branch");
+    };
+    assert.equal(
+      await a.review.setup({ choose: keepsBranch, confirm: async () => false }),
+      "",
+      "declining the dry run changes nothing",
+    );
     assert.throws(() => git("config", "--get", "filter.cairn.clean"));
 
     let plan = "";
-    const report = await a.review.setup(async (_root, dryRun) => {
-      plan = dryRun;
-      return true;
+    const report = await a.review.setup({
+      choose: keepsBranch,
+      confirm: async (_root, dryRun) => {
+        plan = dryRun;
+        return true;
+      },
     });
     assert.match(plan, /^dry run; would change:\n/);
     assert.match(report, /git config: set filter\.cairn\.clean/);
@@ -232,5 +243,45 @@ suite("scan review", () => {
     git("add", "src/note.py");
     git("commit", "-qm", "note");
     assert.equal(git("show", "HEAD:src/note.py"), "def f():\n    return 1\n");
+  });
+
+  test("Make Comments Private moves the comments into .git after its dry run, and stages their removal", async () => {
+    const a = await api();
+    assert.ok(git("ls-files", ".agents/comments").includes("src/note.py.md"), "the previous test committed a sidecar");
+    assert.equal(await a.privateMode.makePrivate(async () => false), "", "declining the dry run changes nothing");
+    assert.equal(existsSync(path.join(repo(), ".git", "cairn", "comments")), false);
+
+    let plan = "";
+    const report = await a.privateMode.makePrivate(async (_root, dryRun) => {
+      plan = dryRun;
+      return true;
+    });
+    assert.match(plan, /^dry run; would change:\n/);
+    assert.match(report, /Commit the staged changes/);
+    assert.match(readFileSync(path.join(repo(), ".git", "cairn", "comments", "src", "note.py.md"), "utf8"), /explains f/);
+    git("commit", "-qm", "comments leave the branch");
+    assert.doesNotMatch(git("ls-tree", "-r", "--name-only", "HEAD"), /^\.agents\//m);
+  });
+
+  // Last: it uninstalls the repository and drops its comments.
+  test("Set Up in a fresh repository asks where the comments go, and Private keeps everything in .git", async () => {
+    const a = await api();
+    homeCli("uninstall");
+    rmSync(path.join(repo(), ".git", "cairn"), { recursive: true, force: true });
+    await a.review.scan();
+
+    let asked = false;
+    const report = await a.review.setup({
+      choose: async () => {
+        asked = true;
+        return "private";
+      },
+      confirm: async () => true,
+    });
+    assert.ok(asked, "setup asked where the comments go");
+    assert.match(report, /cairn\/comments: create/);
+    assert.ok(existsSync(path.join(repo(), ".git", "cairn", "comments")));
+    assert.match(readFileSync(path.join(repo(), ".git", "info", "attributes"), "utf8"), /\*\.py filter=cairn/);
+    assert.equal(git("status", "--porcelain", "--", ".gitattributes"), "", "the branch's .gitattributes is untouched");
   });
 });

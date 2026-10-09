@@ -1,7 +1,16 @@
 #!/usr/bin/env node
 import { readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { parseArgs } from "node:util";
-import { BRAND, SIDECAR_ROOT, STALE_TAG, mergeSidecars, parseSidecar, serializeSidecar } from "@cairn-comments/core";
+import {
+  BRAND,
+  SIDECAR_ROOT,
+  STALE_TAG,
+  mergeSidecars,
+  parseSidecar,
+  privateSidecarDir,
+  serializeSidecar,
+} from "@cairn-comments/core";
 import { check, formatCheck } from "./check.js";
 import {
   collapseFiles,
@@ -9,34 +18,54 @@ import {
   expandFiles,
   filterContent,
   filterMode,
+  isPrivate,
   refreshFiles,
   promotableIds,
   promoteIds,
   readSidecar,
   selectFiles,
+  sidecarSources,
   staleIn,
   syncFiles,
 } from "./files.js";
 import { ADAPTERS } from "./adapters.js";
-import { repoRoot, smudges, toRepoPath, trackedFiles } from "./git.js";
+import { gitQuiet, repoRoot, smudges, toRepoPath } from "./git.js";
 import { runHook } from "./hook.js";
 import { agentsSnippet, planInit, planUninstall, runPlan } from "./init.js";
 import { serveFilterProcess } from "./process.js";
-import { applyReview, demote, formatApply, formatReview, markAll, parseReview, scan } from "./scan.js";
+import { fetchComments, pushComments } from "./share.js";
+import {
+  applyReview,
+  demote,
+  formatApply,
+  formatReview,
+  markAll,
+  parseReview,
+  scan,
+  shownIgnoreFile,
+} from "./scan.js";
 import { tag, tagTargets } from "./tag.js";
 import { captureWrites, capturedWrites } from "./workfiles.js";
 import { addWorktree } from "./worktree.js";
 
 const USAGE = `usage: ${BRAND} <command>
 
-  init [--command <cli>] [--one-shot] [--hooks <harness,...>] [--agents-md] [--dry-run]
-                                configure the filter, merge driver, .gitattributes, and pre-commit
-                                hook, printing each change; --one-shot runs a process per file
-                                instead of one per git command; --hooks installs post-edit adapters
-                                (${Object.keys(ADAPTERS).join(", ")}); --agents-md writes the sigil
-                                convention into AGENTS.md; --dry-run prints without changing
+  init [--private [--migrate]] [--command <cli>] [--one-shot] [--hooks <harness,...>] [--agents-md]
+       [--dry-run]              configure the filter, merge driver, .gitattributes, and pre-commit
+                                hook, printing each change; --private keeps the sidecars and all
+                                config in the git directory, so the branch carries nothing of
+                                ${BRAND}, and --migrate moves tracked sidecars there; --one-shot runs
+                                a process per file instead of one per git command; --hooks installs
+                                post-edit adapters (${Object.keys(ADAPTERS).join(", ")}); --agents-md
+                                writes the sigil convention into AGENTS.md; --dry-run prints
+                                without changing
   uninstall [--dry-run]         undo init, adapters and AGENTS.md included; sidecars stay
   worktree add <git args...>    add a worktree whose checkout shows full comments
+  push [remote]                 in private mode, commit the sidecars to refs/${BRAND}/comments and
+                                push that ref (default remote: origin)
+  fetch [remote]                in private mode, fetch that ref and merge it into the sidecars,
+                                then place the comments again in agent worktrees; exits 1 when
+                                both sides changed a comment's text
   sync [--staged] [--add] [files...]
                                 record where each comment sits and its text in the sidecars,
                                 stamping ids onto new comments
@@ -147,11 +176,13 @@ async function runScan(args: string[]): Promise<void> {
   const root = repoRoot();
   if (values.apply !== undefined) {
     const text = values.apply === "-" ? (await readStdin()).toString("utf8") : readFileSync(values.apply, "utf8");
-    await printingIf(values.print, root, async () => formatApply(await applyReview(root, parseReview(text))));
+    await printingIf(values.print, root, async () =>
+      formatApply(await applyReview(root, parseReview(text)), shownIgnoreFile(root)),
+    );
     return;
   }
   if (values["mark-all"]) {
-    process.stdout.write(formatApply(await markAll(root, positionals)));
+    process.stdout.write(formatApply(await markAll(root, positionals), shownIgnoreFile(root)));
     return;
   }
   const review = await scan(root, positionals, { all: values.all });
@@ -310,7 +341,8 @@ async function runHookCommand(args: string[]): Promise<void> {
 }
 
 function runAgentsMd(): void {
-  process.stdout.write(agentsSnippet());
+  const root = gitQuiet(["rev-parse", "--show-toplevel"], process.cwd())?.trim();
+  process.stdout.write(agentsSnippet(root !== undefined && isPrivate(root)));
 }
 
 function runInit(args: string[]): void {
@@ -322,13 +354,24 @@ function runInit(args: string[]): void {
       hooks: { type: "string" },
       "agents-md": { type: "boolean", default: false },
       "dry-run": { type: "boolean", default: false },
+      private: { type: "boolean", default: false },
+      migrate: { type: "boolean", default: false },
     },
   });
+  if (values.migrate && !values.private)
+    throw new Error("--migrate moves tracked sidecars only together with --private");
   const hooks = values.hooks
     ?.split(",")
     .map((h) => h.trim())
     .filter(Boolean);
-  const options = { command: values.command, oneShot: values["one-shot"], hooks, agentsMd: values["agents-md"] };
+  const options = {
+    command: values.command,
+    oneShot: values["one-shot"],
+    hooks,
+    agentsMd: values["agents-md"],
+    private: values.private,
+    migrate: values.migrate,
+  };
   for (const line of runPlan(planInit(repoRoot(), options), values["dry-run"])) console.log(line);
 }
 
@@ -336,10 +379,12 @@ function runUninstall(args: string[]): void {
   const { values } = parseArgs({ args, options: { "dry-run": { type: "boolean", default: false } } });
   const root = repoRoot();
   for (const line of runPlan(planUninstall(root), values["dry-run"])) console.log(line);
-  const kept = trackedFiles(root).filter((f) => f.startsWith(`${SIDECAR_ROOT}/`)).length;
+  const kept = sidecarSources(root).length;
   if (kept) {
+    const store = privateSidecarDir(root);
+    const where = store ? path.relative(root, store).split(path.sep).join("/") : SIDECAR_ROOT;
     console.log(
-      `note: ${kept} sidecar file(s) under ${SIDECAR_ROOT}/ stay; ` +
+      `note: ${kept} sidecar file(s) under ${where}/ stay; ` +
         `\`${BRAND} promote --all\` before uninstalling turns them into ordinary comments`,
     );
   }
@@ -363,6 +408,20 @@ async function runRefresh(): Promise<void> {
   const root = repoRoot();
   if (!smudges(root)) return;
   await refreshFiles(root);
+}
+
+function runPush(args: string[]): void {
+  process.stdout.write(pushComments(repoRoot(), args[0] ?? "origin"));
+}
+
+async function runFetch(args: string[]): Promise<void> {
+  const report = await fetchComments(repoRoot(), args[0] ?? "origin");
+  process.stdout.write(report.summary);
+  if (!report.conflicts.length) return;
+  process.stderr.write(
+    `${BRAND}: both sides changed ${report.conflicts.join(", ")}; resolve the conflict markers in the body\n`,
+  );
+  process.exitCode = 1;
 }
 
 function runWorktree(args: string[]): void {
@@ -390,6 +449,8 @@ const COMMANDS = new Map<string, (args: string[]) => void | Promise<void>>([
   ["uninstall", runUninstall],
   ["merge-sidecar", runMergeSidecar],
   ["worktree", runWorktree],
+  ["push", runPush],
+  ["fetch", runFetch],
 ]);
 
 async function main(argv: string[]): Promise<void> {

@@ -37,7 +37,7 @@ export {
   type ConfirmPlacedResult,
   type PromotePlacedResult,
 } from "./owner.js";
-export { mergeSidecars, type MergeResult } from "./merge.js";
+export { hasConflictMarkers, mergeSidecars, type MergeResult } from "./merge.js";
 export { LANGUAGES, languageForPath, type LanguageSpec } from "./languages.js";
 export { STALE_TAG, findMarkers, type Marker, type MarkerKind } from "./markers.js";
 export {
@@ -49,6 +49,15 @@ export {
   type Sidecar,
   type SidecarEntry,
 } from "./sidecar.js";
+export {
+  PRIVATE_SCAN_IGNORE,
+  PRIVATE_STORE,
+  commonGitDir,
+  privateSidecarDir,
+  scanIgnoreFile,
+  sidecarDir,
+  sidecarFileIn,
+} from "./store.js";
 export {
   CLI_HOME_ENV,
   LAUNCHER,

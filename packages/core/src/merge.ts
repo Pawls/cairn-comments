@@ -7,8 +7,15 @@ export interface MergeResult {
   conflicts: string[];
 }
 
+const CONFLICT_START = "<<<<<<< ours";
+
 function conflictText(ours: string, theirs: string): string {
-  return ["<<<<<<< ours", ours, "=======", theirs, ">>>>>>> theirs"].join("\n");
+  return [CONFLICT_START, ours, "=======", theirs, ">>>>>>> theirs"].join("\n");
+}
+
+/** Whether a body still holds the conflict markers a merge left in it. */
+export function hasConflictMarkers(body: string): boolean {
+  return body.split("\n").includes(CONFLICT_START);
 }
 
 const isPlacementKey = (key: string) => (PLACEMENT_KEYS as readonly string[]).includes(key);

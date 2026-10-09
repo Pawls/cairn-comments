@@ -37,6 +37,13 @@ of their line.
 - **Promote and demote.** A code action moves an ordinary comment into the sidecar, and a
   comment's thread (or a code action in an agent worktree, where comments show inline)
   turns it back into an ordinary one.
+- **Private mode.** **Set Up** asks where the comments go: on the branch, where teammates
+  and cloud agents get them by cloning, or private, in the repository's `.git` folder with
+  nothing of Cairn Comments on the branch. In a private repository, the **Review** view's
+  `...` menu offers **Share Comments** and **Get Shared Comments**, which send the comments
+  to the remote and bring a teammate's back through their own ref. A repository set up on
+  the branch offers **Make Comments Private**, which moves them and stages their removal
+  for you to commit. No terminal needed.
 
 ## Requirements
 

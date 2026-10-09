@@ -1,10 +1,21 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   BRAND,
   FILTER_DRIVER,
   LANGUAGES,
+  PRIVATE_SCAN_IGNORE,
+  PRIVATE_STORE,
   SCAN_IGNORE,
   SIDECAR_ROOT,
   cliHome,
@@ -14,9 +25,11 @@ import {
   launcherMissing,
   nodeCommand,
   pendingInstall,
+  privateSidecarDir,
 } from "@cairn-comments/core";
 import {
   ADAPTERS,
+  adapterFor,
   adapterInstalled,
   adapterRoots,
   applySettingsChange,
@@ -24,7 +37,7 @@ import {
   planAdapterUninstall,
   type SettingsChange,
 } from "./adapters.js";
-import { git, gitQuiet, worktreeRoots } from "./git.js";
+import { git, gitQuiet, stage, trackedFiles, worktreeRoots } from "./git.js";
 
 const HOOK_TAG = `managed by ${BRAND} init`;
 const chainedName = (hook: string) => `${hook}.${BRAND}-chained`;
@@ -86,6 +99,10 @@ export interface Change {
 }
 
 export interface InitOptions {
+  /** Keep the sidecars in the git common dir, off every branch (design.md § Private mode). */
+  private?: boolean;
+  /** With `private`: move a tracked setup's sidecars into the store. */
+  migrate?: boolean;
   command?: string;
   /** Leave git on a process per file; the long-running process is the default. */
   oneShot?: boolean;
@@ -116,22 +133,35 @@ function configChanges(root: string, wanted: Record<string, string | undefined>)
   return changes;
 }
 
-function attributeLines(): string[] {
-  return [
-    ...LANGUAGES.flatMap((l) => l.extensions.map((ext) => `*${ext} filter=${FILTER_DRIVER}`)),
-    // eol=lf: the tool writes sidecars as LF, so autocrlf never has anything to convert.
-    `${SIDECAR_ROOT}/** merge=${FILTER_DRIVER} text eol=lf`,
-    // Append-only lines, so a union merge keeps both branches' rejections.
-    `${SCAN_IGNORE} merge=union text eol=lf`,
-  ];
-}
+/** Which files the filter manages; all private mode needs, since its sidecars are not in the tree. */
+const FILTER_ATTRIBUTES = LANGUAGES.flatMap((l) => l.extensions.map((ext) => `*${ext} filter=${FILTER_DRIVER}`));
+
+const TRACKED_ATTRIBUTES = [
+  ...FILTER_ATTRIBUTES,
+  // eol=lf: the tool writes sidecars as LF, so autocrlf never has anything to convert.
+  `${SIDECAR_ROOT}/** merge=${FILTER_DRIVER} text eol=lf`,
+  // Append-only lines, so a union merge keeps both branches' rejections.
+  `${SCAN_IGNORE} merge=union text eol=lf`,
+];
 
 /** Lines earlier versions wrote, replaced on `init` and removed on `uninstall`. */
 const LEGACY_ATTRIBUTES = [`${SIDECAR_ROOT}/** merge=union text eol=lf`];
 
-/** Rewrites `.gitattributes` line by line, keeping every other line and its terminator. */
-function attributesChange(root: string, add: string[], remove: string[]): Change | undefined {
-  const file = path.join(root, ".gitattributes");
+/** Every line `init` may have written to `.gitattributes`. */
+const OWN_ATTRIBUTES = [...TRACKED_ATTRIBUTES, ...LEGACY_ATTRIBUTES];
+
+/** A path as a report shows it: repo-relative when inside `root`, else absolute. */
+function shownPath(root: string, file: string): string {
+  const relative = path.relative(root, file);
+  return (relative.startsWith("..") || path.isAbsolute(relative) ? file : relative).split(path.sep).join("/");
+}
+
+function gitattributesChange(root: string, add: string[], remove: string[]): Change | undefined {
+  return linesChange(root, path.join(root, ".gitattributes"), add, remove);
+}
+
+/** Rewrites a file of git patterns line by line, keeping every other line and its terminator. */
+function linesChange(root: string, file: string, add: string[], remove: string[]): Change | undefined {
   const existing = existsSync(file) ? readFileSync(file, "utf8") : "";
   const eol = existing.includes("\r\n") ? "\r\n" : "\n";
   const lines = existing.split(/(?<=\n)/).filter(Boolean);
@@ -149,19 +179,33 @@ function attributesChange(root: string, add: string[], remove: string[]): Change
   );
   const empty = !next.trim();
   return {
-    what: `.gitattributes: ${empty && existing ? "delete (nothing else was in it)" : parts.join(", ")}`,
-    apply: () => (empty ? rmSync(file, { force: true }) : writeFileSync(file, next)),
+    what: `${shownPath(root, file)}: ${empty && existing ? "delete (nothing else was in it)" : parts.join(", ")}`,
+    apply: () => writeLines(file, empty ? undefined : next),
   };
+}
+
+/** Writes `text` to `file`, creating its folder (`.git/info` may be missing); undefined deletes it. */
+function writeLines(file: string, text: string | undefined): void {
+  if (text === undefined) {
+    rmSync(file, { force: true });
+    return;
+  }
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, text);
 }
 
 function hooksDir(root: string): string {
   return path.resolve(root, git(["rev-parse", "--git-path", "hooks"], { cwd: root }).trim());
 }
 
+/** The git directory every worktree shares, where private mode keeps the store and its patterns. */
+function commonDir(root: string): string {
+  return path.resolve(root, git(["rev-parse", "--git-common-dir"], { cwd: root }).trim());
+}
+
 /** A hooks directory outside this repository's git dir (a global `core.hooksPath`) serves other repositories too. */
 function isSharedHooksDir(root: string, dir: string): boolean {
-  const common = path.resolve(root, git(["rev-parse", "--git-common-dir"], { cwd: root }).trim());
-  const relative = path.relative(common, dir);
+  const relative = path.relative(commonDir(root), dir);
   return relative.startsWith("..") || path.isAbsolute(relative);
 }
 
@@ -232,19 +276,23 @@ function inProse(names: string[]): string {
   return `${names.slice(0, -1).join(", ")}, and ${names.at(-1)}`;
 }
 
-/** The sigil convention for an agent instruction file, between markers `init --agents-md` can find again. */
-export function agentsSnippet(): string {
+/**
+ * The sigil convention for an agent instruction file, between markers `init --agents-md` can
+ * find again. `privateMode` says where the comments go for a repository in private mode.
+ */
+export function agentsSnippet(privateMode = false): string {
   const sigils = [...new Set(LANGUAGES.map((l) => l.lineSigil))];
   const byLanguages = sigils.map((s) => {
     const names = [...new Set(LANGUAGES.filter((l) => l.lineSigil === s).map((l) => l.name))];
     return `\`${s} text\` in ${inProse(names)}`;
   });
+  const destination = privateMode ? "the repository's git directory" : "`" + SIDECAR_ROOT + "/`";
   return [
     SNIPPET_BEGIN,
     "## AI comments",
     "",
     `Write the comments you add as sigil comments: ${byLanguages.join("; ")}. The space after the sigil matters.`,
-    `On commit, ${BRAND} moves them to \`${SIDECAR_ROOT}/\` and keeps them out of the committed code, so the owner's view stays clean while agents still read the comments inline.`,
+    `On commit, ${BRAND} moves them to ${destination} and keeps them out of the committed code, so the owner's view stays clean while agents still read the comments inline.`,
     "",
     "- A comment such as `#~a1b2 text` is already stored: edit its text freely, but keep the four-character id, and delete the whole comment to delete it.",
     "- Never put four letters or digits straight after the sigil (`#~todo`); that reads as an id.",
@@ -318,16 +366,128 @@ function settingsChange(
   installing: boolean,
 ): Change | undefined {
   if (!change) return undefined;
-  const relative = path.relative(root, change.file);
   // A linked worktree's copy is named in full; a `../` path would hide which worktree it is.
-  const file = (relative.startsWith("..") ? change.file : relative).split(path.sep).join("/");
-  return { what: `${file}: ${settingsWhat(change, harness, installing)}`, apply: () => applySettingsChange(change) };
+  return {
+    what: `${shownPath(root, change.file)}: ${settingsWhat(change, harness, installing)}`,
+    apply: () => applySettingsChange(change),
+  };
 }
 
 function settingsWhat(change: SettingsChange, harness: string, installing: boolean): string {
   if (change.next === null) return "delete (nothing else was in it)";
   if (!change.existed) return `create with the ${harness} hook`;
   return `${installing ? "set" : "remove"} the ${harness} hook`;
+}
+
+/** Files of the tool's tracked setup in this repository: its sidecars, its scan-ignore file. */
+function trackedToolFiles(root: string): string[] {
+  return trackedFiles(root).filter((f) => f.startsWith(`${SIDECAR_ROOT}/`) || f === SCAN_IGNORE);
+}
+
+/** Private mode would leave a tracked setup behind on the branch; only `--migrate` moves it. */
+function refuseTrackedSetup(root: string): void {
+  const files = trackedToolFiles(root);
+  const attributes = path.join(root, ".gitattributes");
+  const lines = existsSync(attributes) ? readFileSync(attributes, "utf8").split(/\r?\n/) : [];
+  const ownLines = lines.filter((l) => OWN_ATTRIBUTES.includes(l.trim()));
+  if (!files.length && !ownLines.length) return;
+  const found = [
+    files.length && `${files.length} tracked file(s) under .agents/`,
+    ownLines.length && ".gitattributes lines",
+  ]
+    .filter(Boolean)
+    .join(" and ");
+  throw new Error(
+    `this repository keeps ${BRAND} on the branch (${found}); \`${BRAND} init --private --migrate\` moves the comments into the git directory and stages the removal`,
+  );
+}
+
+/** The `.git/info/exclude` line for a harness's settings file, which `--hooks` writes into the worktree. */
+function excludeLine(harness: string): string {
+  return `/${adapterFor(harness).settingsFile}`;
+}
+
+/**
+ * Private mode's setup, all in the git common dir: the store, the filter attributes, and the
+ * excludes that keep adapter settings out of `git status`. With `migrate`, a tracked setup
+ * moves into the store and its removal is staged.
+ */
+function privateChanges(root: string, harnesses: string[], migrate: boolean): (Change | undefined)[] {
+  const common = commonDir(root);
+  const store = path.join(common, PRIVATE_STORE);
+  return [
+    existsSync(store) ? undefined : storeCreation(root, store),
+    migrate ? migrationChange(root, store, path.join(common, PRIVATE_SCAN_IGNORE)) : undefined,
+    migrate ? stagedGitattributesRemoval(root) : undefined,
+    linesChange(root, path.join(common, "info", "attributes"), FILTER_ATTRIBUTES, []),
+    linesChange(root, path.join(common, "info", "exclude"), harnesses.map((harness) => excludeLine(harness)), []),
+  ];
+}
+
+function storeCreation(root: string, store: string): Change {
+  return {
+    what: `${shownPath(root, store)}: create (sidecars live here)`,
+    apply: () => mkdirSync(store, { recursive: true }),
+  };
+}
+
+/**
+ * Copies the tracked sidecars and scan-ignore file into the store, as the worktree has them,
+ * and stages their removal.
+ */
+function migrationChange(root: string, store: string, scanIgnore: string): Change | undefined {
+  const tracked = trackedToolFiles(root);
+  const onDisk = toolFilesOnDisk(root);
+  if (!tracked.length && !onDisk.length) return undefined;
+  const prefix = `${SIDECAR_ROOT}/`;
+  return {
+    what: `${shownPath(root, store)}: move ${onDisk.length} file(s) here from .agents/, staging the removal of the ${tracked.length} tracked`,
+    apply: () => {
+      for (const file of onDisk) {
+        const target = file === SCAN_IGNORE ? scanIgnore : path.join(store, file.slice(prefix.length));
+        mkdirSync(path.dirname(target), { recursive: true });
+        writeFileSync(target, readFileSync(path.join(root, file)));
+      }
+      if (tracked.length)
+        git(["rm", "-q", "-f", "--ignore-unmatch", "--pathspec-from-file=-", "--pathspec-file-nul"], {
+          cwd: root,
+          input: tracked.join("\0") + "\0",
+        });
+      // What git rm left: the files sync wrote but no one committed, and the emptied folders.
+      rmSync(path.join(root, SIDECAR_ROOT), { recursive: true, force: true });
+      rmSync(path.join(root, SCAN_IGNORE), { force: true });
+      removeIfEmpty(path.join(root, path.posix.dirname(SIDECAR_ROOT)));
+    },
+  };
+}
+
+/** The tool's files in the worktree, committed or not: every sidecar on disk and the scan-ignore file. */
+function toolFilesOnDisk(root: string): string[] {
+  const sidecars = path.join(root, SIDECAR_ROOT);
+  const found = existsSync(sidecars)
+    ? readdirSync(sidecars, { recursive: true, withFileTypes: true })
+        .filter((entry) => entry.isFile())
+        .map((entry) => path.relative(root, path.join(entry.parentPath, entry.name)).split(path.sep).join("/"))
+    : [];
+  if (existsSync(path.join(root, SCAN_IGNORE))) found.push(SCAN_IGNORE);
+  return found;
+}
+
+function removeIfEmpty(dir: string): void {
+  if (existsSync(dir) && !readdirSync(dir).length) rmSync(dir, { recursive: true });
+}
+
+/** Removes the tool's lines from `.gitattributes` and stages the result, so the migration commits whole. */
+function stagedGitattributesRemoval(root: string): Change | undefined {
+  const change = gitattributesChange(root, [], OWN_ATTRIBUTES);
+  if (!change) return undefined;
+  return {
+    what: `${change.what}, staged`,
+    apply: () => {
+      change.apply();
+      stage(root, [".gitattributes"]);
+    },
+  };
 }
 
 /**
@@ -345,6 +505,13 @@ export function planInit(root: string, options: InitOptions = {}): Change[] {
   const installed = Object.keys(ADAPTERS).filter((h) => adapterInstalled(root, h));
   const hooks = [...new Set([...(options.hooks ?? []), ...installed])];
   const worktreeConfigOn = localConfig(root, "extensions.worktreeConfig") === "true";
+  // A repository already in private mode stays there, so the extension's plain `init` keeps it.
+  const privateMode = options.private === true || privateSidecarDir(root) !== undefined;
+  if (privateMode && options.agentsMd)
+    throw new Error(
+      `--agents-md writes AGENTS.md, which the branch would carry; in private mode, put the output of \`${BRAND} agents-md\` in an untracked instruction file`,
+    );
+  if (privateMode && !options.migrate) refuseTrackedSetup(root);
   const changes: (Change | undefined)[] = [
     // First: everything after it records the home's copy.
     options.command === undefined ? homeInstallChange(home) : undefined,
@@ -354,10 +521,13 @@ export function planInit(root: string, options: InitOptions = {}): Change[] {
       [WORKTREE_CONFIG_MARK]: worktreeConfigOn ? localConfig(root, WORKTREE_CONFIG_MARK) : "true",
       [`filter.${FILTER_DRIVER}.clean`]: `${command} clean %f`,
       [`filter.${FILTER_DRIVER}.process`]: options.oneShot ? undefined : `${command} filter-process`,
-      [`merge.${FILTER_DRIVER}.name`]: `${BRAND} sidecar merge`,
-      [`merge.${FILTER_DRIVER}.driver`]: `${command} merge-sidecar %O %A %B`,
+      // Private sidecars never meet a git merge; `fetch` merges them itself.
+      [`merge.${FILTER_DRIVER}.name`]: privateMode ? undefined : `${BRAND} sidecar merge`,
+      [`merge.${FILTER_DRIVER}.driver`]: privateMode ? undefined : `${command} merge-sidecar %O %A %B`,
     }),
-    attributesChange(root, attributeLines(), LEGACY_ATTRIBUTES),
+    ...(privateMode
+      ? privateChanges(root, hooks, options.migrate === true)
+      : [gitattributesChange(root, TRACKED_ATTRIBUTES, LEGACY_ATTRIBUTES)]),
     ...hookChanges(root, command),
     ...hooks.flatMap((h) =>
       adapterRoots(root, h).map((wt) => settingsChange(root, h, planAdapterInstall(wt, h, hookCommand), true)),
@@ -442,7 +612,13 @@ export function planUninstall(root: string): Change[] {
     }
   }
   if (localConfig(root, "extensions.worktreeConfig") === "true") changes.push(...worktreeConfigRemovals(root));
-  changes.push(attributesChange(root, [], [...attributeLines(), ...LEGACY_ATTRIBUTES]));
+  const common = commonDir(root);
+  const excludes = Object.keys(ADAPTERS).map((harness) => excludeLine(harness));
+  changes.push(
+    gitattributesChange(root, [], OWN_ATTRIBUTES),
+    linesChange(root, path.join(common, "info", "attributes"), [], FILTER_ATTRIBUTES),
+    linesChange(root, path.join(common, "info", "exclude"), [], excludes),
+  );
   for (const name of ["pre-commit", ...REFRESH_HOOKS]) changes.push(hookRemoval(root, name, configured));
   for (const harness of Object.keys(ADAPTERS)) {
     for (const wt of adapterRoots(root, harness))

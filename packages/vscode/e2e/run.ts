@@ -1,8 +1,8 @@
 // `npm run test:vscode`: downloads a VS Code build on first use and runs dist/e2e in it,
-// against a scratch repository copied from e2e/fixture and one for the scan review. Set
-// CAIRN_SCREENSHOTS=<dir> to also capture the overlay states (Windows only) for the
-// README. Set CAIRN_E2E_EXTENSION=<dir> to test an unpacked .vsix (its `extension/`
-// folder) instead of this package.
+// against a scratch repository copied from e2e/fixture, the same in private mode, and one for
+// the scan review. Set CAIRN_SCREENSHOTS=<dir> to also capture the overlay states (Windows
+// only) for the README. Set CAIRN_E2E_EXTENSION=<dir> to test an unpacked .vsix (its
+// `extension/` folder) instead of this package.
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -55,7 +55,7 @@ const writeReviewFiles = (repo: string) => {
 
 /** Runs one suite from dist/e2e/index.cjs in a VS Code window opened on `target`. */
 async function runSuite(
-  suite: "overlay" | "review",
+  suite: "overlay" | "review" | "private",
   target: ScratchRepo,
   env: Record<string, string> = {},
 ): Promise<void> {
@@ -99,7 +99,10 @@ try {
   scratch.push(overlay);
   const review = scratchRepo(writeReviewFiles);
   scratch.push(review);
+  const privateRepo = fixtureRepo({ private: true });
+  scratch.push(privateRepo);
   await runSuite("overlay", overlay);
+  await runSuite("private", privateRepo);
   await withoutNode(() => runSuite("review", review, { CAIRN_E2E_REPO: review.repo, CAIRN_E2E_NO_NODE: "1" }));
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));

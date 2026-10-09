@@ -184,6 +184,44 @@ Or use the action in this repository, which does the same:
 `uses: Pawls/cairn-comments@v0.1`. Pass `args: --stale` in a second step to fail on stale
 comments too.
 
+## Private mode: nothing on the branch
+
+For a team that wants no trace of the tool in the repository, choose **Private** when
+**Set Up** in VS Code asks where the comments go. Its **Share Comments**, **Get Shared
+Comments**, and **Make Comments Private** commands do the rest of this section without a
+terminal. From the CLI, set it up with `--private`:
+
+```sh
+cairn init --private                  # config, attributes, and sidecars all inside .git
+cairn worktree add ../agent -b agent
+```
+
+The sidecars live in `.git/cairn/comments/`, shared by every worktree of the clone, and the
+filter's attributes go in `.git/info/attributes`. The branch is byte for byte what it would
+be without Cairn Comments, so there is nothing to commit after `init`. Because no committed
+file changes when only a comment does, a commit never records a comment-only edit: the
+[agent hooks](#agent-setup) run `cairn sync` after every edit, and running it yourself does
+the same.
+
+Sharing is opt-in. The comments travel in their own ref, never on a branch:
+
+```sh
+cairn push           # commit the sidecars to refs/cairn/comments and push that ref to origin
+cairn fetch          # in another clone set up with --private: fetch and merge them
+```
+
+`fetch` merges entry by entry, as the sidecar merge driver does, then places the comments
+again in agent worktrees. It exits 1 when both sides changed the same comment's text,
+leaving conflict markers in that text. A clone that never fetches has no comments, and a
+`push` that would overwrite someone else's tells you to fetch first.
+
+A repository set up with tracked sidecars moves with `cairn init --private --migrate`: the
+sidecars go into `.git/cairn/comments/`, and their removal, along with Cairn Comments's
+lines in `.gitattributes`, is staged for you to commit. Plain `cairn init`, and **Set Up**
+in VS Code, keep a repository in private mode. `--agents-md` is refused there, since
+`AGENTS.md` is tracked; put the output of `cairn agents-md` in an untracked instruction
+file instead.
+
 ## Removing Cairn Comments
 
 ```sh
@@ -191,8 +229,8 @@ cairn promote --all      # optional: turn every AI comment back into an ordinary
 cairn uninstall          # undo init: config, hook, .gitattributes lines, harness hooks, AGENTS.md section
 ```
 
-`uninstall --dry-run` lists the changes first. Uninstalling leaves `.agents/comments/`
-alone; it is your data. Without `promote --all`, the comments stay there and out of the
+`uninstall --dry-run` lists the changes first. Uninstalling leaves `.agents/comments/` (in
+private mode, `.git/cairn/comments/`) alone; it is your data. Without `promote --all`, the comments stay there and out of the
 code. The CLI's own folder stays too, since other repositories may still use it; delete it
 once none does.
 
@@ -206,7 +244,8 @@ sidecar. An agent working in your checkout sees only the code and would have to 
 **What stays in the repository?** The code, with no trace of AI comments; the sidecars
 under `.agents/comments/`; `.agents/scan-ignore` if you have used `scan`; and a few lines in
 `.gitattributes`. The filter, merge driver, and git hooks live in your local git config
-and hooks directory, and harness hooks in the harness's settings file.
+and hooks directory, and harness hooks in the harness's settings file. In
+[private mode](#private-mode-nothing-on-the-branch), nothing at all.
 
 **What if a teammate does not install it?** Their checkout shows the plain code, and their
 commits skip the filter. A comment they write with the sigil, or a file they rename, is
@@ -216,9 +255,9 @@ caught by `check` in CI; running `cairn init` in their clone fixes it for good.
 for the sidecars: entries merge by id, and a body both branches changed gets conflict
 markers inside that body. A clone without `init` falls back to git's ordinary text merge.
 
-**Can I keep the comments out of the repository entirely?** Add `.agents/comments/` to
-`.gitignore`. The comments then stay on your machine, and the committed code is the same
-as before.
+**Can I keep the comments out of the repository entirely?** Yes: set it up in
+[private mode](#private-mode-nothing-on-the-branch). The comments stay in your clone's
+`.git` folder unless you `cairn push` them, and the branch carries nothing of the tool.
 
 **Which languages?** Python, TypeScript (including TSX), JavaScript, C#, Java, and Kotlin.
 A repository initialized before Kotlin support needs `cairn init` again to put `.kt` and
