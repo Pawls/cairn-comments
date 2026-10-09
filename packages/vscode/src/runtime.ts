@@ -31,6 +31,21 @@ function versionOf(runtime: string): Promise<string> {
   });
 }
 
+/** Whether `runtime` really runs as Node `MIN_NODE_MAJOR` or later, by what it prints for `--version`. */
+async function runsAsNode(runtime: string, version: (runtime: string) => Promise<string>): Promise<boolean> {
+  const major = runtimeMajor(await version(runtime));
+  return major !== undefined && major >= MIN_NODE_MAJOR;
+}
+
+/**
+ * The program the extension runs its CLI calls on: the editor's binary when it runs as Node
+ * `MIN_NODE_MAJOR` or later, else `node` from PATH. Run as the editor, a binary whose
+ * `RunAsNode` fuse is off would open a window instead of running the CLI.
+ */
+export async function cliRuntime(execPath = process.execPath, version = versionOf): Promise<string> {
+  return (await runsAsNode(execPath, version)) ? execPath : "node";
+}
+
 /**
  * Records the runtime this extension runs on in the CLI home, so the launcher git runs can
  * use it where PATH has no usable `node`. Recorded only when it really runs as Node
@@ -38,8 +53,7 @@ function versionOf(runtime: string): Promise<string> {
  * from PATH, as before the launcher had a fallback.
  */
 export async function recordEditorRuntime(home: string): Promise<void> {
-  const major = runtimeMajor(await versionOf(process.execPath));
-  if (major === undefined || major < MIN_NODE_MAJOR) return;
+  if (!(await runsAsNode(process.execPath, versionOf))) return;
   try {
     recordRuntime(home, process.execPath);
   } catch {

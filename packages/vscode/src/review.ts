@@ -1,8 +1,8 @@
 // Review model for the scan tree: no `vscode` import, so vitest covers it (test/review.test.ts).
 import { execFile } from "node:child_process";
 import path from "node:path";
-import { FILTER_DRIVER, cliHome } from "@cairn-comments/core";
-import { cliEnv } from "./runtime.js";
+import { FILTER_DRIVER, MIN_NODE_MAJOR, cliHome } from "@cairn-comments/core";
+import { cliEnv, cliRuntime } from "./runtime.js";
 
 /** One `scan --json` entry; the CLI owns the format (packages/cli/src/scan.ts). */
 export interface ReviewComment {
@@ -166,18 +166,26 @@ export function orphansOf(report: { problems: { kind: string }[] }): OrphanComme
     .map(({ source, id, scope, text }) => ({ source, id, scope, text }));
 }
 
+/** Chosen once per session: the check runs the editor's binary. */
+let runtime: Promise<string> | undefined;
+
 /**
  * Runs the CLI home's copy with `args` on this editor's own runtime, so it needs no `node`
- * on PATH and no shell, feeding `input` on stdin. An exit code in `okCodes` resolves with
- * stdout, for commands like `check` whose exit code is part of the answer.
+ * on PATH and no shell, feeding `input` on stdin; on `node` from PATH when the editor will
+ * not run as Node (`cliRuntime`). An exit code in `okCodes` resolves with stdout, for
+ * commands like `check` whose exit code is part of the answer.
  */
-export function runCli(args: string[], cwd: string, input?: string, okCodes: readonly number[] = [0]): Promise<string> {
+export async function runCli(args: string[], cwd: string, input?: string, okCodes: readonly number[] = [0]): Promise<string> {
+  runtime ??= cliRuntime();
+  const program = await runtime;
   const main = path.join(cliHome(), "main.js");
   return new Promise((resolve, reject) => {
     const options = { cwd, env: cliEnv(), encoding: "utf8" as const, maxBuffer: 1 << 28 };
-    const child = execFile(process.execPath, [main, ...args], options, (error, stdout, stderr) => {
+    const child = execFile(program, [main, ...args], options, (error, stdout, stderr) => {
       const code = typeof error?.code === "number" ? error.code : -1;
-      if (error && !okCodes.includes(code)) reject(new Error(stderr.trim() || error.message));
+      if (error?.code === "ENOENT")
+        reject(new Error(`this editor cannot run ${FILTER_DRIVER}'s CLI itself; install Node.js ${MIN_NODE_MAJOR} or later`));
+      else if (error && !okCodes.includes(code)) reject(new Error(stderr.trim() || error.message));
       else resolve(stdout);
     });
     child.stdin?.end(input ?? "");
