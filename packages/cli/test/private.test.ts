@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Sandbox } from "./harness.js";
 
@@ -106,6 +106,35 @@ describe.each([false, true])("private mode (autocrlf=%s)", (autocrlf) => {
       expect(existsSync(store("c.py.md"))).toBe(false);
       expect(box.cliResult(repo, "check").status).toBe(0);
       expect(box.status(repo)).toBe("");
+    } finally {
+      box.dispose();
+    }
+  });
+
+  it("scan --apply keeps the converted comments and the ignore list in the git dir", () => {
+    const box = new Sandbox({ autocrlf });
+    try {
+      const repo = box.path("repo");
+      box.git(box.dir, "init", "-q", "repo");
+      box.write(
+        box.path("repo", "app.py"),
+        "def load(path):\n    # Step 1: Read the file contents\n    data = open(path).read()\n    return data  # Updated to return the raw text\n",
+      );
+      box.git(repo, "add", "-A");
+      box.git(repo, "commit", "-qm", "base");
+      box.cli(repo, "init", "--private");
+      const comments = JSON.parse(box.cli(repo, "scan", "--json")).comments as { line: number; accept: boolean }[];
+      expect(comments.map((c) => c.line)).toEqual([2, 4]);
+      comments[1]!.accept = false;
+      const review = box.path("review.json");
+      writeFileSync(review, JSON.stringify({ version: 1, comments }));
+
+      expect(box.cli(repo, "scan", "--apply", review)).toBe(
+        "converted 1 comment(s) in 1 file(s)\nignored 1 comment(s) in .git/cairn/scan-ignore\n",
+      );
+      expect(readFileSync(box.path("repo", ".git", "cairn", "comments", "app.py.md"), "utf8")).toContain("Step 1");
+      expect(readFileSync(box.path("repo", ".git", "cairn", "scan-ignore"), "utf8")).toContain("app.py");
+      expect(box.git(repo, "status", "--porcelain", "-uall")).toBe(" M app.py\n");
     } finally {
       box.dispose();
     }
