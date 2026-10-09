@@ -204,6 +204,48 @@ describe.each([false, true])("private mode (autocrlf=%s)", (autocrlf) => {
     });
   });
 
+  it("refuses to push conflict markers that fetch left, until the comment is settled", () => {
+    const box = new Sandbox({ autocrlf });
+    try {
+      const owner = box.path("owner");
+      const mate = box.path("mate");
+      box.git(box.dir, "init", "-q", "--bare", "remote.git");
+      box.git(box.dir, "init", "-q", "owner");
+      box.cli(owner, "init", "--private");
+      box.write(`${owner}/a.py`, "def f():\n    #~ explains f\n    return 1\n");
+      box.git(owner, "add", "-A");
+      box.git(owner, "commit", "-qm", "base");
+      box.git(owner, "remote", "add", "origin", box.path("remote.git"));
+      box.git(owner, "push", "-q", "origin", "main");
+      box.cli(owner, "push");
+      box.git(box.dir, "clone", "-q", box.path("remote.git"), "mate");
+      box.cli(mate, "init", "--private");
+      box.cli(mate, "fetch");
+      const id = /^## ([0-9a-z]{4})$/m.exec(readFileSync(`${mate}/.git/cairn/comments/a.py.md`, "utf8"))![1];
+
+      // Both sides rewrite the same comment; sync records each, no commit needed.
+      box.write(`${mate}/a.py`, `def f():\n    #~${id} the mate's reading\n    return 1\n`);
+      box.cli(mate, "sync", "a.py");
+      box.cli(mate, "push");
+      box.write(`${owner}/a.py`, `def f():\n    #~${id} the owner's reading\n    return 1\n`);
+      box.cli(owner, "sync", "a.py");
+      const fetched = box.cliResult(owner, "fetch");
+      expect(fetched.status).toBe(1);
+      expect(fetched.stderr).toContain(`a.py:${id}`);
+
+      const pushed = box.cliResult(owner, "push");
+      expect(pushed.status).toBe(1);
+      expect(pushed.stderr).toContain("conflict markers");
+      expect(pushed.stderr).toContain("a.py");
+
+      box.write(`${owner}/a.py`, `def f():\n    #~${id} the settled reading\n    return 1\n`);
+      box.cli(owner, "sync", "a.py");
+      expect(box.cliResult(owner, "push").status).toBe(0);
+    } finally {
+      box.dispose();
+    }
+  });
+
   describe("init --private in a repository with tracked sidecars", () => {
     let box: Sandbox;
     let repo: string;
