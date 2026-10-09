@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -277,12 +277,13 @@ export function agentsSnippet(privateMode = false): string {
     const names = [...new Set(LANGUAGES.filter((l) => l.lineSigil === s).map((l) => l.name))];
     return `\`${s} text\` in ${inProse(names)}`;
   });
+  const destination = privateMode ? "the repository's git directory" : "`" + SIDECAR_ROOT + "/`";
   return [
     SNIPPET_BEGIN,
     "## AI comments",
     "",
     `Write the comments you add as sigil comments: ${byLanguages.join("; ")}. The space after the sigil matters.`,
-    `On commit, ${BRAND} moves them to ${privateMode ? "the repository's git directory" : `\`${SIDECAR_ROOT}/\``} and keeps them out of the committed code, so the owner's view stays clean while agents still read the comments inline.`,
+    `On commit, ${BRAND} moves them to ${destination} and keeps them out of the committed code, so the owner's view stays clean while agents still read the comments inline.`,
     "",
     "- A comment such as `#~a1b2 text` is already stored: edit its text freely, but keep the four-character id, and delete the whole comment to delete it.",
     "- Never put four letters or digits straight after the sigil (`#~todo`); that reads as an id.",
@@ -426,23 +427,45 @@ function storeCreation(root: string, store: string): Change {
  * and stages their removal.
  */
 function migrationChange(root: string, store: string, scanIgnore: string): Change | undefined {
-  const files = trackedToolFiles(root);
-  if (!files.length) return undefined;
+  const tracked = trackedToolFiles(root);
+  const onDisk = toolFilesOnDisk(root);
+  if (!tracked.length && !onDisk.length) return undefined;
   const prefix = `${SIDECAR_ROOT}/`;
   return {
-    what: `${shownPath(root, store)}: move ${files.length} tracked file(s) here from .agents/ and stage their removal`,
+    what: `${shownPath(root, store)}: move ${onDisk.length} file(s) here from .agents/, staging the removal of the ${tracked.length} tracked`,
     apply: () => {
-      for (const file of files) {
+      for (const file of onDisk) {
         const target = file === SCAN_IGNORE ? scanIgnore : path.join(store, file.slice(prefix.length));
         mkdirSync(path.dirname(target), { recursive: true });
         writeFileSync(target, readFileSync(path.join(root, file)));
       }
-      git(["rm", "-q", "-f", "--pathspec-from-file=-", "--pathspec-file-nul"], {
-        cwd: root,
-        input: files.join("\0") + "\0",
-      });
+      if (tracked.length)
+        git(["rm", "-q", "-f", "--ignore-unmatch", "--pathspec-from-file=-", "--pathspec-file-nul"], {
+          cwd: root,
+          input: tracked.join("\0") + "\0",
+        });
+      // What git rm left: the files sync wrote but no one committed, and the emptied folders.
+      rmSync(path.join(root, SIDECAR_ROOT), { recursive: true, force: true });
+      rmSync(path.join(root, SCAN_IGNORE), { force: true });
+      removeIfEmpty(path.join(root, path.posix.dirname(SIDECAR_ROOT)));
     },
   };
+}
+
+/** The tool's files in the worktree, committed or not: every sidecar on disk and the scan-ignore file. */
+function toolFilesOnDisk(root: string): string[] {
+  const sidecars = path.join(root, SIDECAR_ROOT);
+  const found = existsSync(sidecars)
+    ? readdirSync(sidecars, { recursive: true, withFileTypes: true })
+        .filter((entry) => entry.isFile())
+        .map((entry) => path.relative(root, path.join(entry.parentPath, entry.name)).split(path.sep).join("/"))
+    : [];
+  if (existsSync(path.join(root, SCAN_IGNORE))) found.push(SCAN_IGNORE);
+  return found;
+}
+
+function removeIfEmpty(dir: string): void {
+  if (existsSync(dir) && !readdirSync(dir).length) rmSync(dir, { recursive: true });
 }
 
 /** Removes the tool's lines from `.gitattributes` and stages the result, so the migration commits whole. */
@@ -580,10 +603,12 @@ export function planUninstall(root: string): Change[] {
     }
   }
   if (localConfig(root, "extensions.worktreeConfig") === "true") changes.push(...worktreeConfigRemovals(root));
-  changes.push(gitattributesChange(root, [], OWN_ATTRIBUTES));
   const common = commonDir(root);
-  changes.push(linesChange(root, path.join(common, "info", "attributes"), [], FILTER_ATTRIBUTES));
-  changes.push(linesChange(root, path.join(common, "info", "exclude"), [], Object.keys(ADAPTERS).map(excludeLine)));
+  changes.push(
+    gitattributesChange(root, [], OWN_ATTRIBUTES),
+    linesChange(root, path.join(common, "info", "attributes"), [], FILTER_ATTRIBUTES),
+    linesChange(root, path.join(common, "info", "exclude"), [], Object.keys(ADAPTERS).map(excludeLine)),
+  );
   for (const name of ["pre-commit", ...REFRESH_HOOKS]) changes.push(hookRemoval(root, name, configured));
   for (const harness of Object.keys(ADAPTERS)) {
     for (const wt of adapterRoots(root, harness))
