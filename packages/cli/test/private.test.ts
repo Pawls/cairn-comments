@@ -204,24 +204,31 @@ describe.each([false, true])("private mode (autocrlf=%s)", (autocrlf) => {
     });
   });
 
+  /** An owner who pushed one comment on `a.py` and a teammate's clone that fetched it; returns the comment's id. */
+  function sharedPair(box: Sandbox): { owner: string; mate: string; id: string } {
+    const owner = box.path("owner");
+    const mate = box.path("mate");
+    box.git(box.dir, "init", "-q", "--bare", "remote.git");
+    box.git(box.dir, "init", "-q", "owner");
+    box.cli(owner, "init", "--private");
+    box.write(`${owner}/a.py`, "def f():\n    #~ explains f\n    return 1\n");
+    box.git(owner, "add", "-A");
+    box.git(owner, "commit", "-qm", "base");
+    box.git(owner, "remote", "add", "origin", box.path("remote.git"));
+    box.git(owner, "push", "-q", "origin", "main");
+    box.cli(owner, "push");
+    box.git(box.dir, "clone", "-q", box.path("remote.git"), "mate");
+    box.cli(mate, "init", "--private");
+    box.cli(mate, "fetch");
+    const id = /^## ([0-9a-z]{4})$/m.exec(readFileSync(`${mate}/.git/cairn/comments/a.py.md`, "utf8"))?.[1];
+    if (!id) throw new Error("the teammate's fetch brought no comment");
+    return { owner, mate, id };
+  }
+
   it("refuses to push conflict markers that fetch left, until the comment is settled", () => {
     const box = new Sandbox({ autocrlf });
     try {
-      const owner = box.path("owner");
-      const mate = box.path("mate");
-      box.git(box.dir, "init", "-q", "--bare", "remote.git");
-      box.git(box.dir, "init", "-q", "owner");
-      box.cli(owner, "init", "--private");
-      box.write(`${owner}/a.py`, "def f():\n    #~ explains f\n    return 1\n");
-      box.git(owner, "add", "-A");
-      box.git(owner, "commit", "-qm", "base");
-      box.git(owner, "remote", "add", "origin", box.path("remote.git"));
-      box.git(owner, "push", "-q", "origin", "main");
-      box.cli(owner, "push");
-      box.git(box.dir, "clone", "-q", box.path("remote.git"), "mate");
-      box.cli(mate, "init", "--private");
-      box.cli(mate, "fetch");
-      const id = /^## ([0-9a-z]{4})$/m.exec(readFileSync(`${mate}/.git/cairn/comments/a.py.md`, "utf8"))![1];
+      const { owner, mate, id } = sharedPair(box);
 
       // Both sides rewrite the same comment; sync records each, no commit needed.
       box.write(`${mate}/a.py`, `def f():\n    #~${id} the mate's reading\n    return 1\n`);
@@ -241,6 +248,31 @@ describe.each([false, true])("private mode (autocrlf=%s)", (autocrlf) => {
       box.write(`${owner}/a.py`, `def f():\n    #~${id} the settled reading\n    return 1\n`);
       box.cli(owner, "sync", "a.py");
       expect(box.cliResult(owner, "push").status).toBe(0);
+    } finally {
+      box.dispose();
+    }
+  });
+
+  it("refuses to push conflict markers in a sidecar's preamble too", () => {
+    const box = new Sandbox({ autocrlf });
+    try {
+      const { owner, mate } = sharedPair(box);
+      // The text before a sidecar's first entry is kept and merged as a whole.
+      const withPreamble = (repo: string, text: string) => {
+        const file = `${repo}/.git/cairn/comments/a.py.md`;
+        writeFileSync(file, `${text}\n\n${readFileSync(file, "utf8")}`);
+      };
+      withPreamble(mate, "Notes on a.py, the mate's way.");
+      box.cli(mate, "push");
+      withPreamble(owner, "Notes on a.py, the owner's way.");
+      const fetched = box.cliResult(owner, "fetch");
+      expect(fetched.status).toBe(1);
+      expect(fetched.stderr).toContain("(preamble)");
+
+      const pushed = box.cliResult(owner, "push");
+      expect(pushed.status).toBe(1);
+      expect(pushed.stderr).toContain("conflict markers");
+      expect(pushed.stderr).toContain("a.py");
     } finally {
       box.dispose();
     }
