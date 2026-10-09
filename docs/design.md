@@ -39,7 +39,7 @@ Committed blob / owner checkout          Agent worktree (smudged)
 | Agent view | Real bytes on disk in agent worktrees | Agents touch files through Read, Grep, exact-string Edit, LSP, ast-grep, and shell. Virtualizing all of those per harness does not hold; an Edit whose `old_string` includes text that is not on disk fails. |
 | Anchoring | No markers in committed code; the sidecar records where each comment goes (§ Anchoring). Decided 2026-09-25; marker mode (a `#~a1b2` id left in the code) was removed on 2026-09-29. | The owner judged that id markers in committed code would stop serious developers from adopting the tool, overlay or not. The earlier reason to keep markers, that zero-trace anchoring meant fuzzy matching, no longer holds: placement is exact per declaration (§ Anchoring, "Rejected: scored fuzzy placement"). |
 | Pure pointer links (no filter) | Rejected | Every pointer costs tokens on every read, and using a comment costs an extra Read call plus the whole sidecar file. Strictly more tokens than inline whenever comments are used. |
-| Sidecar storage | Tracked markdown under `.agents/comments/`, mirroring source paths | Travels with clones, cloud agents, and PRs; human-readable. Users who want the comments kept on one machine can gitignore the folder; the committed code is the same either way. |
+| Sidecar storage | Tracked markdown under `.agents/comments/`, mirroring source paths; in private mode the same files in the git common dir, shared through their own ref (§ Private mode) | Travels with clones, cloud agents, and PRs; human-readable. Teams that want no trace of the tool on the branch use private mode; the committed code is the same either way. |
 | Human view | Virtual overlay in VS Code | Files on disk hold only the code. Each comment renders against the site placement reports: a CodeLens above its code line (a trailing one at the end of its line), and a native comment thread with provenance and actions (§ Overlay rendering). |
 | Detection | Sigil is the source of truth; harness hooks auto-tag unmarked comments an agent just wrote; a repeatable `scan` finds existing AI comments by heuristic tells, with a mark-all mode | Covers users who never write agent instructions. |
 | Implementation | TypeScript everywhere, `web-tree-sitter` for parsing | One codebase for the CLI, the git filter, the hook adapters, and the extension. |
@@ -802,6 +802,55 @@ heading and the second branch's `<!-- ... -->` metadata line read back as body t
   names an undefined driver (checked with git 2.55): concurrent appends and edits then
   conflict visibly instead of mangling. `.agents/scan-ignore` stays `merge=union`, since
   its lines are append-only.
+
+## Private mode
+
+`init --private` keeps every trace of the tool off the branch, for teams that want none.
+Built 2026-10-09; covered by `packages/cli/test/private.test.ts` and the `private` e2e
+suite.
+
+- **Where the sidecars live.** `<git common dir>/cairn/comments/`, the same markdown files
+  under the same source-relative paths. Every worktree of a clone shares the common dir, so
+  agent worktrees read and write one copy; seen records stay per worktree. The folder's
+  existence is the mode switch: `privateSidecarDir` (`packages/core/src/store.ts`) finds it
+  by reading `.git` (a folder, or a `gitdir:` pointer and its `commondir`) without starting
+  git, so the extension resolves it as cheaply as the CLI, which caches it per process.
+  The scan ignore list moves beside it, to `<git common dir>/cairn/scan-ignore`.
+- **What `init --private` writes.** The filter and hooks as usual, in local config and
+  `.git/hooks`; the filter attributes in `<common dir>/info/attributes`, which git reads
+  for every worktree; the adapters' settings files in `<common dir>/info/exclude`, so
+  `--hooks` leaves `git status` clean. No merge driver: private sidecars never meet a git
+  merge. `init` refuses while tracked sidecars, a tracked `.agents/scan-ignore`, or its own
+  `.gitattributes` lines exist; `--migrate` copies the files into the store, `git rm`s
+  them, and stages `.gitattributes` without the tool's lines. A repository in private mode
+  stays there when `init` runs again without the flag, so the extension's **Set Up** keeps
+  it. `--agents-md` is refused, since `AGENTS.md` is tracked.
+- **Commits record nothing of the tool.** The pre-commit hook's `sync --staged --add`
+  stages nothing in private mode, and `check --fix` edits the store without staging. A
+  comment-only edit cleans to the committed blob, so git has nothing to commit; only `sync`
+  (the agent hooks run it after each edit) records it.
+- **`check`** reads sources from the index as always, and sidecars from the store, which
+  has no index: the same problems and fixes as in tracked mode, keyed by the same logical
+  `.agents/comments/<source>.md` paths in its report.
+- **Sharing.** `refs/cairn/comments` holds commits of the store. `push [remote]` builds the
+  store's tree in a scratch index (`hash-object -w --no-filters`, `update-index
+  --index-info`, `write-tree`), commits it onto the ref with `commit-tree` when the tree
+  changed, moves the ref with `update-ref` guarded by its old value, and pushes the ref; a
+  rejected push says to fetch first. `fetch [remote]` fetches into
+  `refs/cairn/remotes/<remote>/comments`, commits the store, then fast-forwards (the store
+  is rewritten byte for byte from their tree) or merges each sidecar both sides changed
+  with `mergeSidecars` (`packages/core/src/merge.ts`, § Sidecar merges), committing the
+  result with both parents so the next push fast-forwards. Both sides changing one body
+  leaves conflict markers in it and exits 1. Every smudged worktree then runs `refresh`.
+  Nothing writes the ref during a commit, so git's own ref locks are never contended.
+- **The extension** finds a document's sidecar through the same resolver, recognizes a file
+  under `.git/cairn/comments/` as a sidecar, and adds a watcher on each workspace folder's
+  store at activation; a repository switched to private mode with the window open is
+  watched after a reload.
+- **Known gap: concurrent writes.** Two worktrees syncing the same sidecar at the same
+  moment can lose one side's entries, since each rewrites the whole file. Tracked mode
+  cannot, because each worktree has its own copy. Not seen in practice yet; if it is, add a
+  lock around sidecar writes in private mode.
 
 ## Packaging
 

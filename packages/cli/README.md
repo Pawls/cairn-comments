@@ -18,6 +18,10 @@ cairn init --hooks claude-code        # or codex, cursor: tag the comments agent
 cairn check                           # in CI: nothing committed wrong
 ```
 
+`cairn init --private` keeps the comments and every setting inside `.git` instead, so the
+branch carries nothing of the tool; `cairn push` and `cairn fetch` share them through their
+own ref with anyone who opts in.
+
 `cairn help` lists every command. The VS Code extension **Cairn Comments: Hide AI
 Comments** shows the stashed comments as an overlay. The project README has the full
 guide, including agent setup, cleaning up an existing repository, and how to remove the
