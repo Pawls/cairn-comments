@@ -20,7 +20,8 @@
     "test:vscode": "npm run build && npm run e2e -w packages/vscode",
     "test:native": "npm run build && npm run native -w packages/vscode",
     "bench": "npm run build && node scripts/bench.ts",
-    "replay": "npm run build && node scripts/replay-anchoring.ts"
+    "replay": "npm run build && node scripts/replay-anchoring.ts",
+    "benchmark": "npm run build && node scripts/benchmark/main.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
