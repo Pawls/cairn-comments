@@ -148,13 +148,16 @@ describe.each([false, true])("private mode (autocrlf=%s)", (autocrlf) => {
       expect(box.read(box.path("mate-agent", "a.py"))).toBe(box.read(box.path("owner-agent", "a.py")));
     });
 
-    it("merges comments both sides added, entry by entry", () => {
-      box.write(`${mate}/b.py`, "def h():\n    #~ mate's note\n    return 3\n");
-      box.git(mate, "commit", "-qam", "mate comments h");
+    it("merges comments both sides added to one file, entry by entry", () => {
+      // Each side changes code too: a comment-only edit cleans to the committed blob, so in
+      // private mode only `sync` records it, never a commit.
+      box.write(`${mate}/a.py`, "def f():\n    return 1\n\n\ndef g():\n    #~ mate's note\n    return 4\n");
+      box.write(`${mate}/b.py`, "def h():\n    #~ mate's other note\n    return 4\n");
+      box.git(mate, "commit", "-qam", "mate comments g and h");
       box.cli(mate, "push");
 
-      box.write(`${owner}/a.py`, "def f():\n    #~ explains f\n    return 1\n\n\ndef g():\n    #~ owner's note\n    return 2\n");
-      box.git(owner, "commit", "-qam", "owner comments g");
+      box.write(`${owner}/a.py`, "def f():\n    #~ explains f\n    return 1  #~ owner's note\n\n\ndef g():\n    return 5\n");
+      box.git(owner, "commit", "-qam", "owner comments f again");
       const rejected = box.cliResult(owner, "push");
       expect(rejected.status).toBe(1);
       expect(rejected.stderr).toContain("fetch");
@@ -162,7 +165,8 @@ describe.each([false, true])("private mode (autocrlf=%s)", (autocrlf) => {
       box.cli(owner, "fetch");
       expect(stored(owner, "a.py")).toContain("explains f");
       expect(stored(owner, "a.py")).toContain("owner's note");
-      expect(stored(owner, "b.py")).toContain("mate's note");
+      expect(stored(owner, "a.py")).toContain("mate's note");
+      expect(stored(owner, "b.py")).toContain("mate's other note");
       box.cli(owner, "push");
 
       box.cli(mate, "fetch");

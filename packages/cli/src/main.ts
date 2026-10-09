@@ -33,6 +33,7 @@ import { gitQuiet, repoRoot, smudges, toRepoPath } from "./git.js";
 import { runHook } from "./hook.js";
 import { agentsSnippet, planInit, planUninstall, runPlan } from "./init.js";
 import { serveFilterProcess } from "./process.js";
+import { fetchComments, pushComments } from "./share.js";
 import { applyReview, demote, formatApply, formatReview, markAll, parseReview, scan } from "./scan.js";
 import { tag, tagTargets } from "./tag.js";
 import { captureWrites, capturedWrites } from "./workfiles.js";
@@ -51,6 +52,11 @@ const USAGE = `usage: ${BRAND} <command>
                                 without changing
   uninstall [--dry-run]         undo init, adapters and AGENTS.md included; sidecars stay
   worktree add <git args...>    add a worktree whose checkout shows full comments
+  push [remote]                 in private mode, commit the sidecars to refs/${BRAND}/comments and
+                                push that ref (default remote: origin)
+  fetch [remote]                in private mode, fetch that ref and merge it into the sidecars,
+                                then place the comments again in agent worktrees; exits 1 when
+                                both sides changed a comment's text
   sync [--staged] [--add] [files...]
                                 record where each comment sits and its text in the sidecars,
                                 stamping ids onto new comments
@@ -392,6 +398,20 @@ async function runRefresh(): Promise<void> {
   await refreshFiles(root);
 }
 
+function runPush(args: string[]): void {
+  process.stdout.write(pushComments(repoRoot(), args[0] ?? "origin"));
+}
+
+async function runFetch(args: string[]): Promise<void> {
+  const report = await fetchComments(repoRoot(), args[0] ?? "origin");
+  process.stdout.write(report.summary);
+  if (!report.conflicts.length) return;
+  process.stderr.write(
+    `${BRAND}: both sides changed ${report.conflicts.join(", ")}; resolve the conflict markers in the body\n`,
+  );
+  process.exitCode = 1;
+}
+
 function runWorktree(args: string[]): void {
   if (args[0] !== "add") throw new Error("only `worktree add` is supported");
   console.log(`worktree ready: ${addWorktree(repoRoot(), args.slice(1))}`);
@@ -417,6 +437,8 @@ const COMMANDS = new Map<string, (args: string[]) => void | Promise<void>>([
   ["uninstall", runUninstall],
   ["merge-sidecar", runMergeSidecar],
   ["worktree", runWorktree],
+  ["push", runPush],
+  ["fetch", runFetch],
 ]);
 
 async function main(argv: string[]): Promise<void> {
