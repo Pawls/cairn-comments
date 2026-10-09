@@ -111,6 +111,66 @@ describe.each([false, true])("private mode (autocrlf=%s)", (autocrlf) => {
     }
   });
 
+  describe("push and fetch", () => {
+    let box: Sandbox;
+    let owner: string;
+    let mate: string;
+    const stored = (repo: string, file: string) => readFileSync(`${repo}/.git/cairn/comments/${file}.md`, "utf8");
+
+    beforeAll(() => {
+      box = new Sandbox({ autocrlf });
+      owner = box.path("owner");
+      mate = box.path("mate");
+      box.git(box.dir, "init", "-q", "--bare", "remote.git");
+      box.git(box.dir, "init", "-q", "owner");
+      box.cli(owner, "init", "--private");
+      box.write(`${owner}/a.py`, "def f():\n    #~ explains f\n    return 1\n\n\ndef g():\n    return 2\n");
+      box.write(`${owner}/b.py`, "def h():\n    return 3\n");
+      box.git(owner, "add", "-A");
+      box.git(owner, "commit", "-qm", "base");
+      box.git(owner, "remote", "add", "origin", box.path("remote.git"));
+      box.git(owner, "push", "-q", "origin", "main");
+    });
+    afterAll(() => box.dispose());
+
+    it("gives a fresh clone the owner's comments only after fetch", () => {
+      box.cli(owner, "push");
+      box.git(box.dir, "clone", "-q", box.path("remote.git"), "mate");
+      box.cli(mate, "init", "--private");
+      box.cli(mate, "worktree", "add", "../mate-before");
+      expect(box.read(box.path("mate-before", "a.py"))).not.toContain("explains f");
+
+      box.cli(mate, "fetch");
+      expect(stored(mate, "a.py")).toBe(stored(owner, "a.py"));
+      box.cli(owner, "worktree", "add", "../owner-agent");
+      box.cli(mate, "worktree", "add", "../mate-agent");
+      expect(box.read(box.path("mate-agent", "a.py"))).toContain("explains f");
+      expect(box.read(box.path("mate-agent", "a.py"))).toBe(box.read(box.path("owner-agent", "a.py")));
+    });
+
+    it("merges comments both sides added, entry by entry", () => {
+      box.write(`${mate}/b.py`, "def h():\n    #~ mate's note\n    return 3\n");
+      box.git(mate, "commit", "-qam", "mate comments h");
+      box.cli(mate, "push");
+
+      box.write(`${owner}/a.py`, "def f():\n    #~ explains f\n    return 1\n\n\ndef g():\n    #~ owner's note\n    return 2\n");
+      box.git(owner, "commit", "-qam", "owner comments g");
+      const rejected = box.cliResult(owner, "push");
+      expect(rejected.status).toBe(1);
+      expect(rejected.stderr).toContain("fetch");
+
+      box.cli(owner, "fetch");
+      expect(stored(owner, "a.py")).toContain("explains f");
+      expect(stored(owner, "a.py")).toContain("owner's note");
+      expect(stored(owner, "b.py")).toContain("mate's note");
+      box.cli(owner, "push");
+
+      box.cli(mate, "fetch");
+      expect(stored(mate, "a.py")).toBe(stored(owner, "a.py"));
+      expect(stored(mate, "b.py")).toBe(stored(owner, "b.py"));
+    });
+  });
+
   describe("init --private in a repository with tracked sidecars", () => {
     let box: Sandbox;
     let repo: string;
