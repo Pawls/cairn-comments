@@ -8,6 +8,7 @@ import {
   cliHome,
   demoteTarget,
   parseSidecar,
+  privateSidecarDir,
   serializeSidecar,
   type CommentSite,
   type Marker,
@@ -15,7 +16,7 @@ import {
 import { PlacedActions, type CommentRef } from "./actions.js";
 import { OverlayController, type Applied } from "./controller.js";
 import { registerLists, type ListsApi } from "./lists.js";
-import type { OverlayMode } from "./overlay.js";
+import { findSidecarRoot, type OverlayMode } from "./overlay.js";
 import { applyPrinted } from "./edits.js";
 import { CommentPaste } from "./paste.js";
 import { PlacedComment, SHOW_COMMENT, type PlacedView } from "./placed.js";
@@ -76,7 +77,7 @@ export function activate(context: vscode.ExtensionContext): TestApi {
   void recordEditorRuntime(cliHome());
   const overlay = new OverlayController(context, COMMANDS.toggle);
   const lists = registerLists(context, { stale: staleComments, orphans: orphanComments }, COMMANDS.edit);
-  const watcher = vscode.workspace.createFileSystemWatcher(`**/${SIDECAR_ROOT}/**/*.md`);
+  const watchers = sidecarWatchers();
   const sidecarChanged = (uri: vscode.Uri) => {
     overlay.sidecarChanged(uri);
     lists.scheduleRefresh();
@@ -93,10 +94,12 @@ export function activate(context: vscode.ExtensionContext): TestApi {
   const paste = createPaste(overlay, pasteSaves);
 
   context.subscriptions.push(
-    watcher,
-    watcher.onDidChange(sidecarChanged),
-    watcher.onDidCreate(sidecarChanged),
-    watcher.onDidDelete(sidecarChanged),
+    ...watchers.flatMap((watcher) => [
+      watcher,
+      watcher.onDidChange(sidecarChanged),
+      watcher.onDidCreate(sidecarChanged),
+      watcher.onDidDelete(sidecarChanged),
+    ]),
     pasteSaves,
     ...trackDocuments(overlay, new UndoSaves(), pasteSaves, sidecarChanged),
     ...registerCommentCommands(overlay, actions),
@@ -123,6 +126,27 @@ export function activate(context: vscode.ExtensionContext): TestApi {
 
 export function deactivate(): void {
   // Nothing to release: activate registers every disposable on context.subscriptions.
+}
+
+/**
+ * Watchers for every sidecar the workspace can see: tracked ones under any folder, and the
+ * private store of each folder's repository, which sits in the git dir outside the glob's
+ * reach. A repository switched to private mode while the window is open is watched after a
+ * reload.
+ */
+function sidecarWatchers(): vscode.FileSystemWatcher[] {
+  const stores = new Set<string>();
+  for (const folder of vscode.workspace.workspaceFolders ?? []) {
+    const root = findSidecarRoot(folder.uri.fsPath, folder.uri.fsPath);
+    const store = privateSidecarDir(root);
+    if (store) stores.add(store);
+  }
+  return [
+    vscode.workspace.createFileSystemWatcher(`**/${SIDECAR_ROOT}/**/*.md`),
+    ...[...stores].map((store) =>
+      vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(store), "**/*.md")),
+    ),
+  ];
 }
 
 function firstFolder(): string | undefined {

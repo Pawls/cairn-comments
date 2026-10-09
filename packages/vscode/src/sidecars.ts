@@ -3,11 +3,13 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import * as vscode from "vscode";
 import {
+  PRIVATE_STORE,
   SIDECAR_ROOT,
   findMarkers,
   languageForPath,
   parseSidecar,
-  sidecarPathFor,
+  sidecarDir,
+  sidecarFileIn,
   type Marker,
   type Sidecar,
   type SidecarEntry,
@@ -45,11 +47,14 @@ export function locate(document: vscode.TextDocument): Located | undefined {
   const folder = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath ?? path.dirname(document.fileName);
   const root = findSidecarRoot(path.dirname(document.fileName), folder);
   const file = path.relative(root, document.fileName).split(path.sep).join("/");
-  return { root, file, sidecar: path.join(root, sidecarPathFor(file)) };
+  return { root, file, sidecar: sidecarFileIn(sidecarDir(root), file) };
 }
 
+/** A tracked sidecar, or one in a private store under a `.git` folder (design.md § Private mode). */
 export function isSidecar(document: vscode.TextDocument): boolean {
-  return document.uri.scheme === "file" && document.fileName.split(path.sep).join("/").includes(`/${SIDECAR_ROOT}/`);
+  if (document.uri.scheme !== "file") return false;
+  const file = document.fileName.split(path.sep).join("/");
+  return file.includes(`/${SIDECAR_ROOT}/`) || file.includes(`/.git/${PRIVATE_STORE}/`);
 }
 
 /** The sigil comments a document shows inline: an agent worktree's, or a file after `expand`. */

@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import * as vscode from "vscode";
-import { BRAND, BRAND_TITLE, SCAN_IGNORE, SIDECAR_ROOT } from "@cairn-comments/core";
+import { BRAND, BRAND_TITLE, SCAN_IGNORE, SIDECAR_ROOT, privateSidecarDir } from "@cairn-comments/core";
 import { applyPrinted, saveOpen } from "./edits.js";
 import { runInit } from "./setup.js";
 import { ReviewModel, findRepo, runCli, type Decision, type Repo, type ReviewComment, type ReviewFile, type ReviewItem } from "./review.js";
@@ -175,7 +175,8 @@ class ReviewTree implements vscode.TreeDataProvider<Node>, vscode.Disposable {
   /** Runs the scan in `root` and loads its candidates. */
   private async load(root: string, options: { keepSkipped?: boolean }): Promise<void> {
     // The extension activates on this folder (package.json), and `init` does not create it.
-    mkdirSync(path.join(root, SIDECAR_ROOT), { recursive: true });
+    // A private repository keeps nothing of the tool's in the worktree.
+    if (!privateSidecarDir(root)) mkdirSync(path.join(root, SIDECAR_ROOT), { recursive: true });
     this.setMessage(`Scanning ${path.basename(root)}…`);
     this.refresh();
     const output = await vscode.window.withProgress({ location: { viewId: REVIEW_VIEW } }, () => runCli(["scan", "--json"], root));
