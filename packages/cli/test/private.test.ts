@@ -226,11 +226,19 @@ describe.each([false, true])("private mode (autocrlf=%s)", (autocrlf) => {
       expect(existsSync(box.path("repo", ".git", "cairn", "comments"))).toBe(false);
     });
 
-    it("moves the sidecars into the store with --migrate", () => {
+    it("moves the sidecars into the store with --migrate, the ones not committed yet included", () => {
+      box.write(box.path("repo", "b.py"), "def g():\n    #~ explains g\n    return 2\n");
+      box.git(repo, "add", "b.py");
+      box.git(repo, "commit", "-qm", "b, its sidecar left out", "--no-verify");
+      box.cli(repo, "sync", "b.py");
+      expect(box.git(repo, "status", "--porcelain")).toBe("?? .agents/comments/b.py.md\n");
+
       box.cli(repo, "init", "--private", "--migrate");
       expect(readFileSync(box.path("repo", ".git", "cairn", "comments", "a.py.md"), "utf8")).toContain("explains f");
+      expect(readFileSync(box.path("repo", ".git", "cairn", "comments", "b.py.md"), "utf8")).toContain("explains g");
+      expect(existsSync(box.path("repo", ".agents"))).toBe(false);
       box.git(repo, "commit", "-qm", "comments leave the branch");
-      expect(box.git(repo, "ls-tree", "-r", "--name-only", "HEAD").trim()).toBe("a.py");
+      expect(box.git(repo, "ls-tree", "-r", "--name-only", "HEAD").trim()).toBe("a.py\nb.py");
       expect(box.status(repo)).toBe("");
 
       box.cli(repo, "worktree", "add", "../agent");
