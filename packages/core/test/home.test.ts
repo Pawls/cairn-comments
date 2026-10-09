@@ -140,6 +140,14 @@ describe("installCli", () => {
     expect(() => installCli(source, home)).toThrow(/version\.json/);
   });
 
+  it("puts back a missing launcher even when the installed copy is current", () => {
+    const source = bundle("a", "0.1.0", 1);
+    installCli(source, home);
+    rmSync(path.join(home, LAUNCHER));
+    expect(installCli(source, home).installed).toBe(false);
+    expect(readFileSync(path.join(home, LAUNCHER), "utf8")).toMatch(/^#!\/bin\/sh\n/);
+  });
+
   it("installs an executable sh launcher beside main.js", () => {
     installCli(bundle("a", "0.1.0", 1), home);
     const launcher = path.join(home, LAUNCHER);

@@ -11,7 +11,9 @@ import {
   SIDECAR_ROOT,
   cliHome,
   homeCommand,
+  LAUNCHER,
   installCli,
+  launcherMissing,
   nodeCommand,
   pendingInstall,
   privateSidecarDir,
@@ -40,18 +42,22 @@ const REFRESH_HOOKS = ["post-checkout", "post-merge", "post-commit", "post-rewri
 const WORKTREE_CONFIG_MARK = `filter.${FILTER_DRIVER}.worktreeConfigByInit`;
 
 /**
- * Installs this bundle into the CLI home when it is newer than the copy there. `init`
+ * Installs this bundle into the CLI home when it is newer than the copy there, or puts
+ * back the launcher when it is missing (repair offers itself then). `init`
  * records the home's copy, never this one, which npx or an extension update may delete
  * (design.md § Packaging).
  */
 function homeInstallChange(home: string): Change | undefined {
   const source = path.dirname(fileURLToPath(import.meta.url));
   const incoming = pendingInstall(source, home);
-  if (!incoming) return undefined;
-  return {
-    what: `${home}: install ${incoming.version} (build ${incoming.build})`,
-    apply: () => installCli(source, home),
-  };
+  if (incoming)
+    return {
+      what: `${home}: install ${incoming.version} (build ${incoming.build})`,
+      apply: () => installCli(source, home),
+    };
+  if (launcherMissing(home))
+    return { what: `${home}: restore the ${LAUNCHER} launcher`, apply: () => installCli(source, home) };
+  return undefined;
 }
 
 /** The CLI invocation `init` recorded, recovered from the clean filter's config. */
