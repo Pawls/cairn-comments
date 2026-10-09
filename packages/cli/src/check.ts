@@ -110,7 +110,7 @@ function sidecarsToCheck(
 
 /** The sidecar paths of every source with a sidecar: tracked ones, or the private store's. */
 function withSidecars(root: string, tracked: string[]): string[] {
-  return isPrivate(root) ? sidecarSources(root).map(sidecarPathFor) : tracked.filter(isSidecarPath);
+  return isPrivate(root) ? sidecarSources(root).map((source) => sidecarPathFor(source)) : tracked.filter(isSidecarPath);
 }
 
 /** Without `--fix`, a sidecar `--fix` would move or remove is reported, with what the fix would do. */

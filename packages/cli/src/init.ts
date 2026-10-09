@@ -1,4 +1,13 @@
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -411,7 +420,7 @@ function privateChanges(root: string, harnesses: string[], migrate: boolean): (C
     migrate ? migrationChange(root, store, path.join(common, PRIVATE_SCAN_IGNORE)) : undefined,
     migrate ? stagedGitattributesRemoval(root) : undefined,
     linesChange(root, path.join(common, "info", "attributes"), FILTER_ATTRIBUTES, []),
-    linesChange(root, path.join(common, "info", "exclude"), harnesses.map(excludeLine), []),
+    linesChange(root, path.join(common, "info", "exclude"), harnesses.map((harness) => excludeLine(harness)), []),
   ];
 }
 
@@ -604,10 +613,11 @@ export function planUninstall(root: string): Change[] {
   }
   if (localConfig(root, "extensions.worktreeConfig") === "true") changes.push(...worktreeConfigRemovals(root));
   const common = commonDir(root);
+  const excludes = Object.keys(ADAPTERS).map((harness) => excludeLine(harness));
   changes.push(
     gitattributesChange(root, [], OWN_ATTRIBUTES),
     linesChange(root, path.join(common, "info", "attributes"), [], FILTER_ATTRIBUTES),
-    linesChange(root, path.join(common, "info", "exclude"), [], Object.keys(ADAPTERS).map(excludeLine)),
+    linesChange(root, path.join(common, "info", "exclude"), [], excludes),
   );
   for (const name of ["pre-commit", ...REFRESH_HOOKS]) changes.push(hookRemoval(root, name, configured));
   for (const harness of Object.keys(ADAPTERS)) {

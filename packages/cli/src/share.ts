@@ -123,7 +123,7 @@ export async function fetchComments(root: string, remote: string): Promise<Fetch
     recordStore(root, store, theirs);
     report = { summary: `merged the comments from ${remote}\n`, conflicts };
   }
-  for (const worktree of worktreeRoots(root).filter(smudges)) await refreshFiles(worktree);
+  for (const worktree of worktreeRoots(root).filter((worktree) => smudges(worktree))) await refreshFiles(worktree);
   return report;
 }
 
