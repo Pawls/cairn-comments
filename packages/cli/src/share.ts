@@ -1,9 +1,9 @@
 // Sharing a private store (design.md § Private mode): `refs/<brand>/comments` holds commits of
 // the store's files, made with plumbing so neither the index nor a branch is ever touched.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { BRAND, mergeSidecars, parseSidecar, privateSidecarDir } from "@cairn-comments/core";
+import { BRAND, hasConflictMarkers, mergeSidecars, parseSidecar, privateSidecarDir } from "@cairn-comments/core";
 import { refreshFiles, sidecarSources, writeSidecar } from "./files.js";
 import { git, gitQuiet, indexBlobs, smudges, worktreeRoots } from "./git.js";
 
@@ -75,9 +75,30 @@ function recordStore(root: string, store: string, merged?: string): string | und
   return commit;
 }
 
-/** Commits the store and pushes the comments ref to `remote`. Returns the report line. */
+/** `<source>:<id>` for each stored comment whose body still holds the conflict markers a fetch left. */
+function unresolvedConflicts(root: string, store: string): string[] {
+  const found: string[] = [];
+  for (const source of sidecarSources(root)) {
+    const sidecar = parseSidecar(readFileSync(path.join(store, `${source}.md`), "utf8"));
+    for (const entry of sidecar.entries) {
+      if (hasConflictMarkers(entry.body)) found.push(`${source}:${entry.id}`);
+    }
+  }
+  return found;
+}
+
+/**
+ * Commits the store and pushes the comments ref to `remote`. Returns the report line.
+ * Refuses while a fetch's conflict markers remain, so they never reach anyone else.
+ */
 export function pushComments(root: string, remote: string): string {
-  const commit = recordStore(root, storeOf(root));
+  const store = storeOf(root);
+  const conflicts = unresolvedConflicts(root, store);
+  if (conflicts.length)
+    throw new Error(
+      `resolve the conflict markers in ${conflicts.join(", ")} first: rewrite each comment as it should read, and sync`,
+    );
+  const commit = recordStore(root, store);
   if (!commit) return "nothing to push: there are no comments yet\n";
   const pushed = spawnSync("git", ["push", "-q", remote, `${COMMENTS_REF}:${COMMENTS_REF}`], {
     cwd: root,

@@ -11,20 +11,32 @@ export const PRIVATE_STORE = `${BRAND}/comments`;
 /** The private scan-ignore file, relative to the git common dir. */
 export const PRIVATE_SCAN_IGNORE = `${BRAND}/scan-ignore`;
 
+/**
+ * Whether a failed stat or read means the path is simply not there. Anything else (a denied
+ * permission, a symlink loop) is rethrown: reading it as "no private store" would send
+ * private comments to the branch.
+ */
+function isAbsent(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "ENOENT" || code === "ENOTDIR";
+}
+
 function isDirectory(dir: string): boolean {
   try {
     return statSync(dir).isDirectory();
-  } catch {
-    return false;
+  } catch (error) {
+    if (isAbsent(error)) return false;
+    throw error;
   }
 }
 
-/** Contents of a file, or undefined when it cannot be read. */
+/** Contents of a file, or undefined when it does not exist. */
 function readText(file: string): string | undefined {
   try {
     return readFileSync(file, "utf8");
-  } catch {
-    return undefined;
+  } catch (error) {
+    if (isAbsent(error)) return undefined;
+    throw error;
   }
 }
 

@@ -814,7 +814,10 @@ suite.
   agent worktrees read and write one copy; seen records stay per worktree. The folder's
   existence is the mode switch: `privateSidecarDir` (`packages/core/src/store.ts`) finds it
   by reading `.git` (a folder, or a `gitdir:` pointer and its `commondir`) without starting
-  git, so the extension resolves it as cheaply as the CLI, which caches it per process.
+  git, so the extension resolves it as cheaply as the CLI, which caches it per process. Only
+  "not there" counts as absent: any other error checking for the folder (a denied
+  permission, a symlink loop) is thrown, since falling back would put private comments on
+  the branch.
   The scan ignore list moves beside it, to `<git common dir>/cairn/scan-ignore`.
 - **What `init --private` writes.** The filter and hooks as usual, in local config and
   `.git/hooks`; the filter attributes in `<common dir>/info/attributes`, which git reads
@@ -843,7 +846,9 @@ suite.
   is rewritten byte for byte from their tree) or merges each sidecar both sides changed
   with `mergeSidecars` (`packages/core/src/merge.ts`, § Sidecar merges), committing the
   result with both parents so the next push fast-forwards. Both sides changing one body
-  leaves conflict markers in it and exits 1. Every smudged worktree then runs `refresh`.
+  leaves conflict markers in it and exits 1, and `push` refuses until no stored body holds
+  them (rewriting the comment and running `sync` settles it). Every smudged worktree then
+  runs `refresh`.
   Nothing writes the ref during a commit, so git's own ref locks are never contended.
 - **The extension** finds a document's sidecar through the same resolver, recognizes a file
   under `.git/cairn/comments/` as a sidecar, and watches each private store it learns of
