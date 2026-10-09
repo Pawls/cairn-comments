@@ -50,6 +50,7 @@ export {
   type SidecarEntry,
 } from "./sidecar.js";
 export {
+  PRIVATE_SCAN_IGNORE,
   PRIVATE_STORE,
   commonGitDir,
   privateSidecarDir,

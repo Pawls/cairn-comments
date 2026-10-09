@@ -9,7 +9,7 @@ import { BRAND, SCAN_IGNORE, SIDECAR_ROOT } from "./brand.js";
 export const PRIVATE_STORE = `${BRAND}/comments`;
 
 /** The private scan-ignore file, relative to the git common dir. */
-const PRIVATE_SCAN_IGNORE = `${BRAND}/scan-ignore`;
+export const PRIVATE_SCAN_IGNORE = `${BRAND}/scan-ignore`;
 
 function isDirectory(dir: string): boolean {
   try {

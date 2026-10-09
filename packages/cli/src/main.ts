@@ -1,7 +1,16 @@
 #!/usr/bin/env node
 import { readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { parseArgs } from "node:util";
-import { BRAND, SIDECAR_ROOT, STALE_TAG, mergeSidecars, parseSidecar, serializeSidecar } from "@cairn-comments/core";
+import {
+  BRAND,
+  SIDECAR_ROOT,
+  STALE_TAG,
+  mergeSidecars,
+  parseSidecar,
+  privateSidecarDir,
+  serializeSidecar,
+} from "@cairn-comments/core";
 import { check, formatCheck } from "./check.js";
 import {
   collapseFiles,
@@ -9,16 +18,18 @@ import {
   expandFiles,
   filterContent,
   filterMode,
+  isPrivate,
   refreshFiles,
   promotableIds,
   promoteIds,
   readSidecar,
   selectFiles,
+  sidecarSources,
   staleIn,
   syncFiles,
 } from "./files.js";
 import { ADAPTERS } from "./adapters.js";
-import { repoRoot, smudges, toRepoPath, trackedFiles } from "./git.js";
+import { gitQuiet, repoRoot, smudges, toRepoPath } from "./git.js";
 import { runHook } from "./hook.js";
 import { agentsSnippet, planInit, planUninstall, runPlan } from "./init.js";
 import { serveFilterProcess } from "./process.js";
@@ -29,12 +40,15 @@ import { addWorktree } from "./worktree.js";
 
 const USAGE = `usage: ${BRAND} <command>
 
-  init [--command <cli>] [--one-shot] [--hooks <harness,...>] [--agents-md] [--dry-run]
-                                configure the filter, merge driver, .gitattributes, and pre-commit
-                                hook, printing each change; --one-shot runs a process per file
-                                instead of one per git command; --hooks installs post-edit adapters
-                                (${Object.keys(ADAPTERS).join(", ")}); --agents-md writes the sigil
-                                convention into AGENTS.md; --dry-run prints without changing
+  init [--private [--migrate]] [--command <cli>] [--one-shot] [--hooks <harness,...>] [--agents-md]
+       [--dry-run]              configure the filter, merge driver, .gitattributes, and pre-commit
+                                hook, printing each change; --private keeps the sidecars and all
+                                config in the git directory, so the branch carries nothing of
+                                ${BRAND}, and --migrate moves tracked sidecars there; --one-shot runs
+                                a process per file instead of one per git command; --hooks installs
+                                post-edit adapters (${Object.keys(ADAPTERS).join(", ")}); --agents-md
+                                writes the sigil convention into AGENTS.md; --dry-run prints
+                                without changing
   uninstall [--dry-run]         undo init, adapters and AGENTS.md included; sidecars stay
   worktree add <git args...>    add a worktree whose checkout shows full comments
   sync [--staged] [--add] [files...]
@@ -310,7 +324,8 @@ async function runHookCommand(args: string[]): Promise<void> {
 }
 
 function runAgentsMd(): void {
-  process.stdout.write(agentsSnippet());
+  const root = gitQuiet(["rev-parse", "--show-toplevel"], process.cwd())?.trim();
+  process.stdout.write(agentsSnippet(root !== undefined && isPrivate(root)));
 }
 
 function runInit(args: string[]): void {
@@ -322,13 +337,23 @@ function runInit(args: string[]): void {
       hooks: { type: "string" },
       "agents-md": { type: "boolean", default: false },
       "dry-run": { type: "boolean", default: false },
+      private: { type: "boolean", default: false },
+      migrate: { type: "boolean", default: false },
     },
   });
+  if (values.migrate && !values.private) throw new Error("--migrate moves tracked sidecars only together with --private");
   const hooks = values.hooks
     ?.split(",")
     .map((h) => h.trim())
     .filter(Boolean);
-  const options = { command: values.command, oneShot: values["one-shot"], hooks, agentsMd: values["agents-md"] };
+  const options = {
+    command: values.command,
+    oneShot: values["one-shot"],
+    hooks,
+    agentsMd: values["agents-md"],
+    private: values.private,
+    migrate: values.migrate,
+  };
   for (const line of runPlan(planInit(repoRoot(), options), values["dry-run"])) console.log(line);
 }
 
@@ -336,10 +361,12 @@ function runUninstall(args: string[]): void {
   const { values } = parseArgs({ args, options: { "dry-run": { type: "boolean", default: false } } });
   const root = repoRoot();
   for (const line of runPlan(planUninstall(root), values["dry-run"])) console.log(line);
-  const kept = trackedFiles(root).filter((f) => f.startsWith(`${SIDECAR_ROOT}/`)).length;
+  const kept = sidecarSources(root).length;
   if (kept) {
+    const store = privateSidecarDir(root);
+    const where = store ? path.relative(root, store).split(path.sep).join("/") : SIDECAR_ROOT;
     console.log(
-      `note: ${kept} sidecar file(s) under ${SIDECAR_ROOT}/ stay; ` +
+      `note: ${kept} sidecar file(s) under ${where}/ stay; ` +
         `\`${BRAND} promote --all\` before uninstalling turns them into ordinary comments`,
     );
   }
