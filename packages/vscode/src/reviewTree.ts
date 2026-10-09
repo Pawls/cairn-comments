@@ -138,7 +138,7 @@ class ReviewTree implements vscode.TreeDataProvider<Node>, vscode.Disposable {
       // The setup welcome takes the view's place.
       this.setMessage(undefined);
     } else {
-      await this.load(this.repo.root, this.repo.cli, options);
+      await this.load(this.repo.root, options);
     }
     this.refresh();
   }
@@ -149,7 +149,7 @@ class ReviewTree implements vscode.TreeDataProvider<Node>, vscode.Disposable {
     const root = this.repo.root;
     await saveOpen(review.comments.map((c) => path.join(root, c.file)));
     // The extension writes the rewrite itself, as one edit Ctrl+Z reverts in every file.
-    const report = await applyPrinted(root, await runCli(this.repo.cli, "scan --apply - --print", root, JSON.stringify(review)));
+    const report = await applyPrinted(root, await runCli(["scan", "--apply", "-", "--print"], root, JSON.stringify(review)));
     await this.scan({ keepSkipped: true });
     return report;
   }
@@ -173,12 +173,12 @@ class ReviewTree implements vscode.TreeDataProvider<Node>, vscode.Disposable {
   }
 
   /** Runs the scan in `root` and loads its candidates. */
-  private async load(root: string, cli: string, options: { keepSkipped?: boolean }): Promise<void> {
+  private async load(root: string, options: { keepSkipped?: boolean }): Promise<void> {
     // The extension activates on this folder (package.json), and `init` does not create it.
     mkdirSync(path.join(root, SIDECAR_ROOT), { recursive: true });
     this.setMessage(`Scanning ${path.basename(root)}…`);
     this.refresh();
-    const output = await vscode.window.withProgress({ location: { viewId: REVIEW_VIEW } }, () => runCli(cli, "scan --json", root));
+    const output = await vscode.window.withProgress({ location: { viewId: REVIEW_VIEW } }, () => runCli(["scan", "--json"], root));
     const review = JSON.parse(output) as { comments: ReviewComment[] };
     this.model.load(review.comments, options);
     this.loaded = true;

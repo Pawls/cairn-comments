@@ -73,7 +73,21 @@ export class Sandbox {
 
   /** Runs git without throwing, for scenarios where git is expected to report a failure. */
   gitResult(cwd: string, ...args: string[]): RunResult {
-    const { status, stdout, stderr } = spawnSync("git", args, { cwd, env: this.env, encoding: "utf8" });
+    return this.gitWithEnv({}, cwd, ...args);
+  }
+
+  /**
+   * `gitResult` with variables changed for this one run; `PATH` replaces the search path
+   * whatever its spelling (`Path` on Windows), and `undefined` removes a variable.
+   */
+  gitWithEnv(changes: NodeJS.ProcessEnv, cwd: string, ...args: string[]): RunResult {
+    const env = { ...this.env };
+    for (const [key, value] of Object.entries(changes)) {
+      const existing = key === "PATH" ? Object.keys(env).filter((k) => k.toUpperCase() === "PATH") : [key];
+      for (const k of existing) delete env[k];
+      if (value !== undefined) env[key] = value;
+    }
+    const { status, stdout, stderr } = spawnSync("git", args, { cwd, env, encoding: "utf8" });
     return { status, stdout, stderr };
   }
 

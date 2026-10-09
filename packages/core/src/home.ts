@@ -8,6 +8,17 @@ import { BRAND } from "./brand.js";
 /** Overrides the home; the test harnesses set it so a test never touches the real one. */
 export const CLI_HOME_ENV = `${BRAND.toUpperCase()}_CLI_HOME`;
 
+/** The oldest Node major the CLI supports; the home's main.js refuses an older one. */
+export const MIN_NODE_MAJOR = 22;
+/** The name of the sh script in the home that git runs; it picks the runtime for the home's main.js. */
+export { BRAND as LAUNCHER } from "./brand.js";
+/** Where the extension records its editor's runtime, the launcher's fallback when PATH has no usable `node`. */
+export const RUNTIME_FILE = "runtime";
+/** Set by the launcher while it tries `node` from PATH; main.js then reports a too-old Node with `OLD_NODE_EXIT`. */
+export const LAUNCHER_ENV = `${BRAND.toUpperCase()}_LAUNCHER`;
+/** The home's main.js exits with this, before reading stdin, to send the launcher on to the recorded runtime. */
+export const OLD_NODE_EXIT = 85;
+
 const VERSION_FILE = "version.json";
 /** What a bundle carries besides its version file. */
 const BUNDLE_FILES = ["main.js", "web-tree-sitter.wasm", "grammars"];
@@ -30,9 +41,94 @@ function dataFolder(env: NodeJS.ProcessEnv, platform: NodeJS.Platform, homedir: 
   return env.XDG_DATA_HOME ?? path.join(homedir, ".local", "share");
 }
 
-/** How git and the hooks invoke the home's CLI: by absolute path, so nothing depends on PATH. */
+const forwardSlashes = (file: string) => file.split(path.sep).join("/");
+/** The launcher in `home`; `LAUNCHER` re-exports its name. */
+const launcherPath = (home: string) => path.join(home, BRAND);
+
+/** How git and the hooks invoke the home's CLI: the launcher by absolute path, so finding a runtime is its job. */
 export function homeCommand(home: string): string {
-  return `node "${path.join(home, "main.js").split(path.sep).join("/")}"`;
+  return `"${forwardSlashes(launcherPath(home))}"`;
+}
+
+/** The home's main.js run by the `node` on PATH, for shells that cannot start the sh launcher (PowerShell, cmd). */
+export function nodeCommand(home: string): string {
+  return `node "${forwardSlashes(path.join(home, "main.js"))}"`;
+}
+
+/**
+ * The launcher: `node` from PATH first, then the runtime the extension recorded, run as Node
+ * (design.md § Packaging, "Running without Node"). Plain sh, because git runs it through
+ * sh on every platform. `command -v`, `read`, and `[` are builtins, so the only processes
+ * it starts are the runtimes it tries.
+ */
+function launcherScript(): string {
+  return [
+    "#!/bin/sh",
+    `# Written by ${BRAND}'s installer; see design.md § Packaging in the ${BRAND} repository.`,
+    "home=${0%/*}",
+    "if command -v node >/dev/null 2>&1; then",
+    `  ${LAUNCHER_ENV}=1 node "$home/main.js" "$@"`,
+    "  status=$?",
+    `  if [ "$status" -ne ${OLD_NODE_EXIT} ]; then exit "$status"; fi`,
+    "fi",
+    "runtime=",
+    `if [ -f "$home/${RUNTIME_FILE}" ]; then read -r runtime < "$home/${RUNTIME_FILE}"; fi`,
+    "# A VS Code Server update replaces the commit folder the runtime was recorded in.",
+    'if [ -n "$runtime" ] && [ ! -x "$runtime" ]; then',
+    "  case $runtime in",
+    "    */.*-server/bin/*/node)",
+    '      for candidate in "${runtime%/*/*}"/*/node; do',
+    '        if [ -x "$candidate" ]; then runtime=$candidate; fi',
+    "      done",
+    "      ;;",
+    "    */.*-server/cli/servers/*/server/node)",
+    '      for candidate in "${runtime%/*/*/*}"/*/server/node; do',
+    '        if [ -x "$candidate" ]; then runtime=$candidate; fi',
+    "      done",
+    "      ;;",
+    "  esac",
+    "fi",
+    'if [ -z "$runtime" ] || [ ! -x "$runtime" ]; then',
+    `  echo "${BRAND}: needs Node.js ${MIN_NODE_MAJOR} or later on PATH, or an editor where the ${BRAND} extension has run since it was installed" >&2`,
+    "  exit 1",
+    "fi",
+    "# Inherited from an editor, the crashpad pipe can be stale, and Electron then logs an error on every run.",
+    "unset CHROME_CRASHPAD_PIPE_NAME",
+    'ELECTRON_RUN_AS_NODE=1 exec "$runtime" "$home/main.js" "$@"',
+    "",
+  ].join("\n");
+}
+
+/**
+ * The home's main.js: it loads the installed copy, or refuses a Node older than
+ * `MIN_NODE_MAJOR`. No `import` statement, so an old Node parses it as CommonJS and gets
+ * as far as the check.
+ */
+function mainScript(copy: string): string {
+  return [
+    `const major = Number(process.versions.node.split(".")[0]);`,
+    `if (major >= ${MIN_NODE_MAJOR}) import("./${copy}/main.js");`,
+    `else if (process.env.${LAUNCHER_ENV}) process.exit(${OLD_NODE_EXIT});`,
+    "else {",
+    `  console.error(\`${BRAND} needs Node.js ${MIN_NODE_MAJOR} or later; \${process.execPath} is \${process.versions.node}\`);`,
+    "  process.exitCode = 1;",
+    "}",
+    "",
+  ].join("\n");
+}
+
+/**
+ * Records `runtime` for the launcher, a Snap's under its `current` revision, which a refresh
+ * does not remove. Leaves the file alone when it already says that, and reports whether it wrote.
+ */
+export function recordRuntime(home: string, runtime: string, platform: NodeJS.Platform = process.platform): boolean {
+  const stable = runtime.replace(/^\/snap\/([^/]+)\/x?\d+\//, "/snap/$1/current/");
+  const text = (platform === "win32" ? stable.replaceAll("\\", "/") : stable) + "\n";
+  const file = path.join(home, RUNTIME_FILE);
+  if (existsSync(file) && readFileSync(file, "utf8") === text) return false;
+  mkdirSync(home, { recursive: true });
+  replaceFile(file, text);
+  return true;
 }
 
 function readVersion(dir: string): CliVersion | undefined {
@@ -70,10 +166,23 @@ export function pendingInstall(source: string, home: string): CliVersion | undef
 }
 
 /** Writes `text` beside `file` and renames it into place, so a reader sees the old file or the new one. */
-function replaceFile(file: string, text: string): void {
+function replaceFile(file: string, text: string, mode?: number): void {
   const temporary = `${file}.tmp-${process.pid}`;
-  writeFileSync(temporary, text);
+  writeFileSync(temporary, text, { mode });
   renameSync(temporary, file);
+}
+
+/** Whether `home` lacks the launcher git runs, which `installCli` writes back. */
+export function launcherMissing(home: string): boolean {
+  return !existsSync(launcherPath(home));
+}
+
+/** Replaces the launcher only when its text changed: on Windows a launcher git is running cannot be renamed over. */
+function writeLauncher(home: string): void {
+  const file = launcherPath(home);
+  const text = launcherScript();
+  if (existsSync(file) && readFileSync(file, "utf8") === text) return;
+  replaceFile(file, text, 0o755);
 }
 
 export interface InstallResult {
@@ -117,11 +226,14 @@ function removeOldCopies(home: string, keep: ReadonlySet<string | undefined>): v
 export function installCli(source: string, home: string): InstallResult {
   const incoming = pendingInstall(source, home);
   const previous = installedVersion(home);
+  // Before the early return: a launcher deleted under a current copy must come back too.
+  mkdirSync(home, { recursive: true });
+  writeLauncher(home);
   if (!incoming) return { installed: false, version: previous! };
   const name = copyName(incoming);
   const target = path.join(home, name);
   if (!existsSync(path.join(target, "main.js"))) copyBundle(source, target);
-  replaceFile(path.join(home, "main.js"), `import "./${name}/main.js";\n`);
+  replaceFile(path.join(home, "main.js"), mainScript(name));
   replaceFile(path.join(home, VERSION_FILE), JSON.stringify(incoming) + "\n");
   removeOldCopies(home, new Set([name, previous && copyName(previous)]));
   return { installed: true, version: incoming };

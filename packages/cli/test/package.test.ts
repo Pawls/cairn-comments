@@ -66,7 +66,7 @@ describe("the published CLI package", () => {
     box.write(box.path("main", "app.ts"), "export const port = 8080;\n");
     box.git(box.dir, "init", "-q", "main");
     // The installed package copies itself into the CLI home and records that copy, never its own path.
-    expect(box.cli(main, "init")).toContain(`node "${box.home.split(path.sep).join("/")}/main.js" clean %f`);
+    expect(box.cli(main, "init")).toContain(`"${box.home.split(path.sep).join("/")}/cairn" clean %f`);
     box.git(main, "add", "-A");
     box.git(main, "commit", "-qm", "base");
     box.cli(main, "worktree", "add", box.path("agent"), "-b", "agent");

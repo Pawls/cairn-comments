@@ -11,7 +11,8 @@ const packageVersion = () =>
 describe("the CLI home", () => {
   let box: Sandbox;
   let repo: string;
-  const homeMain = () => path.join(box.home, "main.js").split(path.sep).join("/");
+  const homeFile = (name: string) => path.join(box.home, name).split(path.sep).join("/");
+  const recorded = () => `"${homeFile("cairn")}"`;
 
   beforeEach(() => {
     box = new Sandbox({ autocrlf: false });
@@ -27,7 +28,7 @@ describe("the CLI home", () => {
   it("init installs the bundle into the home and records the home's copy, which then runs every commit", () => {
     const report = box.cli(repo, "init");
     expect(report).toContain(`${box.home}: install ${bundleVersion().version}`);
-    expect(box.git(repo, "config", "--get", "filter.cairn.clean").trim()).toBe(`node "${homeMain()}" clean %f`);
+    expect(box.git(repo, "config", "--get", "filter.cairn.clean").trim()).toBe(`${recorded()} clean %f`);
     expect(readFileSync(path.join(box.home, "version.json"), "utf8")).toContain(bundleVersion().version);
 
     box.write(path.join(repo, "a.py"), "def f():\n    #~ explains f\n    return 1\n");
@@ -52,18 +53,20 @@ describe("the CLI home", () => {
     box.git(box.dir, "init", "-q", "other");
     expect(box.cliFrom(path.join(older, "main.js"), other, "init")).not.toContain(box.home + ":");
     expect(JSON.parse(readFileSync(path.join(box.home, "version.json"), "utf8"))).toEqual(bundleVersion());
-    expect(box.git(other, "config", "--get", "filter.cairn.clean").trim()).toBe(`node "${homeMain()}" clean %f`);
+    expect(box.git(other, "config", "--get", "filter.cairn.clean").trim()).toBe(`${recorded()} clean %f`);
   });
 
   it("init rewrites a repository that records a path elsewhere, its agent hooks included", () => {
     const gone = 'node "/gone/cairn/main.js"';
     box.cli(repo, "init", "--command", gone, "--hooks", "claude-code");
     const dryRun = box.cli(repo, "init", "--dry-run");
-    expect(dryRun).toContain(`git config: set filter.cairn.clean = node "${homeMain()}" clean %f`);
+    expect(dryRun).toContain(`git config: set filter.cairn.clean = ${recorded()} clean %f`);
     expect(dryRun).toContain(".claude/settings.local.json: set the claude-code hook");
     box.cli(repo, "init");
     const settings = readFileSync(path.join(repo, ".claude", "settings.local.json"), "utf8");
     expect(settings).not.toContain("/gone/");
-    expect(settings).toContain(`${homeMain()}\\" hook claude-code`);
+    // Agent hooks on Windows may run under PowerShell, which cannot start the sh launcher.
+    const hook = process.platform === "win32" ? `node \\"${homeFile("main.js")}\\"` : `\\"${homeFile("cairn")}\\"`;
+    expect(settings).toContain(`${hook} hook claude-code`);
   });
 });

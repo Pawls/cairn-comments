@@ -5,6 +5,7 @@ import {
   BRAND,
   BRAND_TITLE,
   SIDECAR_ROOT,
+  cliHome,
   demoteTarget,
   parseSidecar,
   serializeSidecar,
@@ -18,9 +19,10 @@ import type { OverlayMode } from "./overlay.js";
 import { applyPrinted } from "./edits.js";
 import { CommentPaste } from "./paste.js";
 import { PlacedComment, SHOW_COMMENT, type PlacedView } from "./placed.js";
-import { findRepo, orphansOf, runCli, shellQuote, type OrphanComment, type Repo, type StaleComment } from "./review.js";
+import { findRepo, orphansOf, runCli, type OrphanComment, type Repo, type StaleComment } from "./review.js";
 import { registerReviewTree, type ReviewApi } from "./reviewTree.js";
 import { PasteSaves, UndoSaves } from "./saves.js";
+import { recordEditorRuntime } from "./runtime.js";
 import { installBundledCli, offerRepair } from "./setup.js";
 import { isSidecar, locate, markersIn } from "./sidecars.js";
 
@@ -68,8 +70,10 @@ export interface TestApi {
 }
 
 export function activate(context: vscode.ExtensionContext): TestApi {
-  // Before anything runs the CLI: setup and repair record the home's copy.
+  // Before anything runs the CLI: setup and repair record the home's copy, and the launcher
+  // git runs falls back on this editor's runtime where PATH has no usable node.
   installBundledCli(context);
+  void recordEditorRuntime(cliHome());
   const overlay = new OverlayController(context, COMMANDS.toggle);
   const lists = registerLists(context, { stale: staleComments, orphans: orphanComments }, COMMANDS.edit);
   const watcher = vscode.workspace.createFileSystemWatcher(`**/${SIDECAR_ROOT}/**/*.md`);
@@ -237,12 +241,12 @@ function registerProviders(paste: CommentPaste, view: PlacedView): vscode.Dispos
  * The first workspace folder's repository, once `init` set it up; otherwise the message that
  * explains why there is nothing to check for `what`.
  */
-async function checkableRepo(what: string): Promise<(Repo & { cli: string }) | string> {
+async function checkableRepo(what: string): Promise<Repo | string> {
   const folder = vscode.workspace.workspaceFolders?.[0];
   const repo = folder ? await findRepo(folder.uri.fsPath) : undefined;
   if (!repo) return `Open a git repository to check for ${what}.`;
   if (!repo.cli) return `Set up ${BRAND_TITLE} from the AI Comments Review view to check for ${what}.`;
-  return { root: repo.root, cli: repo.cli };
+  return repo;
 }
 
 /** Stale comments across the repository through the CLI, as CI would see them. */
@@ -250,7 +254,7 @@ async function staleComments(): Promise<StaleComment[] | string> {
   const repo = await checkableRepo("stale comments");
   if (typeof repo === "string") return repo;
   // Exit 1 means stale comments were found; the list is still on stdout.
-  const found = JSON.parse(await runCli(repo.cli, "check --stale --json", repo.root, undefined, [0, 1])) as StaleComment[];
+  const found = JSON.parse(await runCli(["check", "--stale", "--json"], repo.root, undefined, [0, 1])) as StaleComment[];
   return found.map((c) => ({ ...c, file: path.join(repo.root, c.file) }));
 }
 
@@ -259,7 +263,7 @@ async function orphanComments(): Promise<OrphanComment[] | string> {
   const repo = await checkableRepo("orphaned comments");
   if (typeof repo === "string") return repo;
   // Exit 1 means problems were found; the report is still on stdout.
-  const output = await runCli(repo.cli, "check --orphans --json", repo.root, undefined, [0, 1]);
+  const output = await runCli(["check", "--orphans", "--json"], repo.root, undefined, [0, 1]);
   const report = JSON.parse(output) as { problems: { kind: string }[] };
   return orphansOf(report).map((c) => ({ ...c, source: path.join(repo.root, c.source) }));
 }
@@ -348,7 +352,7 @@ async function provideCodeActions(document: vscode.TextDocument, line: number): 
 }
 
 /**
- * Saves `document` and runs `<cli> <verb> <target>` from its repository, so promote and
+ * Saves `document` and runs the CLI's `<verb> <target>` from its repository, so promote and
  * demote follow the same sync and collapse rules as the CLI. With `print`, the CLI only
  * reports the rewrite and the extension applies it (see ./edits.ts). Resolves to the CLI's
  * report, or undefined after telling the user why it did not run.
@@ -371,10 +375,10 @@ async function runOnFile(
   }
   const file = path.relative(repo.root, document.fileName).split(path.sep).join("/");
   try {
-    const target = shellQuote(`${file}:${suffix}`);
-    if (!options.print) return await runCli(repo.cli, `${verb} ${target}`, repo.root);
+    const target = `${file}:${suffix}`;
+    if (!options.print) return await runCli([verb, target], repo.root);
     // The extension writes the rewrite itself, as one edit Ctrl+Z reverts in every file.
-    return await applyPrinted(repo.root, await runCli(repo.cli, `${verb} --print ${target}`, repo.root));
+    return await applyPrinted(repo.root, await runCli([verb, "--print", target], repo.root));
   } catch (error) {
     void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
     return undefined;

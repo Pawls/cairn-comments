@@ -1,9 +1,22 @@
-import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CLI_HOME_ENV, cliHome, homeCommand, installCli, pendingInstall } from "../src/home.js";
+import {
+  CLI_HOME_ENV,
+  LAUNCHER,
+  LAUNCHER_ENV,
+  OLD_NODE_EXIT,
+  RUNTIME_FILE,
+  cliHome,
+  homeCommand,
+  installCli,
+  nodeCommand,
+  pendingInstall,
+  recordRuntime,
+} from "../src/home.js";
 
 describe("cliHome", () => {
   it("honors the override on every platform", () => {
@@ -118,7 +131,7 @@ describe("installCli", () => {
     writeFileSync(path.join(inProgress, "version.json"), JSON.stringify({ version: "0.0.1", build: 1 }));
     installCli(bundle("b", "0.1.0", 2), home);
     installCli(bundle("c", "0.1.0", 3), home);
-    expect(readdirSync(home).sort()).toEqual(["0.0.1-1.tmp-99999", "0.1.0-2", "0.1.0-3", "main.js", "notes", "version.json"]);
+    expect(readdirSync(home).sort()).toEqual(["0.0.1-1.tmp-99999", "0.1.0-2", "0.1.0-3", LAUNCHER, "main.js", "notes", "version.json"]);
   });
 
   it("refuses a source without a version file", () => {
@@ -127,7 +140,68 @@ describe("installCli", () => {
     expect(() => installCli(source, home)).toThrow(/version\.json/);
   });
 
-  it("names the home's main.js in the recorded command, with forward slashes", () => {
-    expect(homeCommand(path.join("C:", "x", "cli"))).toBe(`node "${["C:", "x", "cli", "main.js"].join("/")}"`);
+  it("puts back a missing launcher even when the installed copy is current", () => {
+    const source = bundle("a", "0.1.0", 1);
+    installCli(source, home);
+    rmSync(path.join(home, LAUNCHER));
+    expect(installCli(source, home).installed).toBe(false);
+    expect(readFileSync(path.join(home, LAUNCHER), "utf8")).toMatch(/^#!\/bin\/sh\n/);
+  });
+
+  it("installs an executable sh launcher beside main.js", () => {
+    installCli(bundle("a", "0.1.0", 1), home);
+    const launcher = path.join(home, LAUNCHER);
+    expect(readFileSync(launcher, "utf8")).toMatch(/^#!\/bin\/sh\n/);
+    expect(readFileSync(launcher, "utf8")).not.toContain("\r");
+    if (process.platform !== "win32") expect(statSync(launcher).mode & 0o111).toBe(0o111);
+  });
+
+  it("the home's main.js refuses a Node older than 22, with a reserved exit code when the launcher started it", () => {
+    installCli(bundle("a", "0.1.0", 1), home);
+    const preload = path.join(dir, "old-node.mjs");
+    writeFileSync(preload, 'Object.defineProperty(process, "versions", { value: { ...process.versions, node: "20.11.1" } });\n');
+    const runOld = (env: NodeJS.ProcessEnv) =>
+      spawnSync(process.execPath, ["--import", pathToFileURL(preload).href, path.join(home, "main.js")], { encoding: "utf8", env });
+    const direct = runOld({ ...process.env, [LAUNCHER_ENV]: "" });
+    expect(direct.status).toBe(1);
+    expect(direct.stderr).toMatch(/needs Node\.js 22 or later/);
+    expect(direct.stdout).toBe("");
+    const launched = runOld({ ...process.env, [LAUNCHER_ENV]: "1" });
+    expect(launched.status).toBe(OLD_NODE_EXIT);
+    expect(launched.stderr).toBe("");
+    expect(launched.stdout).toBe("");
+  });
+
+  it("names the launcher in the recorded command, with forward slashes", () => {
+    expect(homeCommand(path.join("C:", "x", "cli"))).toBe(`"${["C:", "x", "cli", LAUNCHER].join("/")}"`);
+  });
+
+  it("names the home's main.js in the node command", () => {
+    expect(nodeCommand(path.join("C:", "x", "cli"))).toBe(`node "${["C:", "x", "cli", "main.js"].join("/")}"`);
+  });
+});
+
+describe("recordRuntime", () => {
+  let home: string;
+  beforeEach(() => {
+    home = mkdtempSync(path.join(os.tmpdir(), "cairn-runtime-"));
+  });
+  afterEach(() => rmSync(home, { recursive: true, force: true }));
+
+  it("writes the runtime path for the launcher, with forward slashes and a final line break", () => {
+    recordRuntime(home, String.raw`C:\Program Files\Code\Code.exe`, "win32");
+    expect(readFileSync(path.join(home, RUNTIME_FILE), "utf8")).toBe("C:/Program Files/Code/Code.exe\n");
+  });
+
+  it("records a Snap's current revision, not the one running, which a refresh removes", () => {
+    recordRuntime(home, "/snap/code/203/usr/share/code/code", "linux");
+    expect(readFileSync(path.join(home, RUNTIME_FILE), "utf8")).toBe("/snap/code/current/usr/share/code/code\n");
+  });
+
+  it("keeps the file as it is when the path is unchanged", () => {
+    recordRuntime(home, "/usr/share/code/code", "linux");
+    const before = statSync(path.join(home, RUNTIME_FILE)).mtimeMs;
+    expect(recordRuntime(home, "/usr/share/code/code", "linux")).toBe(false);
+    expect(statSync(path.join(home, RUNTIME_FILE)).mtimeMs).toBe(before);
   });
 });

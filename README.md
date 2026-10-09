@@ -59,7 +59,9 @@ kept and listed until you remove it.
 
 ## Quickstart
 
-Needs git and Node 22 or later. Tested on Windows and Linux (WSL Ubuntu included). macOS
+Needs git. The npm CLI also needs Node 22 or later; the VS Code extension runs the CLI on
+VS Code's own runtime, so it needs no Node (agent hooks on Windows are the exception, see
+the extension's requirements). Tested on Windows and Linux (WSL Ubuntu included). macOS
 support is experimental: the test suite passed there in CI, but nobody has used it by hand
 yet. Please [report what you find](https://github.com/Pawls/cairn-comments/issues).
 

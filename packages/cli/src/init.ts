@@ -9,7 +9,10 @@ import {
   SIDECAR_ROOT,
   cliHome,
   homeCommand,
+  LAUNCHER,
   installCli,
+  launcherMissing,
+  nodeCommand,
   pendingInstall,
 } from "@cairn-comments/core";
 import {
@@ -35,18 +38,22 @@ const REFRESH_HOOKS = ["post-checkout", "post-merge", "post-commit", "post-rewri
 const WORKTREE_CONFIG_MARK = `filter.${FILTER_DRIVER}.worktreeConfigByInit`;
 
 /**
- * Installs this bundle into the CLI home when it is newer than the copy there. `init`
+ * Installs this bundle into the CLI home when it is newer than the copy there, or puts
+ * back the launcher when it is missing (repair offers itself then). `init`
  * records the home's copy, never this one, which npx or an extension update may delete
  * (design.md § Packaging).
  */
 function homeInstallChange(home: string): Change | undefined {
   const source = path.dirname(fileURLToPath(import.meta.url));
   const incoming = pendingInstall(source, home);
-  if (!incoming) return undefined;
-  return {
-    what: `${home}: install ${incoming.version} (build ${incoming.build})`,
-    apply: () => installCli(source, home),
-  };
+  if (incoming)
+    return {
+      what: `${home}: install ${incoming.version} (build ${incoming.build})`,
+      apply: () => installCli(source, home),
+    };
+  if (launcherMissing(home))
+    return { what: `${home}: restore the ${LAUNCHER} launcher`, apply: () => installCli(source, home) };
+  return undefined;
 }
 
 /** The CLI invocation `init` recorded, recovered from the clean filter's config. */
@@ -332,6 +339,8 @@ function settingsWhat(change: SettingsChange, harness: string, installing: boole
 export function planInit(root: string, options: InitOptions = {}): Change[] {
   const home = cliHome();
   const command = options.command ?? homeCommand(home);
+  // Agent harnesses on Windows may run hooks under PowerShell or cmd, which cannot start the sh launcher.
+  const hookCommand = options.command ?? (process.platform === "win32" ? nodeCommand(home) : command);
   // Installed adapters are rewritten too, so a repository recording an old CLI path is fixed whole.
   const installed = Object.keys(ADAPTERS).filter((h) => adapterInstalled(root, h));
   const hooks = [...new Set([...(options.hooks ?? []), ...installed])];
@@ -351,7 +360,7 @@ export function planInit(root: string, options: InitOptions = {}): Change[] {
     attributesChange(root, attributeLines(), LEGACY_ATTRIBUTES),
     ...hookChanges(root, command),
     ...hooks.flatMap((h) =>
-      adapterRoots(root, h).map((wt) => settingsChange(root, h, planAdapterInstall(wt, h, command), true)),
+      adapterRoots(root, h).map((wt) => settingsChange(root, h, planAdapterInstall(wt, h, hookCommand), true)),
     ),
     options.agentsMd ? agentsMdChange(root, false) : undefined,
   ];

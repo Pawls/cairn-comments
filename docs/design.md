@@ -823,13 +823,52 @@ heading and the second branch's `<!-- ... -->` metadata line read back as body t
   empty project, and runs the quickstart with it. The e2e suite also passes against an
   unpacked `.vsix` (`CAIRN_E2E_EXTENSION`), which holds no `node_modules`.
 - **Node 22 or later.** Node 20 left maintenance in April 2026; CI tests 22 on Linux and Windows; 24 is checked locally.
-  The extension carries the CLI but not a runtime, and git runs the recorded `node` command
-  outside the editor, so setup and repair first run `node --version` and stop with an
-  install link when it is missing or older (`packages/vscode/src/node.ts`). Running the CLI
-  on the editor's own runtime or shipping a standalone binary would remove the requirement;
-  neither is built.
+  The npm package needs it on PATH. The extension does not: it runs the CLI on the editor's
+  own runtime, and the launcher git runs falls back on that runtime (next bullet). The
+  home's `main.js` refuses an older Node with a message naming the one it found.
+- **Running without Node** (built 2026-10-07). `init` records `"<home>/cairn"`, an sh
+  launcher in the CLI home, not `node "<home>/main.js"`. Git runs the filter, merge driver,
+  and hooks through sh on every platform (Git for Windows ships one), so one script serves
+  them all. It runs `node` from PATH when there is one, so a machine with Node behaves as
+  before. When that Node is too old, the home's `main.js` exits 85 before reading stdin
+  (only when the launcher started it, `CAIRN_LAUNCHER`), and the launcher moves on. Next is
+  the runtime in `<home>/runtime`, which the extension writes on every activation:
+  `process.execPath` of the extension host, run with `ELECTRON_RUN_AS_NODE=1`. Without
+  either, the launcher fails with a message saying what is missing, and the pre-commit
+  hook stops the commit. Measured 2026-10-07 on Windows, VS Code 1.140: Electron run this
+  way took 69 ms per one-shot `clean` against 76 ms for `node`, with byte-identical output.
+  The launcher itself costs one more sh process per filter start. `npm run bench` with
+  Node on PATH (Windows, 5 runs each, the two commands alternated, same bundle): process
+  checkout 3,225 to 3,246 ms against 3,166 to 3,185 ms for `node` recorded directly, about
+  +2%, and warm status unchanged at 55 ms. One-shot mode starts it per file, about +38 ms
+  each (319 s against 241 s for 2,000 files, single runs).
+  - The extension records the runtime only after `ELECTRON_RUN_AS_NODE=1 <runtime>
+    --version` prints a Node version of 22 or later. An editor can turn Electron's
+    `RunAsNode` fuse off, and its binary would then start the editor instead.
+  - Where the runtime lives: `Code.exe` at a stable path on Windows (each version's files
+    sit in a hashed folder beside it); the app bundle on macOS and `/usr/share/code/code`
+    for deb and rpm, both replaced in place; a Snap is recorded under
+    `/snap/code/current/` rather than its numbered revision. VS Code Server installs each
+    update in a new commit folder (`~/.vscode-server/bin/<commit>/node`) and removes the
+    old one, so when the recorded runtime is gone the launcher takes the same file from a
+    sibling commit folder.
+  - A process started from VS Code inherits `CHROME_CRASHPAD_PIPE_NAME`, which can name a
+    crashpad handler that has exited. Electron run as Node then logs a `CreateFile` error
+    to stderr, which git shows on every filtered command, and appends it to `debug.log` in
+    the editor's install folder. The launcher and the extension unset that one variable;
+    no Electron switch or `ELECTRON_*` variable silences it.
+  - The extension runs its own CLI calls (`init`, `scan`, `check`, promote and demote) on
+    its runtime through `execFile`, not through a shell, so no argument passes through
+    cmd.exe.
+  - Agent hooks on Windows keep `node "<home>/main.js"` and so still need Node: Cursor
+    runs hook commands through PowerShell and Codex through the native interpreter, and
+    Claude Code can be set to PowerShell; none of those can start an sh script. A `.cmd`
+    launcher fails the other way: started from git's sh with a space in its path and
+    arguments after it, cmd reparses the line and splits the path.
+  - Repositories set up before the launcher keep `node "<home>/main.js"`, which still
+    works while Node is installed; **Set Up** or `init` moves them to the launcher.
 - **The recorded CLI lives in a home the tool owns** (decided 2026-09-26, built 2026-09-29).
-  `init` writes an absolute `node "<path>/main.js"` into the filter, merge driver, and
+  `init` writes an absolute path to the home's launcher into the filter, merge driver, and
   hooks, and git runs it in every initialized repository whether or not an editor is
   open. A path that disappears makes every commit fail in the pre-commit hook and leaves
   `status` and `diff` unfiltered. Before that, `init` recorded wherever the running CLI sat,
@@ -851,7 +890,9 @@ heading and the second branch's `<!-- ... -->` metadata line read back as body t
   (`version` from package.json, `build` a bundle timestamp, so a same-version rebuild still
   counts as newer during development). An install copies the bundle into
   `<home>/<version>-<build>/` under a temporary name and renames it whole, then replaces
-  `<home>/main.js`, a one-line `import` of that folder, by rename. A filter starting
+  `<home>/main.js`, which checks the Node version and imports that folder, by rename. The
+  launcher beside it is rewritten only when its text changes, since Windows cannot rename
+  over a script git is running. A filter starting
   mid-install loads the old copy or the new one, never a mix of files. The copy just
   replaced stays until the next install, for a process that read the old `main.js` but has
   not imported yet. `CAIRN_CLI_HOME` overrides the folder; the test harnesses set it. A
