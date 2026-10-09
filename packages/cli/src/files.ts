@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -14,7 +14,9 @@ import {
   placeComments,
   promotePlaced,
   recordComments,
+  privateSidecarDir,
   serializeSidecar,
+  sidecarFileIn,
   sidecarPathFor,
   stripComments,
   type RecordResult,
@@ -46,6 +48,35 @@ export function decodeExact(bytes: Buffer): string | undefined {
   return Buffer.from(text, "utf8").equals(bytes) ? text : undefined;
 }
 
+interface SidecarLocation {
+  dir: string;
+  /** Private mode: the folder is in the git common dir, so nothing of the tool's is ever staged. */
+  private: boolean;
+}
+
+/** Resolved once per repository and process; the filter process asks for every file it smudges. */
+const locations = new Map<string, SidecarLocation>();
+
+function sidecarLocation(root: string): SidecarLocation {
+  let location = locations.get(root);
+  if (!location) {
+    const store = privateSidecarDir(root);
+    location = { dir: store ?? path.join(root, SIDECAR_ROOT), private: store !== undefined };
+    locations.set(root, location);
+  }
+  return location;
+}
+
+/** Whether the repository at `root` keeps its sidecars off the branch (design.md § Private mode). */
+export function isPrivate(root: string): boolean {
+  return sidecarLocation(root).private;
+}
+
+/** The absolute path of `file`'s sidecar, tracked or private. */
+export function sidecarFile(root: string, file: string): string {
+  return sidecarFileIn(sidecarLocation(root).dir, file);
+}
+
 /**
  * The sidecar of `file` on disk, empty when there is none. Async and a single open, with
  * no exists check first: opens are slow on Windows (design.md § Filter process), and the
@@ -53,7 +84,7 @@ export function decodeExact(bytes: Buffer): string | undefined {
  */
 export async function readSidecar(root: string, file: string): Promise<Sidecar> {
   try {
-    return parseSidecar(await readFile(path.join(root, sidecarPathFor(file)), "utf8"));
+    return parseSidecar(await readFile(sidecarFile(root, file), "utf8"));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return { preamble: "", entries: [] };
     throw error;
@@ -62,8 +93,7 @@ export async function readSidecar(root: string, file: string): Promise<Sidecar> 
 
 /** The sidecar of `file` through the `--print` overlay, so a rewrite reads its own earlier writes. */
 export function readSidecarSync(root: string, file: string): Sidecar {
-  const sidecarFile = path.join(root, sidecarPathFor(file));
-  return parseSidecar(readWorkFile(sidecarFile)?.toString("utf8") ?? "");
+  return parseSidecar(readWorkFile(sidecarFile(root, file))?.toString("utf8") ?? "");
 }
 
 /**
@@ -147,20 +177,31 @@ function selectionCandidates(root: string, selection: Selection): string[] {
   return trackedFiles(root);
 }
 
-/** Sources whose tracked sidecar exists: every file a refresh could place comments in. */
+/** Sources whose sidecar exists: every file a refresh could place comments in. */
 function filesWithSidecars(root: string): string[] {
-  const prefix = `${SIDECAR_ROOT}/`;
-  const sources = trackedFiles(root)
-    .filter((f) => f.startsWith(prefix) && f.endsWith(".md"))
-    .map((f) => f.slice(prefix.length, -".md".length));
-  return managedFiles(root, sources).filter((f) => existsSync(path.join(root, f)));
+  return managedFiles(root, sidecarSources(root)).filter((f) => existsSync(path.join(root, f)));
+}
+
+/** The source paths of every sidecar: the tracked ones, or every file in the private store. */
+export function sidecarSources(root: string): string[] {
+  const location = sidecarLocation(root);
+  if (!location.private) {
+    const prefix = `${SIDECAR_ROOT}/`;
+    return trackedFiles(root)
+      .filter((f) => f.startsWith(prefix) && f.endsWith(".md"))
+      .map((f) => f.slice(prefix.length, -".md".length));
+  }
+  return readdirSync(location.dir, { recursive: true })
+    .map((f) => f.toString().split(path.sep).join("/"))
+    .filter((f) => f.endsWith(".md"))
+    .map((f) => f.slice(0, -".md".length));
 }
 
 /** An emptied sidecar is removed rather than left as a zero-byte file. */
 export function writeSidecar(root: string, file: string, sidecar: Sidecar): void {
-  const sidecarFile = path.join(root, sidecarPathFor(file));
-  if (!sidecar.entries.length && !sidecar.preamble) removeWorkFile(sidecarFile);
-  else writeWorkFile(sidecarFile, serializeSidecar(sidecar));
+  const target = sidecarFile(root, file);
+  if (!sidecar.entries.length && !sidecar.preamble) removeWorkFile(target);
+  else writeWorkFile(target, serializeSidecar(sidecar));
 }
 
 export interface SyncOptions {
@@ -247,8 +288,8 @@ async function rewriteFiles(
 export async function syncFiles(root: string, files: string[], options: SyncOptions & { add: boolean }): Promise<void> {
   const done = await rewriteFiles(root, files, "sync", options);
   // A sidecar emptied by deleting its last comment is gone from disk but still in the index;
-  // staging it records the removal.
-  if (options.add)
+  // staging it records the removal. A private store is never staged.
+  if (options.add && !isPrivate(root))
     stage(
       root,
       done.map((file) => sidecarPathFor(file)).filter((s) => existsSync(path.join(root, s)) || isTracked(root, s)),

@@ -50,6 +50,14 @@ export {
   type SidecarEntry,
 } from "./sidecar.js";
 export {
+  PRIVATE_STORE,
+  commonGitDir,
+  privateSidecarDir,
+  scanIgnoreFile,
+  sidecarDir,
+  sidecarFileIn,
+} from "./store.js";
+export {
   CLI_HOME_ENV,
   LAUNCHER,
   LAUNCHER_ENV,

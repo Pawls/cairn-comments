@@ -13,13 +13,13 @@ import {
   languageForPath,
   parseIgnore,
   recordLiterals,
+  scanIgnoreFile,
   scanSource,
   serializeSidecar,
-  sidecarPathFor,
   type IgnoreEntry,
   type ScannedComment,
 } from "@cairn-comments/core";
-import { collapseFiles, decodeExact, readSidecarSync, syncFiles } from "./files.js";
+import { collapseFiles, decodeExact, readSidecarSync, sidecarFile, syncFiles } from "./files.js";
 import { readWorkFile, writeWorkFile } from "./workfiles.js";
 import { managedFiles, smudges, toRepoPath, trackedFiles } from "./git.js";
 
@@ -54,7 +54,7 @@ function emptyReport(): ApplyReport {
 }
 
 function readIgnore(root: string): Map<string, Set<string>> {
-  const file = path.join(root, SCAN_IGNORE);
+  const file = scanIgnoreFile(root);
   return parseIgnore(readWorkFile(file)?.toString("utf8") ?? "");
 }
 
@@ -146,7 +146,7 @@ async function convertAndSync(root: string, chosen: Map<string, ScannedComment[]
   // A demoted string's quotes go on the entry sync just made for it.
   for (const [file, ids] of literals) {
     writeWorkFile(
-      path.join(root, sidecarPathFor(file)),
+      sidecarFile(root, file),
       serializeSidecar(recordLiterals(readSidecarSync(root, file), ids)),
     );
   }
@@ -155,7 +155,7 @@ async function convertAndSync(root: string, chosen: Map<string, ScannedComment[]
 
 function recordIgnored(root: string, entries: IgnoreEntry[]): void {
   if (!entries.length) return;
-  const file = path.join(root, SCAN_IGNORE);
+  const file = scanIgnoreFile(root);
   const existing = readWorkFile(file)?.toString("utf8") ?? "";
   const next = appendIgnore(existing, entries);
   if (next !== existing) writeWorkFile(file, next);

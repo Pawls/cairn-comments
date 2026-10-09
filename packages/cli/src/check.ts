@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import {
   BRAND,
@@ -11,7 +11,7 @@ import {
   type Sidecar,
   type SidecarEntry,
 } from "@cairn-comments/core";
-import { decodeExact, lineAt, readSidecar, writeSidecar } from "./files.js";
+import { decodeExact, isPrivate, lineAt, readSidecar, sidecarFile, sidecarSources, writeSidecar } from "./files.js";
 import { indexBlobs, managedFiles, stage, stagedFiles, stagedRenames, toRepoPath, trackedFiles } from "./git.js";
 
 export type Problem =
@@ -49,10 +49,11 @@ const sourceOf = (sidecar: string) => sidecar.slice(PREFIX.length, -".md".length
 
 /**
  * The guard for clones without the filter (design.md § Check). Reads the index, never the
- * working tree, so the pre-commit hook and CI judge exactly what is or will be committed.
+ * working tree, so the pre-commit hook and CI judge exactly what is or will be committed; a
+ * private store has no index, so its sidecars are read from the store.
  * `fix` moves a renamed file's sidecar to the file its comments now place in, removes a
  * deleted file's, and (with `prune`) drops entries that no longer place, then stages the
- * sidecars it changed.
+ * tracked sidecars it changed.
  */
 export async function check(root: string, options: CheckOptions): Promise<CheckReport> {
   const tracked = trackedFiles(root);
@@ -97,7 +98,7 @@ function sidecarsToCheck(
   staged: boolean,
   tracked: string[],
 ): Set<string> {
-  const sidecars = new Set(!named.length && !staged ? tracked.filter(isSidecarPath) : []);
+  const sidecars = new Set(!named.length && !staged ? withSidecars(root, tracked) : []);
   for (const f of named) sidecars.add(isSidecarPath(f) ? f : sidecarPathFor(f));
   for (const f of sources) sidecars.add(sidecarPathFor(f));
   if (staged) {
@@ -105,6 +106,11 @@ function sidecarsToCheck(
     for (const f of managedFiles(root, stagedFiles(root, "D"))) sidecars.add(sidecarPathFor(f));
   }
   return sidecars;
+}
+
+/** The sidecar paths of every source with a sidecar: tracked ones, or the private store's. */
+function withSidecars(root: string, tracked: string[]): string[] {
+  return isPrivate(root) ? sidecarSources(root).map(sidecarPathFor) : tracked.filter(isSidecarPath);
 }
 
 /** Without `--fix`, a sidecar `--fix` would move or remove is reported, with what the fix would do. */
@@ -119,6 +125,17 @@ function unappliedFixes(fixes: Fix[]): Problem[] {
   return problems;
 }
 
+/** Blobs by path from the index; a private store's sidecars from the store, as the same logical paths. */
+function loadBlobs(root: string, files: string[]): Map<string, Buffer> {
+  if (!isPrivate(root)) return indexBlobs(root, files);
+  const blobs = indexBlobs(root, files.filter((f) => !isSidecarPath(f)));
+  for (const sidecar of files.filter(isSidecarPath)) {
+    const file = sidecarFile(root, sourceOf(sidecar));
+    if (existsSync(file)) blobs.set(sidecar, readFileSync(file));
+  }
+  return blobs;
+}
+
 /** Index blobs by path, loaded in batches as the check needs them. */
 class Index {
   private readonly blobs: Map<string, Buffer>;
@@ -127,11 +144,11 @@ class Index {
     private readonly root: string,
     files: string[],
   ) {
-    this.blobs = indexBlobs(root, files);
+    this.blobs = loadBlobs(root, files);
   }
 
   load(files: string[]): void {
-    for (const [f, b] of indexBlobs(
+    for (const [f, b] of loadBlobs(
       this.root,
       files.filter((f) => !this.blobs.has(f)),
     ))
@@ -185,13 +202,13 @@ async function followGoneSources(
   staged: boolean,
 ): Promise<CheckReport> {
   const renames = staged ? stagedRenames(root) : undefined;
-  const indexed = new Set(tracked);
+  const existing = new Set(withSidecars(root, tracked));
   // A rename target may already have a sidecar, because sync recorded the comments shown in
   // its file; applying the fix merges the old entries into it. Outside a commit, the
-  // candidates are the files without a tracked sidecar.
+  // candidates are the files without a sidecar.
   const candidates = renames
     ? managedFiles(root, [...renames.values()])
-    : managedFiles(root, tracked).filter((f) => !indexed.has(sidecarPathFor(f)));
+    : managedFiles(root, tracked).filter((f) => !existing.has(sidecarPathFor(f)));
   index.load(candidates);
   const report: CheckReport = { problems: [], fixes: [] };
   const claimed = new Set<string>();
@@ -315,6 +332,7 @@ async function applyFixes(root: string, fixes: Fix[], staged: (sidecar: string) 
       to.entries = [...to.entries.filter((e) => e.id !== fix.id), entry];
   }
   for (const [sidecar, content] of working) writeSidecar(root, sourceOf(sidecar), content);
+  if (isPrivate(root)) return;
   const tracked = new Set(trackedFiles(root));
   stage(
     root,
