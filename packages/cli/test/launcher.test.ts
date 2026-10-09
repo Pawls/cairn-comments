@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { LAUNCHER, RUNTIME_FILE } from "@cairn-comments/core";
@@ -61,6 +61,12 @@ describe("the launcher git runs", () => {
     const launcher = path.join(box.home, LAUNCHER).split(path.sep).join("/");
     expect(box.git(repo, "config", "--get", "filter.cairn.clean").trim()).toBe(`"${launcher}" clean %f`);
     expect(box.git(repo, "config", "--get", "filter.cairn.process").trim()).toBe(`"${launcher}" filter-process`);
+  });
+
+  it("init again puts back a launcher that went missing while the installed copy stayed current", () => {
+    rmSync(path.join(box.home, LAUNCHER));
+    expect(box.cli(repo, "init")).toContain(box.home);
+    expect(stageWith({})).toEqual({ stripped: true, stderr: "" });
   });
 
   it("uses node from PATH when there is one, and leaves the recorded runtime alone", () => {
