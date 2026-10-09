@@ -75,16 +75,32 @@ function recordStore(root: string, store: string, merged?: string): string | und
   return commit;
 }
 
-/** `<source>:<id>` for each stored comment whose body still holds the conflict markers a fetch left. */
+/**
+ * `<source>:<id>` for each stored comment whose body still holds the conflict markers a fetch
+ * left, and `<source>:(preamble)` for a sidecar whose preamble does, as fetch reports them.
+ */
 function unresolvedConflicts(root: string, store: string): string[] {
   const found: string[] = [];
   for (const source of sidecarSources(root)) {
     const sidecar = parseSidecar(readFileSync(path.join(store, `${source}.md`), "utf8"));
+    if (hasConflictMarkers(sidecar.preamble)) found.push(`${source}:(preamble)`);
     for (const entry of sidecar.entries) {
       if (hasConflictMarkers(entry.body)) found.push(`${source}:${entry.id}`);
     }
   }
   return found;
+}
+
+/** What to do about each conflict: `sync` rewrites a comment's body, but a preamble is edited in its file. */
+function conflictAdvice(conflicts: string[], store: string): string {
+  const preamble = ":(preamble)";
+  const advice = [`resolve the conflict markers in ${conflicts.join(", ")} first`];
+  if (conflicts.some((c) => !c.endsWith(preamble))) advice.push("rewrite each comment as it should read, and sync");
+  for (const conflict of conflicts.filter((c) => c.endsWith(preamble))) {
+    const file = path.join(store, conflict.slice(0, -preamble.length) + ".md");
+    advice.push(`edit the preamble in ${file}`);
+  }
+  return advice.join("; ");
 }
 
 /**
@@ -94,10 +110,7 @@ function unresolvedConflicts(root: string, store: string): string[] {
 export function pushComments(root: string, remote: string): string {
   const store = storeOf(root);
   const conflicts = unresolvedConflicts(root, store);
-  if (conflicts.length)
-    throw new Error(
-      `resolve the conflict markers in ${conflicts.join(", ")} first: rewrite each comment as it should read, and sync`,
-    );
+  if (conflicts.length) throw new Error(conflictAdvice(conflicts, store));
   const commit = recordStore(root, store);
   if (!commit) return "nothing to push: there are no comments yet\n";
   const pushed = spawnSync("git", ["push", "-q", remote, `${COMMENTS_REF}:${COMMENTS_REF}`], {

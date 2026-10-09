@@ -272,7 +272,9 @@ describe.each([false, true])("private mode (autocrlf=%s)", (autocrlf) => {
       const pushed = box.cliResult(owner, "push");
       expect(pushed.status).toBe(1);
       expect(pushed.stderr).toContain("conflict markers");
-      expect(pushed.stderr).toContain("a.py");
+      expect(pushed.stderr).toContain("a.py:(preamble)");
+      expect(pushed.stderr).toContain("edit the preamble in");
+      expect(pushed.stderr).not.toContain("and sync");
     } finally {
       box.dispose();
     }
