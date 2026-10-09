@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { MIN_NODE_MAJOR } from "@cairn-comments/core";
 import { describe, expect, it } from "vitest";
-import { cliEnv, runtimeMajor } from "../src/runtime.js";
+import { cliEnv, cliRuntime, runtimeMajor } from "../src/runtime.js";
 
 describe("runtimeMajor", () => {
   it("reads the major from what a runtime run as Node prints for --version", () => {
@@ -12,6 +12,19 @@ describe("runtimeMajor", () => {
   it("rejects the editor's own version, which its binary prints when it will not run as Node", () => {
     expect(runtimeMajor("1.140.0\n2a59476c9b\nx64\n")).toBeUndefined();
     expect(runtimeMajor("")).toBeUndefined();
+  });
+});
+
+describe("cliRuntime", () => {
+  const probe = (output: string) => () => Promise.resolve(output);
+
+  it("runs the CLI on the editor's binary when it runs as Node 22 or later", async () => {
+    expect(await cliRuntime("/editor/code", probe("v24.21.0\n"))).toBe("/editor/code");
+  });
+
+  it("falls back to node from PATH when the editor's binary will not run as Node, or runs an old one", async () => {
+    expect(await cliRuntime("/editor/code", probe("1.140.0\n2a59476c9b\nx64\n"))).toBe("node");
+    expect(await cliRuntime("/editor/code", probe("v20.11.0\n"))).toBe("node");
   });
 });
 

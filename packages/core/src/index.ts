@@ -59,6 +59,7 @@ export {
   cliHome,
   homeCommand,
   installCli,
+  launcherMissing,
   nodeCommand,
   pendingInstall,
   recordRuntime,

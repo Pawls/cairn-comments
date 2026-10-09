@@ -172,6 +172,11 @@ function replaceFile(file: string, text: string, mode?: number): void {
   renameSync(temporary, file);
 }
 
+/** Whether `home` lacks the launcher git runs, which `installCli` writes back. */
+export function launcherMissing(home: string): boolean {
+  return !existsSync(launcherPath(home));
+}
+
 /** Replaces the launcher only when its text changed: on Windows a launcher git is running cannot be renamed over. */
 function writeLauncher(home: string): void {
   const file = launcherPath(home);
@@ -221,11 +226,13 @@ function removeOldCopies(home: string, keep: ReadonlySet<string | undefined>): v
 export function installCli(source: string, home: string): InstallResult {
   const incoming = pendingInstall(source, home);
   const previous = installedVersion(home);
+  // Before the early return: a launcher deleted under a current copy must come back too.
+  mkdirSync(home, { recursive: true });
+  writeLauncher(home);
   if (!incoming) return { installed: false, version: previous! };
   const name = copyName(incoming);
   const target = path.join(home, name);
   if (!existsSync(path.join(target, "main.js"))) copyBundle(source, target);
-  writeLauncher(home);
   replaceFile(path.join(home, "main.js"), mainScript(name));
   replaceFile(path.join(home, VERSION_FILE), JSON.stringify(incoming) + "\n");
   removeOldCopies(home, new Set([name, previous && copyName(previous)]));
