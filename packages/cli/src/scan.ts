@@ -4,7 +4,6 @@ import {
   BRAND,
   DETECTORS,
   FILTER_DRIVER,
-  SCAN_IGNORE,
   SIDECAR_ROOT,
   analyzeSource,
   appendIgnore,
@@ -153,6 +152,11 @@ async function convertAndSync(root: string, chosen: Map<string, ScannedComment[]
   return written;
 }
 
+/** The ignore file as reports name it: repo-relative, which a private one in the main git dir also is. */
+export function shownIgnoreFile(root: string): string {
+  return path.relative(root, scanIgnoreFile(root)).split(path.sep).join("/");
+}
+
 function recordIgnored(root: string, entries: IgnoreEntry[]): void {
   if (!entries.length) return;
   const file = scanIgnoreFile(root);
@@ -292,13 +296,14 @@ export async function demote(root: string, targets: { file: string; line: number
   return report;
 }
 
-export function formatApply(report: ApplyReport): string {
+/** The report of an apply; `ignoreFile` is where rejected comments went, as `shownIgnoreFile` gives it. */
+export function formatApply(report: ApplyReport, ignoreFile: string): string {
   const out: string[] = [];
   // A pass that only ignored says so without a "converted 0" line.
   if (report.converted.length || !report.ignored.length) {
     out.push(`converted ${report.converted.length} comment(s) in ${report.files.length} file(s)`);
   }
-  if (report.ignored.length) out.push(`ignored ${report.ignored.length} comment(s) in ${SCAN_IGNORE}`);
+  if (report.ignored.length) out.push(`ignored ${report.ignored.length} comment(s) in ${ignoreFile}`);
   for (const s of report.stale) out.push(`skipped ${s.file}:${s.line}: no longer matches the reviewed text`);
   return out.join("\n") + "\n";
 }

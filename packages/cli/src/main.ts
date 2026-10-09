@@ -34,7 +34,16 @@ import { runHook } from "./hook.js";
 import { agentsSnippet, planInit, planUninstall, runPlan } from "./init.js";
 import { serveFilterProcess } from "./process.js";
 import { fetchComments, pushComments } from "./share.js";
-import { applyReview, demote, formatApply, formatReview, markAll, parseReview, scan } from "./scan.js";
+import {
+  applyReview,
+  demote,
+  formatApply,
+  formatReview,
+  markAll,
+  parseReview,
+  scan,
+  shownIgnoreFile,
+} from "./scan.js";
 import { tag, tagTargets } from "./tag.js";
 import { captureWrites, capturedWrites } from "./workfiles.js";
 import { addWorktree } from "./worktree.js";
@@ -167,11 +176,11 @@ async function runScan(args: string[]): Promise<void> {
   const root = repoRoot();
   if (values.apply !== undefined) {
     const text = values.apply === "-" ? (await readStdin()).toString("utf8") : readFileSync(values.apply, "utf8");
-    await printingIf(values.print, root, async () => formatApply(await applyReview(root, parseReview(text))));
+    await printingIf(values.print, root, async () => formatApply(await applyReview(root, parseReview(text)), shownIgnoreFile(root)));
     return;
   }
   if (values["mark-all"]) {
-    process.stdout.write(formatApply(await markAll(root, positionals)));
+    process.stdout.write(formatApply(await markAll(root, positionals), shownIgnoreFile(root)));
     return;
   }
   const review = await scan(root, positionals, { all: values.all });

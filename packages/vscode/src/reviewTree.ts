@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import * as vscode from "vscode";
-import { BRAND, BRAND_TITLE, SCAN_IGNORE, SIDECAR_ROOT, privateSidecarDir } from "@cairn-comments/core";
+import { BRAND, BRAND_TITLE, SIDECAR_ROOT, privateSidecarDir } from "@cairn-comments/core";
 import { applyPrinted, saveOpen } from "./edits.js";
 import { runInit } from "./setup.js";
 import { ReviewModel, findRepo, runCli, type Decision, type Repo, type ReviewComment, type ReviewFile, type ReviewItem } from "./review.js";
@@ -69,7 +69,7 @@ export function registerReviewTree(context: vscode.ExtensionContext): ReviewApi 
     vscode.commands.registerCommand(REVIEW_COMMANDS.skip, onRow((file, line) => tree.skip(file, line))),
     vscode.commands.registerCommand(REVIEW_COMMANDS.setup, guarded(() => tree.setup())),
   );
-  tree.setMessage(`Scan to list likely AI comments. The ones you keep as ordinary comments are remembered in ${SCAN_IGNORE}.`);
+  tree.setMessage("Scan to list likely AI comments. The ones you keep as ordinary comments are remembered, so later scans skip them.");
   void tree.showSetupIfNeeded();
   return {
     scan: () => tree.scan(),
