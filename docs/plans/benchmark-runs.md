@@ -9,10 +9,10 @@
 > **Sign-off:** every planned run has a `result.json`, no batch left a run it did not record
 > or retry, and the report and the go/no-go are in benchmark.md and v2.md § B3.
 >
-> **Next:** R1, the first night: a smoke run, the calibration runs, and the frozen comments.
+> **Next:** R2, Claude Code's remaining 81 runs.
 > **Branch:** `benchmark-harness` (shared with v2 B3).
 
-- [R1 — First night: smoke, calibration, comments](#r1)
+- ~~[R1 — First night: smoke, calibration, comments](#r1)~~
 - [R2 — Claude Code: all 90 runs](#r2)
 - [R3 — pi: all 90 runs](#r3)
 - [R4 — Results and the go/no-go](#r4)
@@ -125,10 +125,9 @@ end the batch within minutes, and the log says so.
 
 ## Slices
 
-### R1 — First night: smoke, calibration, comments · Opus 5.5 / medium {#r1}
+### ~~R1 — First night: smoke, calibration, comments · Opus 5.5 / medium~~ {#r1}
 
-**Status:** Not started. The harness has run end to end against a stand-in API, but never
-against Strata.
+**Status:** Done 2026-10-10. Claude Code runs against Strata; every gate passed.
 **Batch:** `run --harness claude --arms none --reps 1 --only sidecar-merge-placement; run --harness claude --arms none --reps 1 --stop-at 05:00; annotate --harness claude --repo cairn-comments --timeout 60; annotate --harness claude --repo click --timeout 60`
 
 The first step is one short question task, so an incompatibility between Claude Code and
@@ -137,47 +136,54 @@ the none arm once per task (9 runs), which tells us whether Strata can do these 
 long a run takes. These runs count toward R2, which would run them anyway. The annotate steps
 write and freeze the comments the comments arm uses.
 
-- [ ] Smoke run: `C:\cb\runs\claude\sidecar-merge-placement\none-1\result.json` exists
+- [x] Smoke run: `C:\cb\runs\claude\sidecar-merge-placement\none-1\result.json` exists
       (whether the agent answered correctly does not matter here). If the run has
       `error.txt` instead, its `calls.jsonl` shows what the server said: lines with
       `"status":400` are requests Strata rejected, `"status":502` means the proxy could not
       reach it. Stop and report the first such line and the end of `harness.err` to the
       owner.
-- [ ] Calibration: all 9 none-arm runs finished. From `status`, record under this slice's
+- [x] Calibration: all 9 none-arm runs finished. From `status`, record under this slice's
       table: edit tasks passed (of 7), questions passed (of 2), runs timed out, and the
       median minutes per run. The estimate assumes comments-arm runs take about as long.
-- [ ] Gate on difficulty: 2 to 6 of the 7 edit tasks passed. With 0 or 1, Strata cannot do
+- [x] Gate on difficulty: 2 to 6 of the 7 edit tasks passed. With 0 or 1, Strata cannot do
       these tasks and the comparison would measure nothing: stop and ask the owner (options:
       easier tasks, or another model). With 7 of 7, continue and note in R4 that success
       cannot discriminate; tokens and time still can.
-- [ ] Gate on time: if more than 2 runs timed out, the 30-minute timeout is cutting runs
+- [x] Gate on time: if more than 2 runs timed out, the 30-minute timeout is cutting runs
       short. Add `--timeout 45` to R2's and R3's batch steps, then ask the owner to move
       `C:\cb\runs\claude` to `C:\cb\calibration-claude` so R2 runs the calibration again at
       the new timeout.
-- [ ] Both annotate steps logged `froze N comments in M sidecars`. Read about ten comments
+- [x] Both annotate steps logged `froze N comments in M sidecars`. Read about ten comments
       where they sit, in the files under `C:\cb\annotate\<repo>\agent\` (search for `//~` in
       cairn-comments, `#~` in click), and check that each describes the code below it. A
       session that wrote nonsense or almost nothing (under 15 comments for a repository) is
       run again with the same step, which replaces that repository's frozen comments. A step
       that stops with "the annotating session changed code" froze nothing: run it again the
       next night.
-- [ ] Commit `benchmark\comments\` and record the counts on the next line.
+- [x] Commit `benchmark\comments\` and record the counts on the next line.
 
-Comments frozen: not yet.
+Comments frozen: cairn-comments 130 in 47 sidecars, click 99 in 17 sidecars (2026-10-10).
+A sample of ten per repository each described the code below it.
 
-- [ ] Size R2: with the median minutes per run, R2's remaining 81 runs need about
+Calibration: edit tasks 7 of 7 passed, questions 2 of 2, 0 timed out, median 5.8 min per
+run (slowest 18.2 min, `delete-last-comment-stages-sidecar`). 7 of 7 means success cannot
+discriminate between the arms; R4 must say so and lean on tokens and time.
+
+- [x] Size R2: with the median minutes per run, R2's remaining 81 runs need about
       81 × median ÷ 60 hours. Write that, and the nights it implies at about 7 hours each,
       under R2's Status.
 
 | Date | Log | Finished | Errors | Notes |
 | --- | --- | --- | --- | --- |
+| 2026-10-09 | `20261010-0201.log` | 9 of 90 | 0 | Started 02:01, ended 03:36. All runs passed, no timeouts, every call status 200. Annotate steps took 19 and 18 min. |
 
 Kill criteria: every run fails at the server (Strata cannot serve Claude Code), or the
 difficulty gate fails. Either way, stop and ask the owner.
 
 ### R2 — Claude Code: all 90 runs · Sonnet 5.5 / medium {#r2}
 
-**Status:** Not started. Needs R1's comments and gates.
+**Status:** Not started; R1's gates passed. 81 runs × 5.8 min ÷ 60 ≈ 7.8 hours, about
+two nights at 7 hours each.
 **Batch:** `run --harness claude --stop-at 07:00`
 
 The same command every night until `status` shows 90 of 90; each batch resumes where the
@@ -218,7 +224,8 @@ the reason and report Claude Code alone.
 
 ### R4 — Results and the go/no-go · Opus 5.5 / high {#r4}
 
-**Status:** Not started. Needs R2, and R3 or its strike.
+**Status:** Not started. Needs R2, and R3 or its strike. R1's calibration passed 7 of 7
+edit tasks, so success cannot discriminate between the arms; compare tokens and time.
 
 - [ ] `report --work C:\cb` output is in `docs/benchmark.md` § Results, with the model, the
       Strata build, the dates, and every deviation from the method (calibration runs counted
