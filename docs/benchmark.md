@@ -44,13 +44,19 @@ exit 0 is success. A question is graded by its `answerKey`: regular expressions 
 answer must all match, ignoring case, written loosely enough for a paraphrase. The prompt
 describes a symptom or a feature as a user would, without naming the fix or the test.
 
+**Model.** Qwen3.8-Flash-Next (IQ2_XS) served locally by Strata, chosen 2026-10-09 so the
+runs cost nothing and can repeat freely; [plans/benchmark-runs.md](plans/benchmark-runs.md)
+runs them in overnight batches. The result is for that model and may not carry over to
+Claude. The harness also runs against the Anthropic API (the default `--provider`).
+
 **Harnesses.** Claude Code (`claude -p --output-format stream-json`) and pi (`pi -p --mode
 json`), the same model in both. Hermes is out: its persistent memory would carry answers
 between runs. pi has no Cairn hook adapter, so its comments arm tests the filter alone. The
 comparison is between arms within one harness, never across harnesses.
 
 **No memory between runs.** Each run gets a fresh clone, a fresh harness home
-(`CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`), and API key auth; every `CLAUDE*`,
+(`CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`), and an API key (any value, for a local
+server); every `CLAUDE*`,
 `ANTHROPIC*`, and `PI_*` variable of the machine owner is removed. Git runs with its own
 global config and ignore file and without the system config, and Cairn with its own CLI
 home. The repository's own AGENTS.md is part of the start state and identical in both arms.
@@ -61,6 +67,13 @@ anything under the home folder when `~/.claude` exists; use a short path such as
 **Order and repetitions.** Five runs per task per arm, in an order shuffled by a fixed
 seed, so time-of-day and rate-limit effects spread over both arms. Neither harness exposes
 temperature; both run at their defaults. A run times out after 30 minutes.
+
+**Local models.** Any `--provider` other than the Anthropic API is a local server serving
+`--model` under that name through the Messages API. Claude Code's side calls (titles,
+summaries, subagents) go to that model too, and pi gets a provider of its own for it. A run
+in which the server failed a call (a 5xx), or no model call succeeded at all, says nothing
+about the agent: it is left with `error.txt` instead of a result, retried by the next batch,
+and two in a row end a batch.
 
 **Capture.** A recording proxy (`scripts/benchmark/proxy.ts`) sits between the harness and
 the API. It forwards each request unchanged (asking for an uncompressed response) and logs
@@ -85,16 +98,22 @@ are struck.
 
 ## Running it
 
-`npm run benchmark --` builds the CLI, then runs `scripts/benchmark/main.ts`:
+On this machine, batches run unattended through `scripts\benchmark\batch.ps1`, as
+[plans/benchmark-runs.md](plans/benchmark-runs.md) describes. By hand, `npm run benchmark
+--` builds the CLI, then runs `scripts/benchmark/main.ts`:
 
 ```sh
-export ANTHROPIC_API_KEY=...
-npm run benchmark -- annotate --work /c/cb --repo cairn-comments --model claude-opus-5-5
-npm run benchmark -- annotate --work /c/cb --repo click --model claude-opus-5-5
-npm run benchmark -- run --work /c/cb --model claude-opus-5-5             # Claude Code
-npm run benchmark -- run --work /c/cb --model claude-opus-5-5 --harness pi
+P="--work /c/cb --model qwen3.8-flash-next-iq2_xs --provider http://127.0.0.1:8411"
+npm run benchmark -- annotate --repo cairn-comments $P
+npm run benchmark -- annotate --repo click $P
+npm run benchmark -- run $P --stop-at 07:00               # Claude Code
+npm run benchmark -- run $P --harness pi --stop-at 07:00
+npm run benchmark -- status --work /c/cb                   # what is done and left
 npm run benchmark -- report --work /c/cb
 ```
+
+Against the Anthropic API, leave out `--provider`, name a Claude model, and set
+`ANTHROPIC_API_KEY`.
 
 A run that already wrote `result.json` is skipped, so an interrupted benchmark resumes;
 `--only <task,...>` and `--reps` narrow it. Runs take 5 to 20 minutes each, so `--shard
@@ -108,7 +127,7 @@ The click setup uses `uv`; the cairn-comments setup runs `npm ci`. `--provider <
 points the proxy at a stand-in for the API, which is how the harness was exercised end to
 end without spending: annotate, both arms, grading, and the report, on both harnesses.
 
-**Cost.** At 2026-10 list prices per million tokens (Opus 5.5 $4 input, $20 output, $0.20
+**Cost against the Anthropic API**, should the benchmark be repeated on Claude. At 2026-10 list prices per million tokens (Opus 5.5 $4 input, $20 output, $0.20
 cache read; Haiku 5.5 $0.10 input and $0.50 output up to 100K-token prompts, five times that
 beyond), an agent run of 30 to 50 turns is expected at roughly $0.50 to $2 on Opus and $0.05
 to $0.20 on Haiku, so 90 runs per harness at roughly $50 to $150 or $5 to $20, plus the two
