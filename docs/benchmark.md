@@ -97,7 +97,10 @@ npm run benchmark -- report --work /c/cb
 ```
 
 A run that already wrote `result.json` is skipped, so an interrupted benchmark resumes;
-`--only <task,...>` and `--reps` narrow it. Each run keeps `calls.jsonl` (the proxy log),
+`--only <task,...>` and `--reps` narrow it. Runs take 5 to 20 minutes each, so `--shard
+1/3`, `2/3`, and `3/3` in three terminals split the shuffled queue three ways. Parallel
+runs compete for the CPU (`npm ci`, test runs), which adds noise to wall time; the shuffle
+spreads it over both arms. Each run keeps `calls.jsonl` (the proxy log),
 the harness output, `setup.log`, `test.log`, and `result.json` under
 `<work>/runs/<harness>/<task>/<arm>-<rep>/`; `--keep` also keeps the checkouts.
 
@@ -105,10 +108,12 @@ The click setup uses `uv`; the cairn-comments setup runs `npm ci`. `--provider <
 points the proxy at a stand-in for the API, which is how the harness was exercised end to
 end without spending: annotate, both arms, grading, and the report, on both harnesses.
 
-**Cost.** At 2026-10 list prices (Opus 5.5 $4 input, $20 output, $0.20 cache read per
-million tokens), an agent run of 30 to 50 turns is expected at roughly $0.50 to $2, so the
-90 runs per harness at roughly $50 to $150, plus the two annotating sessions. The first real
-runs replace this estimate.
+**Cost.** At 2026-10 list prices per million tokens (Opus 5.5 $4 input, $20 output, $0.20
+cache read; Haiku 5.5 $0.10 input and $0.50 output up to 100K-token prompts, five times that
+beyond), an agent run of 30 to 50 turns is expected at roughly $0.50 to $2 on Opus and $0.05
+to $0.20 on Haiku, so 90 runs per harness at roughly $50 to $150 or $5 to $20, plus the two
+annotating sessions. The first real runs replace these estimates. Write the comments with
+the strongest model whatever runs the tasks: they are the treatment, written once.
 
 ## Results
 

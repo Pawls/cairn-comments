@@ -7,9 +7,10 @@
  *       one agent session writes comments at the repository's base commit; they are
  *       frozen into benchmark/comments/<name>/
  *   run --work <dir> --model <m> [--harness claude|pi] [--arms none,comments] [--reps 5]
- *       [--only <task,...>] [--seed 1] [--timeout <minutes>] [--keep]
+ *       [--only <task,...>] [--seed 1] [--shard i/n] [--timeout <minutes>] [--keep]
  *       every (task, arm, repetition) in an order shuffled by the seed; a run that already
- *       has a result.json is skipped, so an interrupted benchmark resumes
+ *       has a result.json is skipped, so an interrupted benchmark resumes. n processes
+ *       given --shard 1/n to n/n share the queue between them.
  *   report --work <dir>
  *       Markdown tables from every result, printed and written to <work>/report.md
  *
@@ -24,8 +25,8 @@ import { runMetrics } from "./metrics.ts";
 import { startRecordingProxy } from "./proxy.ts";
 import { renderReport } from "./report.ts";
 import { readLog, runAgent, runDirFor, runOne, type AgentOptions, type RunResult } from "./runner.ts";
-import { shuffled } from "./stats.ts";
-import { loadTasks, type Task, type TaskFile } from "./tasks.ts";
+import { planRuns, shard } from "./schedule.ts";
+import { loadTasks, type TaskFile } from "./tasks.ts";
 import {
   ARMS,
   cairn,
@@ -50,6 +51,7 @@ const { values: args, positionals } = parseArgs({
     reps: { type: "string", default: "5" },
     only: { type: "string" },
     seed: { type: "string", default: "1" },
+    shard: { type: "string" },
     timeout: { type: "string", default: "30" },
     keep: { type: "boolean", default: false },
     repo: { type: "string" },
@@ -84,9 +86,19 @@ function workDir(): string {
   return dir;
 }
 
+/** Every commit a repository's runs check out: its base, and each task's start and solution. */
+function commitsOf(tasks: TaskFile, repo: string): string[] {
+  const commits = [tasks.repos[repo]!.base];
+  for (const task of tasks.tasks.filter((t) => t.repo === repo)) {
+    commits.push(task.start);
+    if (task.kind !== "question") commits.push(task.solution);
+  }
+  return commits;
+}
+
 function mirrors(work: string, tasks: TaskFile, names: string[]): Map<string, string> {
   const env = isolatedEnv(path.join(work, "state"), path.join(work, "cli-home"));
-  return new Map(names.map((name) => [name, ensureMirror(work, name, tasks.repos[name]!, env)]));
+  return new Map(names.map((name) => [name, ensureMirror(work, name, tasks.repos[name]!, env, commitsOf(tasks, name))]));
 }
 
 /** Total entries over the sidecars under `dir`: each entry is one `## <id>` heading. */
@@ -135,22 +147,6 @@ async function annotate(): Promise<void> {
   console.log(`froze ${entries} comments in ${sidecars} sidecars into ${destination}`);
 }
 
-interface Planned {
-  task: Task;
-  arm: Arm;
-  rep: number;
-}
-
-function plan(tasks: Task[], arms: Arm[], reps: number, seed: number): Planned[] {
-  const all: Planned[] = [];
-  for (const task of tasks) {
-    for (const arm of arms) {
-      for (let rep = 1; rep <= reps; rep++) all.push({ task, arm, rep });
-    }
-  }
-  return shuffled(all, seed);
-}
-
 function describeResult(result: RunResult): string {
   const t = result.metrics.tokens;
   const input = t.input + t.cacheRead + t.cacheWrite;
@@ -173,7 +169,7 @@ async function run(): Promise<void> {
   }
   const mirrorPaths = mirrors(work, taskFile, repoNames);
 
-  const queue = plan(tasks, arms, Number(args.reps), Number(args.seed));
+  const queue = shard(planRuns(tasks, arms, Number(args.reps), Number(args.seed)), args.shard);
   for (const [i, planned] of queue.entries()) {
     const label = `[${i + 1}/${queue.length}] ${agent.harness} ${planned.task.id} ${planned.arm}-${planned.rep}`;
     const runDir = runDirFor({ workDir: work, harness: agent.harness, ...planned });

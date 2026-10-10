@@ -73,14 +73,32 @@ function cairn(cwd: string, env: Record<string, string>, ...args: string[]): str
   return execFileSync(process.execPath, [CAIRN_CLI, ...args], { cwd, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 }
 
-/** A bare mirror of `spec.url` under `workDir`, fetched once per benchmark invocation. */
-export function ensureMirror(workDir: string, name: string, spec: RepoSpec, env: Record<string, string>): string {
+function hasCommit(repo: string, env: Record<string, string>, sha: string): boolean {
+  try {
+    git(repo, env, "cat-file", "-e", `${sha}^{commit}`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A bare mirror of `spec.url` under `workDir` holding every commit in `commits`. It is
+ * fetched only when one is missing, so shards started together do not fetch into it at once.
+ */
+export function ensureMirror(
+  workDir: string,
+  name: string,
+  spec: RepoSpec,
+  env: Record<string, string>,
+  commits: string[],
+): string {
   const mirror = path.join(workDir, "mirrors", `${name}.git`);
-  if (existsSync(mirror)) {
-    git(mirror, env, "fetch", "--prune", "origin");
-  } else {
+  if (!existsSync(mirror)) {
     mkdirSync(path.dirname(mirror), { recursive: true });
     git(workDir, env, "clone", "--mirror", spec.url, mirror);
+  } else if (!commits.every((sha) => hasCommit(mirror, env, sha))) {
+    git(mirror, env, "fetch", "--prune", "origin");
   }
   return mirror;
 }
