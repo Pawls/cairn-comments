@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { planRuns, shard } from "../schedule.ts";
+import { nextOccurrence, planRuns, shard } from "../schedule.ts";
 import type { Task } from "../tasks.ts";
 
 const task = (id: string): Task => ({ id, repo: "r", kind: "question", start: "s", prompt: "p", answerKey: [] });
@@ -13,6 +13,25 @@ describe("planRuns", () => {
     expect(new Set(keys).size).toBe(12);
     expect(planRuns([task("a"), task("b")], ["none", "comments"], 3, 1)).toEqual(planned);
     expect(planRuns([task("a"), task("b")], ["none", "comments"], 3, 2)).not.toEqual(planned);
+  });
+});
+
+describe("nextOccurrence", () => {
+  it("is later today when the time has not come yet", () => {
+    const now = new Date(2026, 9, 9, 22, 15);
+
+    expect(nextOccurrence("23:30", now)).toEqual(new Date(2026, 9, 9, 23, 30));
+  });
+
+  it("is tomorrow when the time has passed today, so a night batch can stop in the morning", () => {
+    const now = new Date(2026, 9, 9, 22, 15);
+
+    expect(nextOccurrence("06:30", now)).toEqual(new Date(2026, 9, 10, 6, 30));
+  });
+
+  it("rejects anything but HH:MM", () => {
+    expect(() => nextOccurrence("6.30", new Date())).toThrow(/--stop-at/);
+    expect(() => nextOccurrence("25:00", new Date())).toThrow(/--stop-at/);
   });
 });
 

@@ -1,6 +1,6 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { gradeAnswer, runMetrics, type LoggedCall } from "../metrics.ts";
+import { gradeAnswer, providerFailed, runMetrics, type LoggedCall } from "../metrics.ts";
 
 const agentDir = path.resolve("/work/run/agent");
 
@@ -56,6 +56,21 @@ describe("runMetrics", () => {
     const calls: LoggedCall[] = [{ path: "/v1/messages/count_tokens", status: 200, ms: 3 }, call("m", [])];
 
     expect(runMetrics(calls, { model: "m", agentDir }).calls).toBe(1);
+  });
+});
+
+describe("providerFailed", () => {
+  it("is true when the model server answered any call with a server error", () => {
+    expect(providerFailed([call("m", []), { path: "/v1/messages", status: 502, ms: 1 }])).toBe(true);
+    expect(providerFailed([{ path: "/v1/messages", status: 503, ms: 1 }])).toBe(true);
+  });
+
+  it("is true when the harness never reached the model", () => {
+    expect(providerFailed([])).toBe(true);
+  });
+
+  it("is false when every call succeeded or failed on the client's side", () => {
+    expect(providerFailed([call("m", []), { path: "/v1/messages/count_tokens", status: 404, ms: 1 }])).toBe(false);
   });
 });
 
