@@ -163,7 +163,8 @@ write and freeze the comments the comments arm uses.
       next night.
 - [ ] Commit `benchmark\comments\` and record the counts on the next line.
 
-Comments frozen: cairn-comments _ in _ sidecars; click _ in _ sidecars.
+Comments frozen: not yet.
+
 - [ ] Size R2: with the median minutes per run, R2's remaining 81 runs need about
       81 × median ÷ 60 hours. Write that, and the nights it implies at about 7 hours each,
       under R2's Status.
