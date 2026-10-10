@@ -69,10 +69,11 @@ export function runMetrics(log: LoggedCall[], options: { model: string; agentDir
 
 /**
  * The run says nothing about the agent: the model server failed a call (a 5xx, or the
- * proxy's 502 when it could not connect), or no call reached it at all.
+ * proxy's 502 when it could not connect), or no model call succeeded at all, as when the
+ * server rejects every request the harness makes.
  */
 export function providerFailed(log: LoggedCall[]): boolean {
-  return log.length === 0 || log.some((call) => call.status >= 500);
+  return log.some((call) => call.status >= 500) || !log.some((call) => call.response);
 }
 
 export interface Grade {
