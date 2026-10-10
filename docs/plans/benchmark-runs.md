@@ -9,11 +9,11 @@
 > **Sign-off:** every planned run has a `result.json`, no batch left a run it did not record
 > or retry, and the report and the go/no-go are in benchmark.md and v2.md § B3.
 >
-> **Next:** R2, Claude Code's remaining 50 runs.
+> **Next:** R3, pi's 90 runs.
 > **Branch:** `benchmark-harness` (shared with v2 B3).
 
 - ~~[R1 — First night: smoke, calibration, comments](#r1)~~
-- [R2 — Claude Code: all 90 runs](#r2)
+- ~~[R2 — Claude Code: all 90 runs](#r2)~~
 - [R3 — pi: all 90 runs](#r3)
 - [R4 — Results and the go/no-go](#r4)
 
@@ -180,10 +180,10 @@ discriminate between the arms; R4 must say so and lean on tokens and time.
 Kill criteria: every run fails at the server (Strata cannot serve Claude Code), or the
 difficulty gate fails. Either way, stop and ask the owner.
 
-### R2 — Claude Code: all 90 runs · Sonnet 5.5 / medium {#r2}
+### ~~R2 — Claude Code: all 90 runs · Sonnet 5.5 / medium~~ {#r2}
 
-**Status:** 40 of 90 after the first batch (2026-10-10). R1 sized it at 81 runs × 5.8 min
-÷ 60 ≈ 7.8 hours; the 50 left need about 5 hours, one more night.
+**Status:** Done 2026-10-10. 90 of 90 across two batches; R1 sized it at 81 runs × 5.8 min
+÷ 60 ≈ 7.8 hours, and it took about 8.7 hours of batch time.
 **Batch:** `run --harness claude --stop-at 07:00`
 
 The same command every night until `status` shows 90 of 90; each batch resumes where the
@@ -195,13 +195,19 @@ last one stopped. The queue is shuffled with a fixed seed, so both arms progress
       treatment never reached the agent: stop and report it. Checked 2026-10-10: all 19
       comments-arm runs placed comments in every annotated file and read 438 to 3,897 bytes
       of them.
-- [ ] `status --harness claude` shows 90 of 90 finished and no runs with an error.
-- [ ] `node scripts\benchmark\main.ts report --work C:\cb` ran; record the Claude Code
+- [x] `status --harness claude` shows 90 of 90 finished and no runs with an error.
+- [x] `node scripts\benchmark\main.ts report --work C:\cb` ran; record the Claude Code
       section's median per-task changes here.
+
+Median per-task change, comments arm against none (9 tasks, 5 reps each): input tokens
++15.8% (lower on 3 of 9), cost +9.2% (lower on 2 of 9), wall time +3.8% (lower on 4 of 9).
+Success 45/45 in both arms, so it cannot discriminate. The spread is wide: stale-tag-and-eof-trailing
+doubled in cost (+104.9%) and style-color-validation fell 32.3%.
 
 | Date | Log | Finished | Errors | Notes |
 | --- | --- | --- | --- | --- |
 | 2026-10-09 | `20261010-0338.log` | 40 of 90 | 0 | Started 03:38 right after R1, ended 07:09 at the stop time. 31 runs, all passed (both arms), no timeouts; median 6.0 min, slowest 25.0 min. |
+| 2026-10-10 | `20261010-1112.log` | 90 of 90 | 0 | Daytime batch, started 11:12, ended 16:47 (`batch ended`). 50 runs, all passed, no timeouts; median 5.6 min over the matrix. |
 
 Kill criteria: none of its own; R1's gates decided whether it runs.
 
