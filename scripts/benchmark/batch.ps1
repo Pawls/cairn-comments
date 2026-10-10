@@ -6,7 +6,9 @@
 #   batch.ps1 -Steps "run --harness claude --arms none --reps 1 --stop-at 06:30; annotate --repo click"
 #
 # Each step is a main.ts command line without --work, --model, and --provider, which come
-# from the parameters. A step that fails ends the batch.
+# from the parameters; steps are split on ";" and words on spaces, so no step may hold a
+# quote. A step that fails ends the batch. While it runs, <Work>\batch.pid holds its process
+# id, and a second batch refuses to start.
 param(
     [Parameter(Mandatory)][string]$Steps,
     [string]$Work = 'C:\cb',
@@ -40,6 +42,17 @@ function Test-Server {
     }
 }
 
+# One batch at a time: the model server serves one request at a time.
+$PidFile = Join-Path $Work 'batch.pid'
+if (Test-Path $PidFile) {
+    $other = Get-Process -Id ([int](Get-Content $PidFile)) -ErrorAction SilentlyContinue
+    if ($other -and $other.ProcessName -eq 'pwsh') {
+        Write-Log "refused: batch process $($other.Id) is still running"
+        exit 1
+    }
+}
+Set-Content -Path $PidFile -Value $PID
+
 # main.ts reads benchmark\tasks.json relative to the repository.
 Push-Location $Repo
 try {
@@ -71,6 +84,7 @@ try {
         node $Main status --work $Work --harness $harness *>&1 | Out-File -Append -Encoding utf8 $Log
     }
     Write-Log 'batch ended'
+    Remove-Item $PidFile -ErrorAction SilentlyContinue
     Pop-Location
     [Bench.Power]::SetThreadExecutionState([uint32]'0x80000000') | Out-Null
 }

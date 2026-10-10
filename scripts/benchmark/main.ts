@@ -275,6 +275,8 @@ async function run(): Promise<void> {
   log("batch: queue finished");
 }
 
+const passedOf = (results: RunResult[]) => `${results.filter((r) => r.grade.passed).length} of ${results.length}`;
+
 function status(): void {
   const work = path.resolve(required("work", args.work));
   const harness = harnessArg();
@@ -289,7 +291,12 @@ function status(): void {
   console.log(`${harness}: ${finished.length} of ${queue.length} runs finished, ${remaining} left`);
   for (const arm of new Set(results.map((r) => r.arm))) {
     const armResults = results.filter((r) => r.arm === arm);
-    console.log(`  ${arm}: ${armResults.filter((r) => r.grade.passed).length} of ${armResults.length} passed`);
+    const edits = armResults.filter((r) => r.kind !== "question");
+    const questions = armResults.filter((r) => r.kind === "question");
+    console.log(
+      `  ${arm}: edit tasks ${passedOf(edits)} passed, questions ${passedOf(questions)} passed, ` +
+        `${armResults.filter((r) => r.timedOut).length} timed out`,
+    );
   }
   if (minutes !== undefined) {
     console.log(`  median ${minutes.toFixed(1)} min of agent time per run; about ${((remaining * minutes) / 60).toFixed(1)} h of agent time left`);
