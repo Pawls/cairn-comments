@@ -9,7 +9,7 @@
 > **Sign-off:** every planned run has a `result.json`, no batch left a run it did not record
 > or retry, and the report and the go/no-go are in benchmark.md and v2.md § B3.
 >
-> **Next:** R2, Claude Code's remaining 81 runs.
+> **Next:** R2, Claude Code's remaining 50 runs.
 > **Branch:** `benchmark-harness` (shared with v2 B3).
 
 - ~~[R1 — First night: smoke, calibration, comments](#r1)~~
