@@ -20,6 +20,17 @@ export function planRuns(tasks: Task[], arms: Arm[], reps: number, seed: number)
   return shuffled(all, seed);
 }
 
+/** The next time the clock reads `hhmm` (local time) after `now`: today, or else tomorrow. */
+export function nextOccurrence(hhmm: string, now: Date): Date {
+  const match = /^(\d{2}):(\d{2})$/.exec(hhmm);
+  const hours = Number(match?.[1]);
+  const minutes = Number(match?.[2]);
+  if (!match || hours > 23 || minutes > 59) throw new Error(`--stop-at takes HH:MM, not ${hhmm}`);
+  const at = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes);
+  if (at <= now) at.setDate(at.getDate() + 1);
+  return at;
+}
+
 /**
  * Slice `i` of `n` (`"i/n"`, 1-based): every n-th item from the i-th. Processes given the
  * same queue and different slices share no run.

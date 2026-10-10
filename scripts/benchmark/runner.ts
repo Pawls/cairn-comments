@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { harnessTotals, launchFor, withoutHarnessVariables, type HarnessName, type HarnessTotals } from "./harnesses.ts";
-import { gradeAnswer, runMetrics, type LoggedCall, type RunMetrics } from "./metrics.ts";
+import { gradeAnswer, providerFailed, runMetrics, type LoggedCall, type RunMetrics } from "./metrics.ts";
 import { startRecordingProxy } from "./proxy.ts";
 import { expandCommand, type RepoSpec, type Task } from "./tasks.ts";
 import { checkoutArm, commentBytes, git, isolatedEnv, removeCheckouts, runSetup, type Arm } from "./workspace.ts";
@@ -11,8 +11,10 @@ import { checkoutArm, commentBytes, git, isolatedEnv, removeCheckouts, runSetup,
 /** What starts an agent, whatever it is asked. */
 export interface AgentOptions {
   harness: HarnessName;
-  /** The API the proxy forwards to; a local stand-in for a dry run. */
+  /** The API the proxy forwards to: the Anthropic API, a local model server, or a stand-in. */
   provider: string;
+  /** `provider` serves `model` under its own name rather than being the Anthropic API. */
+  local: boolean;
   model: string;
   apiKey: string;
   piCli: string;
@@ -31,6 +33,9 @@ export interface RunSpec extends AgentOptions {
   /** Keep the checkouts after grading, for inspection. */
   keep: boolean;
 }
+
+/** A run lost to the model server rather than to the agent; it is retried, not recorded. */
+export class ProviderError extends Error {}
 
 export interface Grade {
   passed: boolean;
@@ -96,6 +101,7 @@ export async function runAgent(
     proxyUrl,
     sessionDir: path.join(runDir, "sessions"),
     piCli: spec.piCli,
+    local: spec.local,
   });
   const child = spawn(launch.command, launch.args, {
     cwd: agentDir,
@@ -173,7 +179,12 @@ export async function runOne(spec: RunSpec): Promise<RunResult> {
   const exit = await runAgent(spec, spec.task.prompt, { runDir, agentDir }, env, proxy.url).finally(() => proxy.close());
   const wallMs = Date.now() - startedAt.getTime();
 
-  const metrics = runMetrics(readLog(logFile), { model: spec.model, agentDir });
+  const log = readLog(logFile);
+  if (providerFailed(log)) {
+    // No result.json, so the next batch runs this one again; the checkouts stay for a look.
+    throw new ProviderError(`the model server failed this run (${log.length} calls); see calls.jsonl and harness.err`);
+  }
+  const metrics = runMetrics(log, { model: spec.model, agentDir });
   const result: RunResult = {
     harness: spec.harness,
     task: spec.task.id,

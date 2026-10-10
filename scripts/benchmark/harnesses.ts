@@ -20,7 +20,13 @@ export interface LaunchOptions {
   sessionDir: string;
   /** pi's `cli.js`, run with this Node so no shell wrapper parses the prompt. */
   piCli: string;
+  /** The model is served locally under its own name, not by the Anthropic API. */
+  local: boolean;
 }
+
+/** Context and output limits declared to pi for a local model; Strata serves 262,144 tokens. */
+const LOCAL_CONTEXT_WINDOW = 262_144;
+const LOCAL_MAX_TOKENS = 65_536;
 
 export interface Launch {
   command: string;
@@ -46,27 +52,59 @@ export function withoutHarnessVariables(base: NodeJS.ProcessEnv, apiKey: string)
   return env;
 }
 
+/** Claude Code's model variables for its side calls (titles, summaries, subagents). */
+const CLAUDE_SIDE_MODELS = [
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL",
+  "CLAUDE_CODE_SUBAGENT_MODEL",
+];
+
 function claudeLaunch(options: LaunchOptions): Launch {
+  const env: Record<string, string> = {
+    CLAUDE_CONFIG_DIR: options.configDir,
+    ANTHROPIC_BASE_URL: options.proxyUrl,
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+    DISABLE_AUTOUPDATER: "1",
+  };
+  // A local server has only the run's model, so a side call to a Claude model would fail.
+  if (options.local) for (const name of CLAUDE_SIDE_MODELS) env[name] = options.model;
   return {
     command: "claude",
     // The prompt goes on stdin: an argument would pass through Windows' command-line quoting.
     args: ["-p", "--output-format", "stream-json", "--verbose", "--model", options.model, "--dangerously-skip-permissions"],
-    env: {
-      CLAUDE_CONFIG_DIR: options.configDir,
-      ANTHROPIC_BASE_URL: options.proxyUrl,
-      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
-      DISABLE_AUTOUPDATER: "1",
-    },
+    env,
     stdin: options.prompt,
   };
 }
 
+/**
+ * pi's provider configuration. A local model is declared as a provider of its own that
+ * speaks the Messages API, so the proxy reads the same response format for both harnesses.
+ */
+function piProviders(options: LaunchOptions): { providers: Record<string, unknown>; model: string } {
+  if (!options.local) {
+    // Overriding only the provider's base URL keeps its built-in models (pi docs/models.md).
+    return { providers: { anthropic: { baseUrl: options.proxyUrl } }, model: `anthropic/${options.model}` };
+  }
+  const model = {
+    id: options.model,
+    name: options.model,
+    contextWindow: LOCAL_CONTEXT_WINDOW,
+    maxTokens: LOCAL_MAX_TOKENS,
+    reasoning: true,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  };
+  return {
+    providers: { local: { baseUrl: options.proxyUrl, api: "anthropic-messages", apiKey: "local", models: [model] } },
+    model: `local/${options.model}`,
+  };
+}
+
 function piLaunch(options: LaunchOptions): Launch {
-  // Overriding only the provider's base URL keeps its built-in models (pi docs/models.md).
-  writeFileSync(
-    path.join(options.configDir, "models.json"),
-    JSON.stringify({ providers: { anthropic: { baseUrl: options.proxyUrl } } }, null, 2),
-  );
+  const { providers, model } = piProviders(options);
+  writeFileSync(path.join(options.configDir, "models.json"), JSON.stringify({ providers }, null, 2));
   mkdirSync(options.sessionDir, { recursive: true });
   return {
     command: process.execPath,
@@ -76,7 +114,7 @@ function piLaunch(options: LaunchOptions): Launch {
       "--mode",
       "json",
       "--model",
-      `anthropic/${options.model}`,
+      model,
       "--session-dir",
       options.sessionDir,
       "--no-skills",

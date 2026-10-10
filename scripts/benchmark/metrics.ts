@@ -67,6 +67,14 @@ export function runMetrics(log: LoggedCall[], options: { model: string; agentDir
   };
 }
 
+/**
+ * The run says nothing about the agent: the model server failed a call (a 5xx, or the
+ * proxy's 502 when it could not connect), or no call reached it at all.
+ */
+export function providerFailed(log: LoggedCall[]): boolean {
+  return log.length === 0 || log.some((call) => call.status >= 500);
+}
+
 export interface Grade {
   passed: boolean;
   /** Answer-key patterns the answer did not match. */
