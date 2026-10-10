@@ -69,6 +69,12 @@ describe("providerFailed", () => {
     expect(providerFailed([])).toBe(true);
   });
 
+  it("is true when the server rejected every model call, as when it does not accept the harness's requests", () => {
+    expect(providerFailed([{ path: "/v1/messages", status: 400, ms: 1 }, { path: "/v1/messages", status: 400, ms: 1 }])).toBe(
+      true,
+    );
+  });
+
   it("is false when every call succeeded or failed on the client's side", () => {
     expect(providerFailed([call("m", []), { path: "/v1/messages/count_tokens", status: 404, ms: 1 }])).toBe(false);
   });
