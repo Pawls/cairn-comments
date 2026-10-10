@@ -17,6 +17,7 @@ Finished plans, v1 included, are in `docs/plans/archived/`.
 | `npm run package -w packages/vscode` | Build `packages/vscode/cairn-comments.vsix` (after `npm run build`). Packaging only; nothing is published. |
 | `npm run lint` | eslint over the whole workspace. |
 | `npm run bench` | 2,000-file checkout benchmark (design.md § Filter process). Slow; run only when touching the filter path. |
+| `npm run benchmark -- <annotate\|run\|report> --work <dir> ...` | Paired agent runs with and without AI comments ([docs/benchmark.md](docs/benchmark.md)). Spends API money and takes hours; never run it unasked. `--provider <url>` points it at a local stand-in for a free dry run. |
 | `npm run replay -- --repo <path>` | Comment placement replayed over a repository's history (design.md § Anchoring, "Measured"). Minutes per repository; run when changing placement. |
 
 A change is signed off on Windows (`autocrlf=true` scenarios included) and on an LF
