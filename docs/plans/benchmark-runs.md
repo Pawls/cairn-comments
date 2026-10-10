@@ -182,23 +182,26 @@ difficulty gate fails. Either way, stop and ask the owner.
 
 ### R2 — Claude Code: all 90 runs · Sonnet 5.5 / medium {#r2}
 
-**Status:** Not started; R1's gates passed. 81 runs × 5.8 min ÷ 60 ≈ 7.8 hours, about
-two nights at 7 hours each.
+**Status:** 40 of 90 after the first batch (2026-10-10). R1 sized it at 81 runs × 5.8 min
+÷ 60 ≈ 7.8 hours; the 50 left need about 5 hours, one more night.
 **Batch:** `run --harness claude --stop-at 07:00`
 
 The same command every night until `status` shows 90 of 90; each batch resumes where the
 last one stopped. The queue is shuffled with a fixed seed, so both arms progress together.
 
-- [ ] After the first R2 night: at least one comments-arm `result.json` has a non-empty
+- [x] After the first R2 night: at least one comments-arm `result.json` has a non-empty
       `commentBytes` (the comments were placed), and some have `commentBytesRead` above 0
       (the agent read a file that had them). If every comments-arm run shows `{}`, the
-      treatment never reached the agent: stop and report it.
+      treatment never reached the agent: stop and report it. Checked 2026-10-10: all 19
+      comments-arm runs placed comments in every annotated file and read 438 to 3,897 bytes
+      of them.
 - [ ] `status --harness claude` shows 90 of 90 finished and no runs with an error.
 - [ ] `node scripts\benchmark\main.ts report --work C:\cb` ran; record the Claude Code
       section's median per-task changes here.
 
 | Date | Log | Finished | Errors | Notes |
 | --- | --- | --- | --- | --- |
+| 2026-10-09 | `20261010-0338.log` | 40 of 90 | 0 | Started 03:38 right after R1, ended 07:09 at the stop time. 31 runs, all passed (both arms), no timeouts; median 6.0 min, slowest 25.0 min. |
 
 Kill criteria: none of its own; R1's gates decided whether it runs.
 
