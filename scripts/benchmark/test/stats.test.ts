@@ -54,10 +54,10 @@ describe("bootstrapMedianChange", () => {
       ["b", { none: [10, 10], comments: [15, 15] }],
     ]);
 
-    expect(bootstrapMedianChange(constant, "none", "comments", { iterations: 200, seed: 1 })).toEqual({
-      low: 0.15,
-      high: 0.15,
-    });
+    const interval = bootstrapMedianChange(constant, "none", "comments", { iterations: 200, seed: 1 });
+
+    expect(interval.low).toBeCloseTo(0.15, 12);
+    expect(interval.high).toBe(interval.low);
   });
 });
 

@@ -53,6 +53,44 @@ export function pairedDifferences(
   return pairs;
 }
 
+export interface Interval {
+  low: number;
+  high: number;
+}
+
+/** `values` drawn with replacement, as many as there are. */
+function resample(values: number[], random: () => number): number[] {
+  return values.map(() => values[Math.floor(random() * values.length)]!);
+}
+
+/**
+ * A 95% percentile bootstrap interval for the median of the per-task relative changes
+ * (`pairedDifferences`). Each iteration resamples every task's runs within each arm, so
+ * the interval reflects run-to-run noise with the task set held fixed.
+ */
+export function bootstrapMedianChange(
+  byTask: Map<string, Record<string, number[]>>,
+  baselineArm: string,
+  treatmentArm: string,
+  options: { iterations: number; seed: number },
+): Interval {
+  const random = seededRandom(options.seed);
+  const medians: number[] = [];
+  for (let i = 0; i < options.iterations; i++) {
+    const resampled = new Map<string, Record<string, number[]>>();
+    for (const [task, arms] of byTask) {
+      resampled.set(task, {
+        [baselineArm]: resample(arms[baselineArm] ?? [], random),
+        [treatmentArm]: resample(arms[treatmentArm] ?? [], random),
+      });
+    }
+    const median = spreadOf(pairedDifferences(resampled, baselineArm, treatmentArm).map((p) => p.relative))?.median;
+    if (median !== undefined) medians.push(median);
+  }
+  medians.sort((a, b) => a - b);
+  return { low: quantile(medians, 0.025), high: quantile(medians, 0.975) };
+}
+
 /** A seeded pseudo-random generator (mulberry32) returning values in [0, 1). */
 function seededRandom(seed: number): () => number {
   let state = seed >>> 0;
