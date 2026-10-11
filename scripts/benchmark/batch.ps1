@@ -1,5 +1,5 @@
 # Runs one unattended benchmark batch on Windows against a local model server
-# (docs/plans/benchmark-runs.md). Keeps the PC awake while it runs, starts the server if it
+# (docs/plans/archived/benchmark-runs.md). Keeps the PC awake while it runs, starts the server if it
 # is not answering, runs each step of main.ts in order, and logs everything to
 # <Work>\batches\<date>-<time>.log, ending with `status`.
 #

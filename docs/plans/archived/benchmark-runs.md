@@ -1,6 +1,6 @@
 # Benchmark runs: overnight batches on Strata
 
-> Runs the B3 benchmark ([v2.md § B3](v2.md#b3), method in [../benchmark.md](../benchmark.md))
+> Runs the B3 benchmark ([v2.md § B3](../v2.md#b3), method in [../../benchmark.md](../../benchmark.md))
 > on this PC's local model instead of the Anthropic API: **Qwen3.8-Flash-Next IQ2_XS on
 > Strata**, served at `http://127.0.0.1:8411` (owner's decision, 2026-10-09; no API key or
 > subscription use). Runs happen in unattended overnight batches over several nights. A
@@ -9,13 +9,15 @@
 > **Sign-off:** every planned run has a `result.json`, no batch left a run it did not record
 > or retry, and the report and the go/no-go are in benchmark.md and v2.md § B3.
 >
-> **Next:** R4, results and the go/no-go.
+> **Done 2026-10-11.** All 180 runs recorded; results in
+> [../../benchmark.md § Results](../../benchmark.md#results), go/no-go in
+> [v2.md § B3](../v2.md#b3).
 > **Branch:** `benchmark-harness` (shared with v2 B3).
 
 - ~~[R1 — First night: smoke, calibration, comments](#r1)~~
 - ~~[R2 — Claude Code: all 90 runs](#r2)~~
 - ~~[R3 — pi: all 90 runs](#r3)~~
-- [R4 — Results and the go/no-go](#r4)
+- ~~[R4 — Results and the go/no-go](#r4)~~
 
 ## Traps
 
@@ -239,19 +241,20 @@ prints NaN% for pi cost; R4 should drop that column for pi.
 Kill criteria: pi cannot run against Strata and the fix is not small. Then strike R3 with
 the reason and report Claude Code alone.
 
-### R4 — Results and the go/no-go · Opus 5.5 / high {#r4}
+### ~~R4 — Results and the go/no-go · Opus 5.5 / high~~ {#r4}
 
-**Status:** Not started. Needs R2, and R3 or its strike. R1's calibration passed 7 of 7
-edit tasks, so success cannot discriminate between the arms; compare tokens and time.
+**Status:** Done 2026-10-11. Comments did not beat none on either harness; the kill
+criterion is met (v2.md § B3). The report gained a bootstrap interval on the median
+per-task change and drops the cost column for pi.
 
-- [ ] `report --work C:\cb` output is in `docs/benchmark.md` § Results, with the model, the
+- [x] `report --work C:\cb` output is in `docs/benchmark.md` § Results, with the model, the
       Strata build, the dates, and every deviation from the method (calibration runs counted
       in R2, timeout changes, code changes mid-matrix).
-- [ ] A summary in v2.md § B3 against its kill criteria: comments better than none on
+- [x] A summary in v2.md § B3 against its kill criteria: comments better than none on
       tokens or success, or not, with the spread. Note that the result is for a local
       model and may not carry over to Claude.
-- [ ] The B3 boxes are ticked, B3 is struck if done, and this plan is archived to
+- [x] The B3 boxes are ticked, B3 is struck if done, and this plan is archived to
       `docs/plans/archived/`.
-- [ ] The `benchmark-harness` branch goes out as one PR (`ship-it`).
+- [x] The `benchmark-harness` branch goes out as one PR (`ship-it`).
 
 Kill criteria: none.
