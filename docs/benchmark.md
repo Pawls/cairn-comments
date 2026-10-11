@@ -131,12 +131,21 @@ The click setup uses `uv`; the cairn-comments setup runs `npm ci`. `--provider <
 points the proxy at a stand-in for the API, which is how the harness was exercised end to
 end without spending: annotate, both arms, grading, and the report, on both harnesses.
 
-**Cost against the Anthropic API**, should the benchmark be repeated on Claude. At 2026-10 list prices per million tokens (Opus 5.5 $4 input, $20 output, $0.20
-cache read; Haiku 5.5 $0.10 input and $0.50 output up to 100K-token prompts, five times that
-beyond), an agent run of 30 to 50 turns is expected at roughly $0.50 to $2 on Opus and $0.05
-to $0.20 on Haiku, so 90 runs per harness at roughly $50 to $150 or $5 to $20, plus the two
-annotating sessions. The first real runs replace these estimates. Write the comments with
-the strongest model whatever runs the tasks: they are the treatment, written once.
+**Cost against the Anthropic API**, should the benchmark be repeated on Claude. The 2,630
+model calls of the 90 Claude Code runs on Strata, priced at 2026-10 list prices (new prompt
+tokens as 5-minute cache writes, which Claude Code's prompt caching makes them; Haiku 5.5's
+over-100K rate for the 61 calls whose prompt passed it), come to:
+
+| Model | Per run, median | Largest run | 90 runs |
+| --- | --- | --- | --- |
+| Opus 5.5 ($5 cache write, $0.20 cache read, $20 output) | $1.02 | $5.16 | $99 |
+| Sonnet 5.5 ($2.50, $0.10, $10) | $0.51 | $2.58 | $50 |
+| Haiku 5.5 ($0.125, $0.01, $0.50 up to 100K-token prompts; five times that beyond) | $0.03 | $0.37 | $3.61 |
+
+Claude would take its own number of turns and its tokenizer counts differently, so treat
+these as the order of magnitude. Cache reads are about 96% of the input tokens, so the
+cache-read price decides the bill. Write the comments with the strongest model whatever runs
+the tasks: they are the treatment, written once.
 
 ## Results
 
@@ -198,6 +207,25 @@ repository decides it.
   library and likely in the model's training data, so its comments tell the model less than
   they would about private code.
 - **Whether it carries over to Claude.** Every run used one local model.
+
+### The next test: a large repository
+
+The owner chose BoxelBuilder (about 377,000 lines of Python, 2026-10-11), on the same
+Strata model so the two results compare. Its own comments are the treatment: about 22,000
+own-line comments, roughly one per 17 lines, written as the code was developed rather than
+after the fact. The arms differ only in those comments:
+
+- **as committed:** the task's start commit as it is.
+- **stripped:** the same commit with every comment removed except functional ones
+  (shebangs, encoding lines, `# noqa`, `# type: ignore`, `# pragma`, `# fmt:`). Docstrings
+  stay in both arms. Removal goes through Python's `tokenize`, and `ast.dump` of every file
+  must match before and after, proving nothing else changed.
+- **in both arms:** markdown files, `.claude/`, and other agent skill folders are removed,
+  since committed plans and handoffs can describe the fix a task asks for. An identical,
+  minimal AGENTS.md says only how to run the tests.
+
+The tasks name symptoms rather than files or functions, about half are questions, and a
+calibration run of the stripped arm must leave room below a full pass.
 
 ### Where the change came from
 
