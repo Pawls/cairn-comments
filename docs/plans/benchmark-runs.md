@@ -213,12 +213,11 @@ Kill criteria: none of its own; R1's gates decided whether it runs.
 
 ### R3 — pi: all 90 runs · Sonnet 5.5 / medium {#r3}
 
-**Status:** Not started. pi reaches Strata through its Messages API, which pi has not been
-run against yet. pi has no Cairn hook, so this matrix tests comments without the post-edit
-hook.
-**Batch:** first night `run --harness pi --arms none --reps 1 --only sidecar-merge-placement; run --harness pi --stop-at 07:00`, later nights `run --harness pi --stop-at 07:00`
+**Status:** 77 of 90 finished after the first night; 13 runs left, about 0.8 h of agent time.
+pi has no Cairn hook, so this matrix tests comments without the post-edit hook.
+**Batch:** `run --harness pi --stop-at 07:00`
 
-- [ ] The pi smoke run (the first step) has a `result.json` whose `calls.jsonl` shows status
+- [x] The pi smoke run (the first step) has a `result.json` whose `calls.jsonl` shows status
       200 responses. If it failed, stop and report the response body; the pi side of the
       harness (`piProviders` in `scripts/benchmark/harnesses.ts`) is the likely fix, which
       the owner must approve under § Traps.
@@ -227,6 +226,7 @@ hook.
 
 | Date | Log | Finished | Errors | Notes |
 | --- | --- | --- | --- | --- |
+| 2026-10-11 | `20261011-0139.log` | 77 of 90 | 0 | Started 01:39, ended 07:04 at the stop time (`batch ended`). Smoke run passed, all 11 calls status 200. No timeouts. Edit tasks passed: none 22 of 30, comments 23 of 31; questions 8 of 8 in both arms. Median 3.6 min per run. |
 
 Kill criteria: pi cannot run against Strata and the fix is not small. Then strike R3 with
 the reason and report Claude Code alone.
