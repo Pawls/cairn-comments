@@ -140,13 +140,14 @@ the strongest model whatever runs the tasks: they are the treatment, written onc
 
 ## Results
 
-**Comments did not beat no comments, on either harness.** Every Claude Code run passed in
-both arms, so success could not discriminate, and the comments arm used 15.8% more input
-tokens (median per-task change; the 95% bootstrap interval runs from -5.4% to +47.2%). On pi
-the change was -2.0% (-18.5% to +35.8%) with 36 of 45 runs passing against 35 of 45. Both
-intervals include zero: the benchmark shows no saving, and it cannot rule out a small one
-either way. By the kill criterion above, the claim that comments make agents cheaper is not
-supported. This is a result for one local model and may not carry over to Claude.
+**On two small repositories, comments made no measurable difference.** Every Claude Code run
+passed in both arms, so success could not discriminate, and the comments arm used 15.8% more
+input tokens (median per-task change; the 95% bootstrap interval runs from -5.4% to +47.2%).
+On pi the change was -2.0% (-18.5% to +35.8%) with 36 of 45 runs passing against 35 of 45.
+Both intervals include zero, so the runs show neither a saving nor a cost. The kill criterion
+is not settled by this alone: both repositories are small enough to read in a few files, which
+is where comments should help least (§ What this does not show). A test on a large
+repository decides it.
 
 ### Setup
 
@@ -177,6 +178,27 @@ supported. This is a result for one local model and may not carry over to Claude
   at $5 / $25 / $0.50 per million input, output, and cache-read tokens, so its cost column
   is a weighted token count. pi reports 0, and the report leaves the column out for it.
 
+### What this does not show
+
+- **Whether comments help on a large codebase.** Non-test source is about 8,200 lines in
+  cairn-comments and 12,700 in click, and agents read a median of 4 or 5 files per run. When
+  a search and a few reads find the answer, comments can only add bytes to read. They are
+  expected to pay where the code is too large to explore cheaply.
+- **Whether comments help an agent find its way.** Every edit prompt was a precise bug
+  report with a reproduction or the exact error message, and the click prompts named the API
+  involved, so the prompt did the navigation that comments would otherwise help with.
+- **Whether comments raise success.** Claude Code passed every run in both arms, so the
+  tasks were below the model's ceiling and only tokens and time could move.
+- **Whether comments help understanding.** Only 2 of the 9 tasks were questions, too few to
+  say anything on their own.
+- **Whether well-written comments help.** The comments were written after the fact by the
+  quantized model under test, not by agents while doing the work, and there were few of them:
+  one comment per 130 source lines in click.
+- **Whether the result holds for code the model has not seen.** click is a widely used
+  library and likely in the model's training data, so its comments tell the model less than
+  they would about private code.
+- **Whether it carries over to Claude.** Every run used one local model.
+
 ### Where the change came from
 
 Split by repository, a pattern the benchmark was not designed to test (four and five tasks)
@@ -194,9 +216,8 @@ In the comments arm the agents read a median of about 2,000 to 2,300 comment byt
 cairn-comments against 700 to 900 on click. The cause is not established. cairn-comments is
 the tool itself, and its tasks are about comment placement and sidecars, so its comments
 describe the same machinery the agent is debugging; files rewritten by the post-edit hook are
-not it (one "modified since read" error in 45 Claude Code comments-arm runs). A repeat with
-more repositories, or with comments from a stronger model, would tell whether the click
-saving holds.
+not it (one "modified since read" error in 45 Claude Code comments-arm runs). With four and
+five tasks per repository, this is a lead for the large-repository test, not a finding.
 
 The report (`npm run benchmark -- report --work /c/cb`, as § Running it writes it):
 

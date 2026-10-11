@@ -243,8 +243,8 @@ the reason and report Claude Code alone.
 
 ### ~~R4 — Results and the go/no-go · Opus 5.5 / high~~ {#r4}
 
-**Status:** Done 2026-10-11. Comments did not beat none on either harness; the kill
-criterion is met (v2.md § B3). The report gained a bootstrap interval on the median
+**Status:** Done 2026-10-11. Comments made no measurable difference on either harness; on
+repositories this small that leaves B3's kill criterion open (v2.md § B3). The report gained a bootstrap interval on the median
 per-task change and drops the cost column for pi.
 
 - [x] `report --work C:\cb` output is in `docs/benchmark.md` § Results, with the model, the
