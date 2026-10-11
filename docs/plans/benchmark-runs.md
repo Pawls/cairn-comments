@@ -9,12 +9,12 @@
 > **Sign-off:** every planned run has a `result.json`, no batch left a run it did not record
 > or retry, and the report and the go/no-go are in benchmark.md and v2.md § B3.
 >
-> **Next:** R3, pi's 90 runs.
+> **Next:** R4, results and the go/no-go.
 > **Branch:** `benchmark-harness` (shared with v2 B3).
 
 - ~~[R1 — First night: smoke, calibration, comments](#r1)~~
 - ~~[R2 — Claude Code: all 90 runs](#r2)~~
-- [R3 — pi: all 90 runs](#r3)
+- ~~[R3 — pi: all 90 runs](#r3)~~
 - [R4 — Results and the go/no-go](#r4)
 
 ## Traps
@@ -211,9 +211,9 @@ doubled in cost (+104.9%) and style-color-validation fell 32.3%.
 
 Kill criteria: none of its own; R1's gates decided whether it runs.
 
-### R3 — pi: all 90 runs · Sonnet 5.5 / medium {#r3}
+### ~~R3 — pi: all 90 runs · Sonnet 5.5 / medium~~ {#r3}
 
-**Status:** 77 of 90 finished after the first night; 13 runs left, about 0.8 h of agent time.
+**Status:** Done 2026-10-11. 90 of 90 across two batches, about 6.5 hours of batch time.
 pi has no Cairn hook, so this matrix tests comments without the post-edit hook.
 **Batch:** `run --harness pi --stop-at 07:00`
 
@@ -221,12 +221,20 @@ pi has no Cairn hook, so this matrix tests comments without the post-edit hook.
       200 responses. If it failed, stop and report the response body; the pi side of the
       harness (`piProviders` in `scripts/benchmark/harnesses.ts`) is the likely fix, which
       the owner must approve under § Traps.
-- [ ] `status --harness pi` shows 90 of 90 finished and no runs with an error.
-- [ ] `report` ran; record the pi section's median per-task changes here.
+- [x] `status --harness pi` shows 90 of 90 finished and no runs with an error.
+- [x] `report` ran; record the pi section's median per-task changes here.
+
+Median per-task change, comments arm against none (9 tasks, 5 reps each): input tokens
+-2.0% (lower on 5 of 9), wall time -2.9% (lower on 5 of 9). Success 36/45 comments against
+35/45 none, so pi's failures give the success comparison some room, but the per-task counts
+(for example delete-last-comment-stages-sidecar 0/5 against 2/5, rename-keeps-orphan-entries
+4/5 against 2/5) are small and point both ways. Cost is 0 for every pi run, so the report
+prints NaN% for pi cost; R4 should drop that column for pi.
 
 | Date | Log | Finished | Errors | Notes |
 | --- | --- | --- | --- | --- |
 | 2026-10-11 | `20261011-0139.log` | 77 of 90 | 0 | Started 01:39, ended 07:04 at the stop time (`batch ended`). Smoke run passed, all 11 calls status 200. No timeouts. Edit tasks passed: none 22 of 30, comments 23 of 31; questions 8 of 8 in both arms. Median 3.6 min per run. |
+| 2026-10-11 | `20261011-1014.log` | 90 of 90 | 0 | Daytime batch, started 10:14 (Strata had unloaded; the launcher reloaded it), ended 11:38 (`batch ended`). 13 runs. The matrix has 1 timeout in total (none arm); not traced to a task. No code changes mid-matrix. |
 
 Kill criteria: pi cannot run against Strata and the fix is not small. Then strike R3 with
 the reason and report Claude Code alone.
