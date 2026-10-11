@@ -1,0 +1,124 @@
+{
+  "repos": {
+    "cairn-comments": {
+      "url": "https://github.com/Pawls/cairn-comments.git",
+      "base": "4ae0920d9f6f3d0bec3e01d4253d7faccc41df77",
+      "setup": ["npm ci --prefer-offline --no-audit --no-fund"]
+    },
+    "click": {
+      "url": "https://github.com/pallets/click.git",
+      "base": "6ec99f89261b32f8a50848786eca055e1967659f",
+      "setup": [
+        "uv venv .venv --quiet --python 3.13",
+        "uv pip install --quiet --python {venv-python} -e . pytest==9.1.1"
+      ]
+    }
+  },
+  "tasks": [
+    {
+      "id": "stale-tag-and-eof-trailing",
+      "repo": "cairn-comments",
+      "kind": "fix",
+      "start": "f700fe88fd2636e371db2dd61e52cae649e8a49b",
+      "solution": "b5605b0c191157da8be34a8327dc8999ad471c53",
+      "testFiles": ["packages/core/test/placement.test.ts"],
+      "testCommand": "npm run build && npx vitest run packages/core/test/placement.test.ts",
+      "prompt": "I found two comment placement bugs in the core package. First: in an agent worktree a placed comment can show up as `#~<id> [stale?] note`; if I delete the note text so only `#~<id> [stale?]` is left on its own line, the next recording strips the tag but also eats the line break, so the comment marker gets glued onto the following line of code. It should leave `#~<id>` alone on its own line. Second: a trailing (end-of-line) comment whose recorded row lies past the end of the current file is silently dropped when comments are placed back; it should still be placed (on its own line is fine) instead of disappearing. Please fix both in the code; there are tests in the repo for placement, and the existing ones should keep passing.",
+      "verified": "start: exit 1 (placement.test.ts: 2 failed / 65 passed; stale tag case glued `#~jgnj` onto `a()`, past-EOF trailing comment missing from output); solution: exit 0 (67 passed)"
+    },
+    {
+      "id": "unparseable-harness-settings",
+      "repo": "cairn-comments",
+      "kind": "fix",
+      "start": "b5605b0c191157da8be34a8327dc8999ad471c53",
+      "solution": "dbd6224d057a5c3c7e133046055b872ffc1a69db",
+      "testFiles": ["packages/cli/test/hooks.test.ts"],
+      "testCommand": "npm run build && npx vitest run packages/cli/test/hooks.test.ts",
+      "prompt": "My repository has a `.claude/settings.local.json` that is not strict JSON (it has trailing commas, which Claude Code itself accepts). Now plain `cairn init` and `cairn uninstall` both fail with `cairn: .claude/settings.local.json is not valid JSON, so the claude-code hook was left alone: ...`, even though I never asked for any hook. A file that cannot be parsed cannot contain our hook, so init and uninstall should leave it untouched and succeed without mentioning it. Explicitly asking to install into it with `cairn init --hooks claude-code` should still fail with a non-zero exit and say the file is not valid JSON. Please make the change; the CLI has integration tests in the repo (they run the built bundle, so build before running them).",
+      "verified": "start: exit 1 (hooks.test.ts: 1 failed / 10 passed; `cairn init` exited non-zero with 'is not valid JSON'); solution: exit 0 (11 passed)"
+    },
+    {
+      "id": "rename-keeps-orphan-entries",
+      "repo": "cairn-comments",
+      "kind": "fix",
+      "start": "dbd6224d057a5c3c7e133046055b872ffc1a69db",
+      "solution": "c99498b2e05a6b040d73097386fcea9020cf866f",
+      "testFiles": ["packages/cli/test/check.test.ts"],
+      "testCommand": "npm run build && npx vitest run packages/cli/test/check.test.ts",
+      "prompt": "In an agent worktree (one where the filter puts the AI comments back into the files), renaming a source file with `git mv a.py b.py` and committing loses data. The commit succeeds and the new sidecar for b.py has the comments that were showing in the file, but entries of a.py's sidecar that did not place anywhere (orphans the sidecar was keeping) are gone from the committed sidecar. A rename should carry every entry of the old sidecar over to the new file's sidecar, placed or not. Please fix this; the repo has CLI integration tests for the pre-commit check (they run the built bundle, so build first).",
+      "verified": "start: exit 1 (check.test.ts: 1 failed / 18 passed; committed b.py sidecar lacks 'an orphan nobody placed'); solution: exit 0 (19 passed)"
+    },
+    {
+      "id": "delete-last-comment-stages-sidecar",
+      "repo": "cairn-comments",
+      "kind": "fix",
+      "start": "83ba42d864d68f0a8c21d7bd2f00da507af03302",
+      "solution": "ce1e7a42631f5b7acbcccc7b217d71fcaa2c1bf5",
+      "testFiles": ["packages/cli/test/check.test.ts"],
+      "testCommand": "npm run build && npx vitest run packages/cli/test/check.test.ts",
+      "prompt": "In an agent worktree, when I delete the only AI comment in a file (along with a code change), `git add` that file, and commit, the commit goes through but the file's sidecar under `.agents/comments/` is still in HEAD, even though the tool already deleted it from disk. The working tree is then left dirty with the sidecar's deletion. Deleting a file's last comment should commit the sidecar's removal together with the code change and leave `git status` clean. Please fix it; there are CLI integration tests in the repo (they run the built bundle, so build first).",
+      "verified": "start: exit 1 (check.test.ts: 1 failed / 19 passed; `git cat-file -e HEAD:<sidecar>` still succeeds after the commit); solution: exit 0 (20 passed)"
+    },
+    {
+      "id": "sidecar-merge-placement",
+      "repo": "cairn-comments",
+      "kind": "question",
+      "start": "83ba42d864d68f0a8c21d7bd2f00da507af03302",
+      "prompt": "Suppose branch A rewords one AI comment's text, and branch B leaves that comment's text alone but its recording updated where the comment goes (the code moved, so the entry's placement metadata changed). When one branch is merged into the other, what does that comment's entry in the merged sidecar hold: whose text, and whose placement? Which code decides it and how does git get there? And what happens instead if both branches had reworded the text differently? Answer from the code; do not change any files.",
+      "answerKey": [
+        "mergeEntry|mergeSidecars",
+        "merge-sidecar|merge driver|merge\\.cairn|merge=cairn",
+        "placement[\\s\\S]{0,250}(lost|drop|discard|ignor|not (kept|carried|preserved|merged|applied)|overwrit|loses|thrown away)|(lost|drop|discard|ignor|loses|thrown away)[\\s\\S]{0,250}placement",
+        "conflict markers|<<<<<<<|exits? (with )?(code |status )?1|non-?zero"
+      ],
+      "answer": "The entry takes A's reworded text together with A's whole metadata, including A's unchanged (base) placement, so B's placement update is dropped: in mergeEntry (packages/core/src/merge.ts) a body changed on only one side wins with that side's entry copied whole, because provenance and placement travel with the body they were written with. Git reaches this because `init` marks `.agents/comments/**` with `merge=cairn` and sets `merge.cairn.driver` to `cairn merge-sidecar %O %A %B`, whose runMergeSidecar calls mergeSidecars and writes the result over %A. Metadata is merged per key (placement keys as one unit) only when both bodies are equal. If both sides reworded the text differently, the body is written with `<<<<<<< ours` / `=======` / `>>>>>>> theirs` markers, the id is reported on stderr, and the driver exits 1 so git reports a conflict on that sidecar."
+    },
+    {
+      "id": "path-dash-byteswarning",
+      "repo": "click",
+      "kind": "fix",
+      "start": "fe3ad76e5807e7a401ed7520f051071c6ae1fa6e",
+      "solution": "16fc00e2f4a2717a521084f193709a6058afc693",
+      "testFiles": ["tests/test_types.py"],
+      "testCommand": "{venv-python} -m pytest tests/test_types.py -q",
+      "prompt": "Running a Click program under `python -bb` (which turns bytes/str comparison warnings into errors) crashes when a `click.Path(allow_dash=True)` parameter converts its value. For example, `python -bb -c \"import click; click.Path(allow_dash=True).convert('-', None, None)\"` raises `BytesWarning: Comparison between bytes and string`, and so do `''` and `b''`. Click should recognize the `-` (stdin/stdout) value for both str and bytes inputs without ever comparing bytes with str. Please fix this in the library; the test suite is under `tests/`.",
+      "verified": "start: exit 1 (test_path_dash_no_byteswarning: subprocess under -bb raised BytesWarning; 1 failed / 41 passed); solution: exit 0 (42 passed, 1 skipped)"
+    },
+    {
+      "id": "style-color-validation",
+      "repo": "click",
+      "kind": "feature",
+      "start": "8dd4d60eb5ad4532abdd9b2809a7d9e2aa679b87",
+      "solution": "8a4ce842564ae94ab050062db8525196ad476c19",
+      "testFiles": ["tests/test_utils/test_style.py"],
+      "testCommand": "{venv-python} -m pytest tests/test_utils/test_style.py -q",
+      "prompt": "`click.style()` and `click.secho()` handle their `fg`/`bg` color arguments loosely. The 256-color index `0` (black) is silently ignored, so `click.style('x', fg=0)` returns text with no color code, and bad values are not checked: `fg=256`, `fg=-1`, `fg=True`, floats, or RGB tuples of the wrong length or with out-of-range parts go straight into the escape sequence, while an unknown name raises `TypeError`. Please make `fg` and `bg` accept exactly a known color name, an int from 0 to 255, or a 3-item tuple or list of ints from 0 to 255 (booleans do not count as ints), and raise `ValueError` with a message starting `Unknown color` for anything else, including an empty string. Existing named colors, 256-color and RGB output must not change. Tests live under `tests/`.",
+      "verified": "start: exit 1 (test_style.py: 38 failed / 62 passed; fg=0 dropped, invalid values not raising ValueError, 'banana' raised TypeError); solution: exit 0 (100 passed)"
+    },
+    {
+      "id": "progressbar-final-position",
+      "repo": "click",
+      "kind": "fix",
+      "start": "8b44edfff7d9a6c895fa804148c16b3a0bc9efb5",
+      "solution": "150d1071d69c5cdad7de78590013ffe56cf9e3bb",
+      "testFiles": ["tests/test_termui.py"],
+      "testCommand": "{venv-python} -m pytest tests/test_termui.py -q",
+      "prompt": "`click.progressbar` with `show_pos=True` never shows completion when `update_min_steps` does not evenly divide the total. For example, `with click.progressbar(range(20), show_pos=True, update_min_steps=7) as bar:` followed by `for _ in bar: pass` finishes showing `14/20`, and `bar.pos` is 14 afterwards; with `update_min_steps=25` it stays at 0. Driving it manually with `length=20` and `bar.update(1)` twenty times has the same problem. When the bar finishes it should land on its true final position (`20/20`, `pos == 20`) whatever the threshold. Please fix it; tests exist under `tests/`.",
+      "verified": "start: exit 1 (test_progressbar_lands_on_final_position: 6 failed, pos 18/14/0 instead of 20; 243 passed); solution: exit 0 (249 passed, 11 skipped)"
+    },
+    {
+      "id": "echo-ansi-stripping",
+      "repo": "click",
+      "kind": "question",
+      "start": "8b44edfff7d9a6c895fa804148c16b3a0bc9efb5",
+      "prompt": "When my command calls `click.echo(click.style('hi', fg='red'))`, the color codes show up in a terminal but disappear when I redirect output to a file, and they are also missing from `CliRunner().invoke(...).output` in my tests. How does Click decide whether to strip the ANSI codes, in what order does it consider its inputs, and why does CliRunner output come out plain by default (and how do I keep the codes there)? Point to the functions involved; do not change any files.",
+      "answerKey": [
+        "should_strip_ansi",
+        "resolve_color_default|ctx\\.color|context'?s? color|Context\\.color|color (setting|attribute) (of|on|from) the (current )?context",
+        "isatty|not a tty|isn'?t a tty|not a terminal|isn'?t a terminal|non-?terminal|non-?tty|interactive terminal",
+        "color\\s*=\\s*True|default_color|invoke\\([^)]*color"
+      ],
+      "answer": "`echo` (utils.py) strips when `should_strip_ansi(file, resolve_color_default(color))` returns true. An explicit `color=` passed to echo wins; otherwise resolve_color_default falls back to the current Context's `color` (set via `Context(color=...)`/`invoke(color=...)`, inherited from the parent context); if that is still None, `_compat.should_strip_ansi` strips when the stream is not a TTY (`isatty`) and is not Jupyter kernel output, and leaves streams with a `color` attribute (the progress bar's wrapper) alone. CliRunner.isolation replaces `utils.should_strip_ansi` and `_compat.should_strip_ansi` with a version that, when no color is given, returns `not default_color`, where default_color is the `color` argument of `invoke`/`isolation`, which defaults to False, so output is stripped unless you call `runner.invoke(cli, color=True)`."
+    }
+  ]
+}
