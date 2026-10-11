@@ -55,4 +55,18 @@ describe("renderReport", () => {
   it("states how far the proxy's totals are from the harness's own", () => {
     expect(report).toContain("largest difference between proxy and harness token totals: 0.0%");
   });
+
+  it("gives the median per-task change with a bootstrap interval", () => {
+    expect(report).toMatch(/input tokens, all -1\.4% \(95% interval -?\d+\.\d% to \+\d+\.\d%; lower on 1 of 2 tasks\)/);
+  });
+
+  it("leaves out cost for a harness that reports none", () => {
+    const free = results.map((r) => ({ ...r, harnessTotals: { ...r.harnessTotals!, costUsd: 0 } }));
+    const freeReport = renderReport(free);
+
+    expect(report).toContain("Cost ($)");
+    expect(freeReport).not.toContain("Cost ($)");
+    expect(freeReport).not.toContain("cost ($)");
+    expect(freeReport).not.toContain("NaN");
+  });
 });
