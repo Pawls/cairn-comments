@@ -1,0 +1,58 @@
+import { spawnSync } from "node:child_process";
+import { describe, expect, it } from "vitest";
+import { findPython, STRIP_SCRIPT } from "../prepare.ts";
+
+const python = findPython();
+
+function strip(source: string): { status: number | null; stdout: string } {
+  const result = spawnSync(python!, [STRIP_SCRIPT, "-"], { input: source, encoding: "utf8" });
+  return { status: result.status, stdout: result.stdout };
+}
+
+describe.skipIf(!python)("strip_comments.py", () => {
+  it("deletes own-line comments whole and trims trailing ones", () => {
+    const source = "# header\nx = 1  # why\n    \ndef f():\n    # note\n    return x # tail\n";
+
+    expect(strip(source).stdout).toBe("x = 1\n    \ndef f():\n    return x\n");
+  });
+
+  it("keeps the functional comments", () => {
+    const source = [
+      "#!/usr/bin/env python",
+      "# -*- coding: utf-8 -*-",
+      "import a  # noqa: F401",
+      "b: int = f()  # type: ignore[assignment]",
+      "if x:  # pragma: no cover",
+      "    pass",
+      "# fmt: off",
+      "y = [1,2]",
+      "# fmt: on",
+      "",
+    ].join("\n");
+
+    expect(strip(source).stdout).toBe(source);
+  });
+
+  it("leaves a # inside strings and docstrings alone", () => {
+    const source = 'def f():\n    """# not a comment"""\n    return "a # b"  # real\n';
+
+    expect(strip(source).stdout).toBe('def f():\n    """# not a comment"""\n    return "a # b"\n');
+  });
+
+  it("keeps each line's terminator", () => {
+    expect(strip("# c\r\nx = 1  # d\r\ny = 2\r\n").stdout).toBe("x = 1\r\ny = 2\r\n");
+  });
+
+  it("removes a comment line inside a bracketed expression", () => {
+    const source = "x = [\n    1,  # one\n    # two\n    2,\n]\n";
+
+    expect(strip(source).stdout).toBe("x = [\n    1,\n    2,\n]\n");
+  });
+
+  it("fails on source it cannot parse, writing nothing", () => {
+    const result = strip("def (:\n  # c\n");
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toBe("");
+  });
+});
