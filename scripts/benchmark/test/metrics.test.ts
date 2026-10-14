@@ -57,6 +57,30 @@ describe("runMetrics", () => {
 
     expect(runMetrics(calls, { model: "m", agentDir }).calls).toBe(1);
   });
+
+  it("measures only the probe's calls of a log that also holds its warm-up's", () => {
+    const warmup = { ...call("m", [{ name: "Read", input: { file_path: "warm.ts" } }], "warm-up answer"), phase: "warmup" as const };
+    const probe = { ...call("m", [], "probe answer"), phase: "probe" as const };
+
+    const metrics = runMetrics([warmup, warmup, probe], { model: "m", agentDir });
+
+    expect(metrics.calls).toBe(1);
+    expect(metrics.tokens.input).toBe(10);
+    expect(metrics.filesRead).toEqual([]);
+    expect(metrics.finalText).toBe("probe answer");
+  });
+
+  it("gives the context of the probe's first call: uncached input and both cache counts", () => {
+    const warmup = { ...call("m", []), phase: "warmup" as const };
+    const usage = { input: 7, output: 1, cacheRead: 150_000, cacheWrite: 300 };
+    const first: LoggedCall = { path: "/v1/messages", status: 200, ms: 10, phase: "probe", response: { model: "m", usage, tools: [], text: "" } };
+
+    expect(runMetrics([warmup, first, call("m", [])], { model: "m", agentDir }).firstCallInput).toBe(150_307);
+  });
+
+  it("counts every call of a log written before calls had phases", () => {
+    expect(runMetrics([call("m", []), call("m", [])], { model: "m", agentDir }).calls).toBe(2);
+  });
 });
 
 describe("providerFailed", () => {

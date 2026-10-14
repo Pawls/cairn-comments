@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runMetrics, type Phase } from "../metrics.ts";
 import { startRecordingProxy } from "../proxy.ts";
-import { readLog, runAgent, type AgentDirs, type AgentOptions } from "../runner.ts";
+import { readLog, runAgent, type AgentDirs, type AgentOptions } from "../agent.ts";
 import { startStandIn, type StandIn } from "../standin.ts";
 
 const FAKE_PI = path.join(path.dirname(fileURLToPath(import.meta.url)), "fake-pi.ts");

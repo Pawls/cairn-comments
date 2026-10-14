@@ -18,6 +18,7 @@ function result(task: string, arm: "none" | "comments", input: number, passed: b
     grade: { passed, testExit: passed ? 0 : 1 },
     metrics: {
       calls: 4,
+      firstCallInput: input / 2,
       turns: 3,
       tokens: { input, output: 100, cacheRead: 0, cacheWrite: 0 },
       toolCalls: { Read: 2 },
@@ -60,6 +61,16 @@ describe("renderReport", () => {
     expect(report).toMatch(/input tokens, all -1\.4% \(95% interval -?\d+\.\d% to \+\d+\.\d%; lower on 1 of 2 tasks\)/);
   });
 
+  it("reads a result written before depths existed as fresh", () => {
+    expect(report).toContain("## claude, fresh (m)");
+    expect(report).not.toContain("deep");
+  });
+
+  it("gives the median context of the first call", () => {
+    expect(report).toContain("First-call context");
+    expect(report).toMatch(/\| none \| 2\/3 \| .*\| 500 \(375 to 550\) \|/);
+  });
+
   it("leaves out cost for a harness that reports none", () => {
     const free = results.map((r) => ({ ...r, harnessTotals: { ...r.harnessTotals!, costUsd: 0 } }));
     const freeReport = renderReport(free);
@@ -68,5 +79,26 @@ describe("renderReport", () => {
     expect(freeReport).not.toContain("Cost ($)");
     expect(freeReport).not.toContain("cost ($)");
     expect(freeReport).not.toContain("NaN");
+  });
+});
+
+describe("renderReport with deep runs", () => {
+  const deep = (r: RunResult): RunResult => ({ ...r, depth: "deep", chain: "w1" });
+  const report = renderReport([
+    result("t1", "none", 1000, true),
+    result("t1", "comments", 800, true),
+    deep(result("t1", "none", 150_000, false)),
+    deep(result("t1", "comments", 140_000, true)),
+  ]);
+  const [fresh, deepSection] = report.split("## claude, deep (m)");
+
+  it("reports each depth in a section of its own", () => {
+    expect(fresh).toContain("## claude, fresh (m)");
+    expect(deepSection).toBeDefined();
+  });
+
+  it("keeps each depth's runs out of the other's tables", () => {
+    expect(fresh).toMatch(/\| t1 \| 1\/1 \| 1\/1 \| 1,000 \| 800 \| -20\.0% \|/);
+    expect(deepSection).toMatch(/\| t1 \| 0\/1 \| 1\/1 \| 150,000 \| 140,000 \| -6\.7% \|/);
   });
 });

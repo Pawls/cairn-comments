@@ -10,10 +10,24 @@ import type { Usage } from "./responses.ts";
 export type HarnessName = "claude" | "pi";
 export const HARNESSES: HarnessName[] = ["claude", "pi"];
 
+/**
+ * The conversation a launch belongs to: a new one, the next prompt of one, or a fork of one,
+ * which starts from that session's history and leaves it unchanged. Ids are UUIDs, which
+ * both harnesses accept.
+ */
+export type SessionStart =
+  | { kind: "new"; id: string }
+  | { kind: "continue"; id: string }
+  | { kind: "fork"; from: string; id: string };
+
 export interface LaunchOptions {
   prompt: string;
+  session: SessionStart;
   model: string;
-  /** An empty directory the harness uses as its whole configuration home. */
+  /**
+   * The harness's whole configuration home, empty at a session's first prompt. Claude Code
+   * keeps its sessions here, so a session's prompts and its forks share it.
+   */
   configDir: string;
   proxyUrl: string;
   /** Where pi writes its session log. */
@@ -60,6 +74,17 @@ const CLAUDE_SIDE_MODELS = [
   "CLAUDE_CODE_SUBAGENT_MODEL",
 ];
 
+function claudeSessionArgs(session: SessionStart): string[] {
+  switch (session.kind) {
+    case "new":
+      return ["--session-id", session.id];
+    case "continue":
+      return ["--resume", session.id];
+    case "fork":
+      return ["--resume", session.from, "--fork-session", "--session-id", session.id];
+  }
+}
+
 function claudeLaunch(options: LaunchOptions): Launch {
   const env: Record<string, string> = {
     CLAUDE_CONFIG_DIR: options.configDir,
@@ -72,7 +97,16 @@ function claudeLaunch(options: LaunchOptions): Launch {
   return {
     command: "claude",
     // The prompt goes on stdin: an argument would pass through Windows' command-line quoting.
-    args: ["-p", "--output-format", "stream-json", "--verbose", "--model", options.model, "--dangerously-skip-permissions"],
+    args: [
+      "-p",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--model",
+      options.model,
+      "--dangerously-skip-permissions",
+      ...claudeSessionArgs(options.session),
+    ],
     env,
     stdin: options.prompt,
   };
@@ -102,6 +136,12 @@ function piProviders(options: LaunchOptions): { providers: Record<string, unknow
   };
 }
 
+/** pi opens the session with `--session-id`, creating it when it does not exist yet. */
+function piSessionArgs(session: SessionStart): string[] {
+  if (session.kind === "fork") return ["--fork", session.from, "--session-id", session.id];
+  return ["--session-id", session.id];
+}
+
 function piLaunch(options: LaunchOptions): Launch {
   const { providers, model } = piProviders(options);
   writeFileSync(path.join(options.configDir, "models.json"), JSON.stringify({ providers }, null, 2));
@@ -121,6 +161,7 @@ function piLaunch(options: LaunchOptions): Launch {
       "--no-extensions",
       "--no-prompt-templates",
       "--no-themes",
+      ...piSessionArgs(options.session),
       "--",
       options.prompt,
     ],

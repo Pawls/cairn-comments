@@ -2,13 +2,23 @@
 import path from "node:path";
 import type { ModelResponse, Usage } from "./responses.ts";
 
+/** Which part of a deep run made a call: the warm-up chain, or the probe forked from it. */
+export type Phase = "warmup" | "probe";
+
 /** One line of the proxy log: a request and, for a model call, its parsed response. */
 export interface LoggedCall {
   path: string;
   status: number;
   /** Time from the request reaching the proxy to the response's last byte. */
   ms: number;
+  /** Absent in logs written before runs had phases; those calls are all the probe's. */
+  phase?: Phase;
   response?: ModelResponse;
+}
+
+/** Every token of context a call's model read: uncached, read from cache, and written to it. */
+export function contextOf(response: ModelResponse): number {
+  return response.usage.input + response.usage.cacheRead + response.usage.cacheWrite;
 }
 
 /** Each harness's file-reading tool and the argument that names the file. */
@@ -18,8 +28,10 @@ const READ_TOOLS = new Map([
 ]);
 
 export interface RunMetrics {
-  /** Every model call, side calls (titles, summaries) included. */
+  /** Every model call of the probe, side calls (titles, summaries) included. */
   calls: number;
+  /** The context the probe's first call carried; at depth `deep` that includes the warm-up. */
+  firstCallInput: number;
   /** Calls to the run's own model. */
   turns: number;
   tokens: Usage;
@@ -36,11 +48,13 @@ function relativeToAgent(agentDir: string, file: string): string {
 }
 
 /**
- * `model` matches by prefix, since the API may answer with a dated id for the alias the
- * harness asked for.
+ * Measures the probe's calls only; a deep run's log also holds its warm-up's. `model`
+ * matches by prefix, since the API may answer with a dated id for the alias the harness
+ * asked for.
  */
 export function runMetrics(log: LoggedCall[], options: { model: string; agentDir: string }): RunMetrics {
-  const responses = log.flatMap((call) => (call.response ? [call.response] : []));
+  const probeCalls = log.filter((call) => call.phase !== "warmup");
+  const responses = probeCalls.flatMap((call) => (call.response ? [call.response] : []));
   const ownModel = responses.filter((r) => r.model.startsWith(options.model));
   const tokens: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   const toolCalls: Record<string, number> = {};
@@ -59,6 +73,7 @@ export function runMetrics(log: LoggedCall[], options: { model: string; agentDir
   }
   return {
     calls: responses.length,
+    firstCallInput: responses[0] ? contextOf(responses[0]) : 0,
     turns: ownModel.length,
     tokens,
     toolCalls,

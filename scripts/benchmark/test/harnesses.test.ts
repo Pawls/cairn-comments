@@ -2,14 +2,17 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { harnessTotals, launchFor, type LaunchOptions } from "../harnesses.ts";
+import { harnessTotals, launchFor, type LaunchOptions, type SessionStart } from "../harnesses.ts";
 
 const jsonl = (events: object[]) => events.map((e) => JSON.stringify(e)).join("\n") + "\n";
 
-function options(local: boolean): LaunchOptions {
+const NEW: SessionStart = { kind: "new", id: "b1" };
+
+function options(local: boolean, session = NEW): LaunchOptions {
   const dir = mkdtempSync(path.join(tmpdir(), "launch-"));
   return {
     prompt: "fix it",
+    session,
     model: "qwen3.8-flash-next-iq2_xs",
     configDir: path.join(dir, "config"),
     proxyUrl: "http://127.0.0.1:9999",
@@ -47,6 +50,38 @@ describe("launchFor with a local model", () => {
       models: [{ id: "qwen3.8-flash-next-iq2_xs" }],
     });
     expect(launch.args).toContain("local/qwen3.8-flash-next-iq2_xs");
+  });
+});
+
+describe("launchFor's session arguments", () => {
+  const sessionArgs = (harness: "claude" | "pi", session: SessionStart) => {
+    const args = launchFor(harness, options(true, session)).args;
+    const flags = new Set(["--session-id", "--resume", "--fork-session", "--fork"]);
+    return args.flatMap((arg, i) => (flags.has(arg) || flags.has(args[i - 1] ?? "") ? [arg] : []));
+  };
+
+  it("names a new session, resumes it by id, and forks it under a new id in Claude Code", () => {
+    expect(sessionArgs("claude", { kind: "new", id: "b1" })).toEqual(["--session-id", "b1"]);
+    expect(sessionArgs("claude", { kind: "continue", id: "b1" })).toEqual(["--resume", "b1"]);
+    expect(sessionArgs("claude", { kind: "fork", from: "b1", id: "c2" })).toEqual([
+      "--resume",
+      "b1",
+      "--fork-session",
+      "--session-id",
+      "c2",
+    ]);
+  });
+
+  it("opens a session by id, new or not, and forks it under a new id in pi", () => {
+    expect(sessionArgs("pi", { kind: "new", id: "b1" })).toEqual(["--session-id", "b1"]);
+    expect(sessionArgs("pi", { kind: "continue", id: "b1" })).toEqual(["--session-id", "b1"]);
+    expect(sessionArgs("pi", { kind: "fork", from: "b1", id: "c2" })).toEqual(["--fork", "b1", "--session-id", "c2"]);
+  });
+
+  it("keeps pi's prompt after the session arguments, behind the end of options", () => {
+    const args = launchFor("pi", options(true, { kind: "fork", from: "b1", id: "c2" })).args;
+
+    expect(args.slice(-2)).toEqual(["--", "fix it"]);
   });
 });
 

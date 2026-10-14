@@ -1,5 +1,5 @@
 /** The benchmark report: Markdown tables from every run's `result.json`. */
-import type { RunResult } from "./runner.ts";
+import { depthOf, type RunResult } from "./runner.ts";
 import { bootstrapMedianChange, pairedDifferences, spreadOf } from "./stats.ts";
 import type { Usage } from "./responses.ts";
 
@@ -25,6 +25,8 @@ const WALL: Measure = { label: "Wall time (s)", value: (r) => r.wallMs, format: 
 
 const MEASURES: Measure[] = [
   INPUT,
+  // How deep a run started: at depth `deep` the first call carries the whole warm-up.
+  { label: "First-call context", value: (r) => r.metrics.firstCallInput ?? Number.NaN, format: whole },
   { label: "Uncached input", value: (r) => r.metrics.tokens.input, format: whole },
   { label: "Cache read", value: (r) => r.metrics.tokens.cacheRead, format: whole },
   { label: "Cache write", value: (r) => r.metrics.tokens.cacheWrite, format: whole },
@@ -138,14 +140,15 @@ function proxyGap(runs: RunResult[]): string {
   return `largest difference between proxy and harness token totals: ${(Math.max(...gaps) * 100).toFixed(1)}% over ${gaps.length} runs`;
 }
 
-function harnessSection(runs: RunResult[]): string[] {
+/** The tables for one harness at one depth. */
+function section(runs: RunResult[]): string[] {
   const models = [...new Set(runs.map((r) => r.model))].join(", ");
   const withCost = reportsCost(runs);
   const measures = withCost ? MEASURES : MEASURES.filter((m) => m !== COST);
   const paired = withCost ? PAIRED : PAIRED.filter((m) => m !== COST);
   const changes = paired.map((m) => overallChange(runs, m));
   return [
-    `## ${runs[0]!.harness} (${models})`,
+    `## ${runs[0]!.harness}, ${depthOf(runs[0]!)} (${models})`,
     "",
     "Median (interquartile range) per run.",
     "",
@@ -163,6 +166,6 @@ function harnessSection(runs: RunResult[]): string[] {
 }
 
 export function renderReport(results: RunResult[]): string {
-  const sections = [...groupBy(results, (r) => r.harness).values()].flatMap((runs) => harnessSection(runs));
+  const sections = [...groupBy(results, (r) => `${r.harness} ${depthOf(r)}`).values()].flatMap((runs) => section(runs));
   return sections.join("\n");
 }
