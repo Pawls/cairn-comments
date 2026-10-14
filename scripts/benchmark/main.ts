@@ -162,8 +162,8 @@ function loadPrepared(work: string, taskFile: TaskFile, tasks: Task[]): Map<stri
   const loaded = new Map<string, Record<string, PreparedTask>>();
   const repoNames = new Set(tasks.map((t) => t.repo));
   for (const name of [...repoNames].filter((n) => taskFile.repos[n]!.treatment === "own-comments")) {
-    const taskIds = tasks.filter((t) => t.repo === name).map((t) => t.id);
-    loaded.set(name, readPrepared(preparedFile(work, name), name, taskIds));
+    const repoTasks = tasks.filter((t) => t.repo === name);
+    loaded.set(name, readPrepared(preparedFile(work, name), name, repoTasks, taskFile.repos[name]!.agentNotes ?? []));
   }
   return loaded;
 }
@@ -180,11 +180,14 @@ function prepare(): void {
   if (!python) throw new Error("prepare needs Python 3 (uv, python3, or python)");
   const mirror = mirrors(work, taskFile, [name]).get(name)!;
   const env = isolatedEnv(path.join(work, "state"), path.join(work, "cli-home"));
+  const repoTasks = taskFile.tasks.filter((t) => t.repo === name);
   const only = args.only?.split(",");
+  const unknown = only?.filter((id) => !repoTasks.some((t) => t.id === id)) ?? [];
+  if (unknown.length) throw new Error(`--only names no task of ${name}: ${unknown.join(", ")}`);
   const file = preparedFile(work, name);
   const prepared: Record<string, PreparedTask> = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
   mkdirSync(path.dirname(file), { recursive: true });
-  for (const task of taskFile.tasks.filter((t) => t.repo === name && (!only || only.includes(t.id)))) {
+  for (const task of repoTasks.filter((t) => !only || only.includes(t.id))) {
     prepared[task.id] = prepareTask({ mirror, taskId: task.id, start: task.start, python, env, agentNotes });
     // Written per task: each task's commits are already in the mirror, so a later failure must not lose them.
     writeFileSync(file, JSON.stringify(prepared, null, 2));

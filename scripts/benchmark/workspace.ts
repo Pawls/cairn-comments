@@ -136,6 +136,10 @@ export function checkoutArm(options: CheckoutOptions): string {
     const cloneArgs = ["clone", "--quiet", "--no-local", "--no-checkout", "--single-branch", "--branch", branch];
     git(options.runDir, options.env, ...cloneArgs, options.mirror, repo);
     git(repo, options.env, "remote", "remove", "origin");
+    // The cloned branch's name says which arm this is; leave only the agent's `bench`.
+    const head = git(repo, options.env, "rev-parse", "HEAD").trim();
+    git(repo, options.env, "update-ref", "--no-deref", "HEAD", head);
+    git(repo, options.env, "branch", "--quiet", "--delete", "--force", branch);
     git(repo, options.env, "worktree", "add", "--quiet", "-b", "bench", agent);
     return agent;
   }

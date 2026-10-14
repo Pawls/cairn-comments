@@ -16,8 +16,14 @@ export const STRIP_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url
 /** Folders and files that carry agent instructions or plans outside the markdown. */
 const AGENT_PATHS = [".claude", ".agents", ".serena", ".pawl", ".mcp.json", ".coderabbit.yaml"];
 
+/** The one message of both arm commits, so the commit does not say which arm it is. */
+const COMMIT_MESSAGE = "Initial commit";
+
 export interface PreparedTask {
   taskId: string;
+  /** What the arm commits were built from; a task file that names others makes them stale. */
+  start: string;
+  agentNotes: string[];
   /** Bytes the comments add to each file, `/`-separated path to size difference. */
   commentBytes: Record<string, number>;
   /** Python files that would not parse or tokenize, so they kept their comments in both arms. */
@@ -28,13 +34,30 @@ export function preparedBranch(taskId: string, arm: Arm): string {
   return `prepared/${taskId}/${arm}`;
 }
 
-/** The prepared tasks recorded in `file`; throws unless every one of `taskIds` is there. */
-export function readPrepared(file: string, repo: string, taskIds: string[]): Record<string, PreparedTask> {
+function builtFrom(entry: PreparedTask, start: string, agentNotes: string[]): boolean {
+  // An entry written before the start and notes were recorded has neither, and is stale.
+  return entry.start === start && JSON.stringify(entry.agentNotes) === JSON.stringify(agentNotes);
+}
+
+/**
+ * The prepared tasks recorded in `file`. Throws unless each of `tasks` is there and was built
+ * from its start commit and from `agentNotes`.
+ */
+export function readPrepared(
+  file: string,
+  repo: string,
+  tasks: Array<{ id: string; start: string }>,
+  agentNotes: string[],
+): Record<string, PreparedTask> {
   if (!existsSync(file)) throw new Error(`no prepared commits for ${repo}; run prepare first`);
   const prepared = JSON.parse(readFileSync(file, "utf8")) as Record<string, PreparedTask>;
-  const missing = taskIds.filter((id) => !prepared[id]);
+  const missing = tasks.filter((task) => !prepared[task.id]).map((task) => task.id);
   if (missing.length) {
     throw new Error(`no prepared commits for ${repo} task ${missing.join(", ")}; run prepare --only ${missing.join(",")}`);
+  }
+  const stale = tasks.filter((task) => !builtFrom(prepared[task.id]!, task.start, agentNotes)).map((task) => task.id);
+  if (stale.length) {
+    throw new Error(`prepared commits for ${repo} task ${stale.join(", ")} are stale; run prepare --only ${stale.join(",")}`);
   }
   return prepared;
 }
@@ -71,8 +94,9 @@ function removeAgentFiles(tree: string, env: Record<string, string>): void {
 /** `path -> size` of every file in `commit`. */
 function fileSizes(repo: string, env: Record<string, string>, commit: string): Map<string, number> {
   const sizes = new Map<string, number>();
-  for (const line of git(repo, env, "ls-tree", "-r", "-l", commit).split("\n")) {
-    const match = /^\d+ blob \w+\s+(\d+)\t(.+)$/.exec(line);
+  // -z: without it, git quotes a path with non-ASCII characters.
+  for (const entry of git(repo, env, "ls-tree", "-r", "-l", "-z", commit).split("\0")) {
+    const match = /^\d+ blob \w+\s+(\d+)\t(.+)$/s.exec(entry);
     if (match) sizes.set(match[2]!, Number(match[1]));
   }
   return sizes;
@@ -115,22 +139,24 @@ export function prepareTask(options: PrepareOptions): PreparedTask {
     writeFileSync(path.join(tree, "AGENTS.md"), options.agentNotes.map((line) => `${line}\n`).join(""));
     writeFileSync(path.join(tree, "CLAUDE.md"), "@AGENTS.md\n");
 
-    const commitAs = (branch: string, message: string): string => {
+    const commitAs = (branch: string): string => {
       git(tree, env, "checkout", "--quiet", "--orphan", branch);
       git(tree, env, "add", "-A");
-      git(tree, env, "commit", "--quiet", "-m", message);
+      git(tree, env, "commit", "--quiet", "-m", COMMIT_MESSAGE);
       return git(tree, env, "rev-parse", "HEAD").trim();
     };
-    const committed = commitAs("comments", `${taskId}: the code as committed`);
+    const committed = commitAs("comments");
     const summary = JSON.parse(execFileSync(python, [STRIP_SCRIPT, tree], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 })) as {
       skipped: Record<string, string>;
     };
-    const stripped = commitAs("none", `${taskId}: the code without comments`);
+    const stripped = commitAs("none");
 
     const refs = (arm: Arm) => `+refs/heads/${arm}:refs/heads/${preparedBranch(taskId, arm)}`;
     git(tree, env, "push", "--quiet", mirror, refs("comments"), refs("none"));
     return {
       taskId,
+      start,
+      agentNotes: options.agentNotes,
       commentBytes: commentBytesBetween(mirror, env, committed, stripped),
       unstripped: Object.keys(summary.skipped),
     };
