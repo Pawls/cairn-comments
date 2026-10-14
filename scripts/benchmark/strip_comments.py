@@ -18,15 +18,10 @@ import tokenize
 from pathlib import Path
 
 # Shebang and encoding lines are checked by position in strip(); these are the rest.
-FUNCTIONAL = re.compile(r"#\s*(noqa\b|type:\s*ignore\b|pragma\b|fmt:)")
+# "type:" covers both "type: ignore" and PEP 484 type comments.
+FUNCTIONAL = re.compile(r"#\s*(noqa\b|type:|pragma\b|fmt:|pylint:|pyright:|mypy:|isort:|ruff:|nosec\b)")
 ENCODING_LINE = re.compile(r"#.*?coding[:=]\s*[-\w.]+")
 SKIPPED_DIRS = {".git", ".venv", "node_modules", "__pycache__"}
-
-
-def split_lines(source):
-    """Lines with their terminators; only "\n" ends a line, so "\r\n" stays whole."""
-    lines = source.split("\n")
-    return [line + "\n" for line in lines[:-1]] + ([lines[-1]] if lines[-1] else [])
 
 
 def is_functional(text, row):
@@ -39,10 +34,11 @@ def is_functional(text, row):
 
 def strip(source):
     """Returns `source` without its removable comments; raises if the tree would change."""
-    lines = split_lines(source)
+    # Lines with their terminators, split where tokenize splits: at "\r\n", "\n", or a lone "\r".
+    lines = io.StringIO(source, newline="").readlines()
     comments = [
         token
-        for token in tokenize.generate_tokens(io.StringIO(source, newline="").readline)
+        for token in tokenize.generate_tokens(iter(lines).__next__)
         if token.type == tokenize.COMMENT and not is_functional(token.string, token.start[0])
     ]
     deleted_rows = set()
