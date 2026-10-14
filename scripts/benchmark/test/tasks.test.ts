@@ -1,26 +1,28 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { gradePrediction, loadDeepTasks, probeFile, type DeepTaskFile } from "../tasks.ts";
+import { gradeChangeProbe, gradePrediction, loadDeepTasks, type ChangeProbe, type DeepTaskFile, type LocateProbe } from "../tasks.ts";
+import { isolatedEnv } from "../workspace.ts";
 
 const REPO = { url: "https://example.com/r.git", base: "b", setup: [] };
 
+let dir: string;
+
+beforeEach(() => {
+  dir = mkdtempSync(path.join(os.tmpdir(), "deep-tasks-"));
+});
+
+afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+function write(file: string, content: unknown): void {
+  const full = path.join(dir, file);
+  mkdirSync(path.dirname(full), { recursive: true });
+  writeFileSync(full, typeof content === "string" ? content : JSON.stringify(content));
+}
+
 describe("loadDeepTasks", () => {
-  let dir: string;
-
-  beforeEach(() => {
-    dir = mkdtempSync(path.join(os.tmpdir(), "deep-tasks-"));
-  });
-
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
-
-  function write(file: string, content: unknown): void {
-    const full = path.join(dir, file);
-    mkdirSync(path.dirname(full), { recursive: true });
-    writeFileSync(full, typeof content === "string" ? content : JSON.stringify(content));
-  }
-
   function taskFile(probes: unknown[], warmupModules = ["editor.py"], chainStart = "s"): string {
     write("warmups/a.json", { repo: "r", start: chainStart, modules: warmupModules, prompts: ["fix it"] });
     write("deep.json", { repos: { r: REPO }, repo: "r", start: "s", warmups: ["warmups/a.json"], probes });
@@ -37,9 +39,13 @@ describe("loadDeepTasks", () => {
     testCommand: "pytest tests/test_leash.py",
   };
 
-  it("loads the warm-up chains the file names, relative to the file, each named by its file", () => {
+  function writeLeashFiles(): void {
     write("probes/leash/tests/test_leash.py", "def test(): pass\n");
     write("probes/leash/reference.patch", "");
+  }
+
+  it("loads the warm-up chains the file names, relative to the file, each named by its file", () => {
+    writeLeashFiles();
 
     const loaded = loadDeepTasks(taskFile([change]));
 
@@ -47,24 +53,23 @@ describe("loadDeepTasks", () => {
   });
 
   it("refuses a chain that starts anywhere but the probes' start, since a probe forks from the chain's checkout", () => {
-    write("probes/leash/tests/test_leash.py", "");
-    write("probes/leash/reference.patch", "");
+    writeLeashFiles();
 
     expect(() => loadDeepTasks(taskFile([change], ["editor.py"], "other"))).toThrow(/warm-up chain a starts at r@other, not r@s/);
   });
 
   it("refuses a probe in a module a warm-up chain works in, since the warm-up would teach it the answer", () => {
-    write("probes/leash/tests/test_leash.py", "");
-    write("probes/leash/reference.patch", "");
+    writeLeashFiles();
 
     expect(() => loadDeepTasks(taskFile([change], ["npc_brain.py"]))).toThrow(/leash.*npc_brain\.py.*a/);
   });
 
   it("refuses an edit probe whose hidden tests or reference solution are missing", () => {
-    write("probes/leash/reference.patch", "");
+    writeLeashFiles();
+    rmSync(path.join(dir, "probes/leash/tests/test_leash.py"));
     expect(() => loadDeepTasks(taskFile([change]))).toThrow(/leash.*tests[/\\]test_leash\.py/);
 
-    write("probes/leash/tests/test_leash.py", "");
+    writeLeashFiles();
     rmSync(path.join(dir, "probes/leash/reference.patch"));
     expect(() => loadDeepTasks(taskFile([change]))).toThrow(/leash.*reference\.patch/);
   });
@@ -83,11 +88,10 @@ describe("loadDeepTasks", () => {
 });
 
 describe("the deep-context probe set", () => {
-  const file = path.join("benchmark", "deep-tasks.json");
   let tasks: DeepTaskFile;
 
   beforeEach(() => {
-    tasks = loadDeepTasks(file);
+    tasks = loadDeepTasks(path.join("benchmark", "deep-tasks.json"));
   });
 
   it("has four navigation and four understanding probes", () => {
@@ -104,17 +108,62 @@ describe("the deep-context probe set", () => {
   });
 
   it("names no file or function in a navigation prompt that its answer key requires", () => {
-    for (const probe of tasks.probes.filter((p) => p.use === "navigation" && p.kind === "locate")) {
-      for (const pattern of probe.kind === "locate" ? probe.answerKey : []) {
+    const locates = tasks.probes.filter((probe): probe is LocateProbe => probe.use === "navigation" && probe.kind === "locate");
+    for (const probe of locates) {
+      for (const pattern of probe.answerKey) {
         expect(new RegExp(pattern, "i").test(probe.prompt), `${probe.id}: ${pattern}`).toBe(false);
       }
     }
   });
+});
 
-  it("keeps every probe's files beside the task file", () => {
-    for (const probe of tasks.probes) {
-      expect(probeFile(file, probe.id, "x")).toBe(path.join("benchmark", "probes", probe.id, "x"));
-    }
+describe("gradeChangeProbe", () => {
+  const passesWhenHiddenAndKeptAreRight =
+    "node -e \"const fs=require('fs');process.exit(fs.existsSync('tests/hidden.txt')&&fs.readFileSync('tests/kept.txt','utf8')==='good'?0:3)\"";
+
+  function probe(testCommand: string): ChangeProbe {
+    return {
+      id: "p",
+      use: "understanding",
+      kind: "change",
+      modules: [],
+      prompt: "",
+      hiddenTests: ["tests/hidden.txt"],
+      keptTests: ["tests/kept.txt"],
+      testCommand,
+    };
+  }
+
+  function checkout(): { taskFile: string; agentDir: string; env: Record<string, string> } {
+    const env = isolatedEnv(path.join(dir, "state"), path.join(dir, "cli-home"));
+    const agentDir = path.join(dir, "agent");
+    write("agent/tests/kept.txt", "good");
+    execFileSync("git", ["init", "-q", agentDir], { env });
+    execFileSync("git", ["add", "."], { cwd: agentDir, env });
+    execFileSync("git", ["commit", "-qm", "start"], { cwd: agentDir, env });
+    write("agent/tests/kept.txt", "edited by the agent");
+    write("probes/p/tests/hidden.txt", "hidden");
+    write("probes/p/tests/__pycache__/hidden.cpython-313.pyc", "bytecode");
+    return { taskFile: path.join(dir, "deep.json"), agentDir, env };
+  }
+
+  it("places the named hidden tests, puts the kept tests back, and passes when the command does", () => {
+    const { taskFile, agentDir, env } = checkout();
+
+    const grade = gradeChangeProbe(taskFile, probe(passesWhenHiddenAndKeptAreRight), agentDir, env);
+
+    expect(grade.passed).toBe(true);
+    expect(readFileSync(path.join(agentDir, "tests", "kept.txt"), "utf8")).toBe("good");
+    expect(existsSync(path.join(agentDir, "tests", "__pycache__"))).toBe(false);
+  });
+
+  it("fails with the command's exit code and keeps its output", () => {
+    const { taskFile, agentDir, env } = checkout();
+
+    const grade = gradeChangeProbe(taskFile, probe("node -e \"console.log('nope');process.exit(3)\""), agentDir, env);
+
+    expect(grade).toMatchObject({ passed: false, testExit: 3 });
+    expect(grade.output).toContain("nope");
   });
 });
 
