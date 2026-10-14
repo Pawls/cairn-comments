@@ -18,15 +18,13 @@ import tokenize
 from pathlib import Path
 
 # Shebang and encoding lines are checked by position in strip(); these are the rest.
-FUNCTIONAL = re.compile(r"#\s*(noqa\b|type:\s*ignore\b|pragma\b|fmt:)")
+# "type:" covers both "type: ignore" and PEP 484 type comments, and mypy reads it only in
+# lower case; flake8 and ruff read noqa in any case.
+FUNCTIONAL = re.compile(r"#\s*(type:|pragma\b|fmt:|pylint:|pyright:|pyre-|mypy:|isort:|ruff:|yapf:|autopep8:|nosec\b)")
+NOQA = re.compile(r"#\s*noqa\b", re.IGNORECASE)
+BOM = "\ufeff"
 ENCODING_LINE = re.compile(r"#.*?coding[:=]\s*[-\w.]+")
 SKIPPED_DIRS = {".git", ".venv", "node_modules", "__pycache__"}
-
-
-def split_lines(source):
-    """Lines with their terminators; only "\n" ends a line, so "\r\n" stays whole."""
-    lines = source.split("\n")
-    return [line + "\n" for line in lines[:-1]] + ([lines[-1]] if lines[-1] else [])
 
 
 def is_functional(text, row):
@@ -34,15 +32,19 @@ def is_functional(text, row):
         return True
     if row <= 2 and ENCODING_LINE.match(text):
         return True
-    return FUNCTIONAL.match(text) is not None
+    return FUNCTIONAL.match(text) is not None or NOQA.match(text) is not None
 
 
 def strip(source):
     """Returns `source` without its removable comments; raises if the tree would change."""
-    lines = split_lines(source)
+    if source.startswith(BOM):
+        # ast.parse refuses a BOM in a str; a file read as UTF-8 keeps it.
+        return BOM + strip(source[len(BOM):])
+    # Lines with their terminators, split where tokenize splits: at "\r\n", "\n", or a lone "\r".
+    lines = io.StringIO(source, newline="").readlines()
     comments = [
         token
-        for token in tokenize.generate_tokens(io.StringIO(source, newline="").readline)
+        for token in tokenize.generate_tokens(iter(lines).__next__)
         if token.type == tokenize.COMMENT and not is_functional(token.string, token.start[0])
     ]
     deleted_rows = set()
@@ -68,7 +70,8 @@ def strip_tree(root):
             with open(path, encoding="utf-8", newline="") as handle:
                 source = handle.read()
             result = strip(source)
-        except (SyntaxError, ValueError, tokenize.TokenError, UnicodeDecodeError) as error:
+        # ValueError covers UnicodeDecodeError and strip()'s changed-tree error.
+        except (SyntaxError, ValueError, tokenize.TokenError) as error:
             summary["skipped"][path.relative_to(root).as_posix()] = f"{type(error).__name__}: {error}"
             continue
         if result == source:
