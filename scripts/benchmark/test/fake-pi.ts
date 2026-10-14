@@ -20,6 +20,7 @@ const { values, positionals } = parseArgs({
     "session-id": { type: "string" },
     fork: { type: "string" },
     model: { type: "string" },
+    tools: { type: "string" },
   },
 });
 
@@ -45,7 +46,8 @@ history.push({ role: "assistant", content: message.content[0]!.text });
 writeFileSync(historyFile(sessionId), JSON.stringify(history));
 
 const usage = { input: message.usage.input_tokens, output: message.usage.output_tokens, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } };
-console.log(JSON.stringify({ type: "session", id: sessionId }));
+// The tool allowlist is echoed so a test can see which tools a run was given.
+console.log(JSON.stringify({ type: "session", id: sessionId, tools: values.tools ?? "all" }));
 console.log(JSON.stringify({ type: "message_end", message: { role: "assistant", usage } }));
 // A prompt that starts "fail:" stands in for a harness that errors out after its call.
 if (positionals.at(-1)!.startsWith("fail:")) process.exitCode = 1;

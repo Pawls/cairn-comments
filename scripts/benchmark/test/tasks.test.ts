@@ -3,7 +3,15 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { gradeChangeProbe, gradePrediction, loadDeepTasks, type ChangeProbe, type DeepTaskFile, type LocateProbe } from "../tasks.ts";
+import {
+  gradeChangeProbe,
+  gradePrediction,
+  loadDeepTasks,
+  loadTaskFile,
+  type ChangeProbe,
+  type DeepTaskFile,
+  type LocateProbe,
+} from "../tasks.ts";
 import { isolatedEnv } from "../workspace.ts";
 
 const REPO = { url: "https://example.com/r.git", base: "b", setup: [] };
@@ -22,28 +30,53 @@ function write(file: string, content: unknown): void {
   writeFileSync(full, typeof content === "string" ? content : JSON.stringify(content));
 }
 
+function taskFile(probes: unknown[], warmupModules = ["editor.py"], chainStart = "s"): string {
+  write("warmups/a.json", { repo: "r", start: chainStart, modules: warmupModules, prompts: ["fix it"] });
+  write("deep.json", { repos: { r: REPO }, repo: "r", start: "s", warmups: ["warmups/a.json"], probes });
+  return path.join(dir, "deep.json");
+}
+
+const change = {
+  id: "leash",
+  use: "understanding",
+  kind: "change",
+  modules: ["npc_brain.py"],
+  prompt: "add a leash",
+  hiddenTests: ["tests/test_leash.py"],
+  testCommand: "pytest tests/test_leash.py",
+};
+
+function writeLeashFiles(): void {
+  write("probes/leash/tests/test_leash.py", "def test(): pass\n");
+  write("probes/leash/reference.patch", "");
+}
+
+describe("loadTaskFile", () => {
+  it("reads a probe set as tasks that start where the set does, with its own chains and one prepared entry", () => {
+    writeLeashFiles();
+
+    const loaded = loadTaskFile(taskFile([change]));
+
+    expect(loaded.tasks).toEqual([{ ...change, repo: "r", start: "s" }]);
+    expect(loaded.chains?.map((chain) => chain.id)).toEqual(["a"]);
+    expect(loaded.sharedStart).toEqual({ id: "deep", repo: "r", start: "s" });
+  });
+
+  it("reads a round's task file as it is, with no chains of its own", () => {
+    const question = { id: "q", repo: "r", kind: "question", start: "s", prompt: "why?", answerKey: ["because"] };
+    write("round.json", { repos: { r: REPO }, tasks: [question] });
+
+    expect(loadTaskFile(path.join(dir, "round.json"))).toEqual({ repos: { r: REPO }, tasks: [question] });
+  });
+
+  it("refuses a round's task in a repository the file does not define", () => {
+    write("round.json", { repos: { r: REPO }, tasks: [{ id: "q", repo: "elsewhere", kind: "question", start: "s", prompt: "", answerKey: [] }] });
+
+    expect(() => loadTaskFile(path.join(dir, "round.json"))).toThrow(/task q: unknown repo elsewhere/);
+  });
+});
+
 describe("loadDeepTasks", () => {
-  function taskFile(probes: unknown[], warmupModules = ["editor.py"], chainStart = "s"): string {
-    write("warmups/a.json", { repo: "r", start: chainStart, modules: warmupModules, prompts: ["fix it"] });
-    write("deep.json", { repos: { r: REPO }, repo: "r", start: "s", warmups: ["warmups/a.json"], probes });
-    return path.join(dir, "deep.json");
-  }
-
-  const change = {
-    id: "leash",
-    use: "understanding",
-    kind: "change",
-    modules: ["npc_brain.py"],
-    prompt: "add a leash",
-    hiddenTests: ["tests/test_leash.py"],
-    testCommand: "pytest tests/test_leash.py",
-  };
-
-  function writeLeashFiles(): void {
-    write("probes/leash/tests/test_leash.py", "def test(): pass\n");
-    write("probes/leash/reference.patch", "");
-  }
-
   it("loads the warm-up chains the file names, relative to the file, each named by its file", () => {
     writeLeashFiles();
 
@@ -62,6 +95,12 @@ describe("loadDeepTasks", () => {
     writeLeashFiles();
 
     expect(() => loadDeepTasks(taskFile([change], ["npc_brain.py"]))).toThrow(/leash.*npc_brain\.py.*a/);
+  });
+
+  it("refuses a warm-up chain that lists no modules, since no probe's isolation could be checked", () => {
+    writeLeashFiles();
+
+    expect(() => loadDeepTasks(taskFile([change], []))).toThrow(/warm-up chain a lists no modules/);
   });
 
   it("refuses an edit probe whose hidden tests or reference solution are missing", () => {

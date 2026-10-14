@@ -8,7 +8,9 @@ const jsonl = (events: object[]) => events.map((e) => JSON.stringify(e)).join("\
 
 const NEW: SessionStart = { kind: "new", id: "b1" };
 
-function options(local: boolean, session = NEW): LaunchOptions {
+const FORK: SessionStart = { kind: "fork", from: "b1", id: "c2" };
+
+function options(local: boolean, session = NEW, readOnly = false): LaunchOptions {
   const dir = mkdtempSync(path.join(tmpdir(), "launch-"));
   return {
     prompt: "fix it",
@@ -19,6 +21,7 @@ function options(local: boolean, session = NEW): LaunchOptions {
     sessionDir: path.join(dir, "sessions"),
     piCli: "cli.js",
     local,
+    readOnly,
   };
 }
 
@@ -82,6 +85,35 @@ describe("launchFor's session arguments", () => {
     const args = launchFor("pi", options(true, { kind: "fork", from: "b1", id: "c2" })).args;
 
     expect(args.slice(-2)).toEqual(["--", "fix it"]);
+  });
+});
+
+describe("launchFor's tools for a run that answers from reading alone", () => {
+  /** The value of `--tools`, or undefined when the launch leaves the harness its own tools. */
+  const toolsArg = (harness: "claude" | "pi", session: SessionStart, readOnly: boolean) => {
+    const args = launchFor(harness, options(true, session, readOnly)).args;
+    const index = args.indexOf("--tools");
+    return index === -1 ? undefined : args[index + 1];
+  };
+
+  it("gives Claude Code only Read, Grep and Glob, in a new session and a fork alike", () => {
+    // An allowlist, not a denylist: it also shuts out PowerShell on Windows and subagents.
+    expect(toolsArg("claude", NEW, true)).toBe("Read,Grep,Glob");
+    expect(toolsArg("claude", FORK, true)).toBe("Read,Grep,Glob");
+  });
+
+  it("gives pi only read, grep, find and ls, in a new session and a fork alike", () => {
+    expect(toolsArg("pi", NEW, true)).toBe("read,grep,find,ls");
+    expect(toolsArg("pi", FORK, true)).toBe("read,grep,find,ls");
+  });
+
+  it("leaves each harness its own tools for a run that may edit", () => {
+    expect(toolsArg("claude", FORK, false)).toBeUndefined();
+    expect(toolsArg("pi", FORK, false)).toBeUndefined();
+  });
+
+  it("keeps pi's prompt last, behind the end of options", () => {
+    expect(launchFor("pi", options(true, FORK, true)).args.slice(-2)).toEqual(["--", "fix it"]);
   });
 });
 
