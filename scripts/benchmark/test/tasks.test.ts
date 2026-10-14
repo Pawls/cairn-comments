@@ -88,6 +88,18 @@ describe("loadTaskFile", () => {
     expect(loadTaskFile(path.join(dir, "round.json"))).toEqual({ repos: { r: REPO }, tasks: [question] });
   });
 
+  it("drops a chains key from a round's file, whose chains come from --warmups and are checked there", () => {
+    write("round.json", { repos: { r: REPO }, tasks: [], chains: [{ id: "unchecked" }] });
+
+    expect(loadTaskFile(path.join(dir, "round.json")).chains).toBeUndefined();
+  });
+
+  it("refuses a file with neither tasks nor probes, naming it", () => {
+    write("typo.json", { repos: { r: REPO }, repo: "r", start: "s", warmups: [], probs: [] });
+
+    expect(() => loadTaskFile(path.join(dir, "typo.json"))).toThrow(/typo\.json has neither tasks nor probes/);
+  });
+
   it("refuses a round's task in a repository the file does not define", () => {
     write("round.json", { repos: { r: REPO }, tasks: [{ id: "q", repo: "elsewhere", kind: "question", start: "s", prompt: "", answerKey: [] }] });
 
@@ -116,6 +128,13 @@ describe("loadDeepTasks", () => {
     writeLeashFiles();
 
     expect(() => loadDeepTasks(taskFile([change], ["npc_brain.py"]))).toThrow(/leash.*npc_brain\.py.*a/);
+  });
+
+  it("refuses a probe that names its own repository or start, since every probe runs at the set's", () => {
+    writeLeashFiles();
+
+    expect(() => loadDeepTasks(taskFile([{ ...change, start: "later" }]))).toThrow(/probe leash starts at r@later, not r@s/);
+    expect(() => loadDeepTasks(taskFile([{ ...change, repo: "q" }]))).toThrow(/probe leash starts at q@s, not r@s/);
   });
 
   it("refuses a warm-up chain that lists no modules, since no probe's isolation could be checked", () => {
