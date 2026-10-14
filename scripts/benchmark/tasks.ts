@@ -262,8 +262,7 @@ export function gradePrediction(finalText: string, expected: string): { passed: 
   const last = finalText
     .split("\n")
     .map((line) => answerOn(line))
-    .filter((answer) => answer !== undefined)
-    .at(-1);
+    .findLast((answer) => answer !== undefined);
   const passed = last !== undefined && normalized(last) === normalized(expected);
   return { passed, missing: passed ? [] : [`ANSWER: ${expected}`] };
 }
