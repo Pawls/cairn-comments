@@ -45,7 +45,7 @@ describe.skipIf(!python)("strip_comments.py", () => {
   });
 
   it("keeps a byte-order mark and strips the source after it", () => {
-    expect(strip("﻿# c\nx = 1  # d\n").stdout).toBe("﻿x = 1\n");
+    expect(strip("\ufeff# c\nx = 1  # d\n").stdout).toBe("\ufeffx = 1\n");
   });
 
   it("reads a lone carriage return as a line end, as Python does", () => {

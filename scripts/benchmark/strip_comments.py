@@ -23,7 +23,7 @@ from pathlib import Path
 FUNCTIONAL = re.compile(
     r"#\s*((?i:noqa)\b|type:|pragma\b|fmt:|pylint:|pyright:|pyre-|mypy:|isort:|ruff:|yapf:|autopep8:|nosec\b)"
 )
-BOM = "﻿"
+BOM = "\ufeff"
 ENCODING_LINE = re.compile(r"#.*?coding[:=]\s*[-\w.]+")
 SKIPPED_DIRS = {".git", ".venv", "node_modules", "__pycache__"}
 
