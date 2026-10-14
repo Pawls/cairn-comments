@@ -8,6 +8,11 @@ export interface RepoSpec {
   base: string;
   /** Shell commands run in each fresh checkout before the agent starts. */
   setup: string[];
+  /**
+   * "own-comments": the arms differ in the repository's own comments instead of Cairn's
+   * (prepare.ts); `none` is the code with them stripped, `comments` is as committed.
+   */
+  treatment?: "own-comments";
 }
 
 interface TaskBase {

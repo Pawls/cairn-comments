@@ -1,12 +1,13 @@
 /** One benchmark run: a fresh checkout, the harness on one task in one arm, and its grade. */
-import { spawn, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { harnessTotals, launchFor, withoutHarnessVariables, type HarnessName, type HarnessTotals } from "./harnesses.ts";
 import { gradeAnswer, providerFailed, runMetrics, type LoggedCall, type RunMetrics } from "./metrics.ts";
+import type { PreparedTask } from "./prepare.ts";
 import { startRecordingProxy } from "./proxy.ts";
-import { expandCommand, type RepoSpec, type Task } from "./tasks.ts";
-import { checkoutArm, commentBytes, git, isolatedEnv, removeCheckouts, runSetup, type Arm } from "./workspace.ts";
+import { expandCommand, type EditTask, type RepoSpec, type Task } from "./tasks.ts";
+import { checkoutArm, commentBytes, isolatedEnv, removeCheckouts, runSetup, type Arm } from "./workspace.ts";
 
 /** What starts an agent, whatever it is asked. */
 export interface AgentOptions {
@@ -32,6 +33,8 @@ export interface RunSpec extends AgentOptions {
   comments: string;
   /** Keep the checkouts after grading, for inspection. */
   keep: boolean;
+  /** The task's arm commits, for a repository whose arms differ in its own comments. */
+  prepared?: PreparedTask;
 }
 
 /** A run lost to the model server rather than to the agent; it is retried, not recorded. */
@@ -125,9 +128,18 @@ export async function runAgent(
   return { code, timedOut };
 }
 
+/** Puts the solution's tests, read from the mirror, over the agent's work. */
+function placeSolutionTests(task: EditTask, mirror: string, agentDir: string, env: Record<string, string>): void {
+  for (const file of task.testFiles) {
+    const content = execFileSync("git", ["--git-dir", mirror, "show", `${task.solution}:${file}`], { env, maxBuffer: 64 * 1024 * 1024 });
+    mkdirSync(path.dirname(path.join(agentDir, file)), { recursive: true });
+    writeFileSync(path.join(agentDir, file), content);
+  }
+}
+
 /** Puts the solution's tests over the agent's work and runs the task's test command. */
-function gradeEdit(task: Task & { kind: "fix" | "feature" }, agentDir: string, env: Record<string, string>, runDir: string): Grade {
-  git(agentDir, env, "checkout", task.solution, "--", ...task.testFiles);
+function gradeEdit(task: EditTask, spec: RunSpec, agentDir: string, env: Record<string, string>, runDir: string): Grade {
+  placeSolutionTests(task, spec.mirror, agentDir, env);
   const test = spawnSync(expandCommand(task.testCommand), {
     cwd: agentDir,
     env,
@@ -145,7 +157,7 @@ function grade(spec: RunSpec, metrics: RunMetrics, agentDir: string, env: Record
     const { passed, missing } = gradeAnswer(metrics.finalText, spec.task.answerKey);
     return { passed, missing };
   }
-  return gradeEdit(spec.task, agentDir, env, runDir);
+  return gradeEdit(spec.task, spec, agentDir, env, runDir);
 }
 
 /** The proxy's log; empty when the harness made no call. */
@@ -167,11 +179,12 @@ export async function runOne(spec: RunSpec): Promise<RunResult> {
     start: spec.task.start,
     arm: spec.arm,
     comments: spec.comments,
-    hooks: spec.harness === "claude" ? ["claude-code"] : [],
+    hooks: spec.harness === "claude" && !spec.prepared ? ["claude-code"] : [],
     env,
+    prepared: spec.prepared,
   });
   runSetup(spec.repo.setup, agentDir, env, path.join(runDir, "setup.log"));
-  const placed = spec.arm === "comments" ? commentBytes(runDir, env) : {};
+  const placed = spec.arm === "comments" ? (spec.prepared?.commentBytes ?? commentBytes(runDir, env)) : {};
 
   const logFile = path.join(runDir, "calls.jsonl");
   const proxy = await startRecordingProxy(spec.provider, logFile);

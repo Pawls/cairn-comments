@@ -42,8 +42,7 @@ describe.skipIf(!python)("prepareTask", () => {
   afterAll(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }));
 
   function checkout(arm: "none" | "comments"): string {
-    const runDir = path.join(dir, `run-${arm}`);
-    mkdirSync(runDir);
+    const runDir = mkdtempSync(path.join(dir, `run-${arm}-`));
     return checkoutArm({ mirror, runDir, start, arm, hooks: [], env, prepared });
   }
 

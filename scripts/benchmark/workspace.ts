@@ -6,6 +6,7 @@ import { execFileSync, execSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { preparedBranch, type PreparedTask } from "./prepare.ts";
 import { expandCommand, type RepoSpec } from "./tasks.ts";
 
 export type Arm = "none" | "comments";
@@ -113,6 +114,8 @@ export interface CheckoutOptions {
   /** Adapters for `cairn init --hooks`, comments arm only. */
   hooks: string[];
   env: Record<string, string>;
+  /** The task's arm commits (prepare.ts); both arms are then plain worktrees, with no Cairn. */
+  prepared?: PreparedTask;
 }
 
 /**
@@ -124,6 +127,14 @@ export interface CheckoutOptions {
 export function checkoutArm(options: CheckoutOptions): string {
   const repo = path.join(options.runDir, "repo");
   const agent = path.join(options.runDir, "agent");
+  if (options.prepared) {
+    // One branch, no remote: the original commits and the solution are not in the clone.
+    const branch = preparedBranch(options.prepared.taskId, options.arm);
+    git(options.runDir, options.env, "clone", "--quiet", "--no-checkout", "--single-branch", "--branch", branch, options.mirror, repo);
+    git(repo, options.env, "remote", "remove", "origin");
+    git(repo, options.env, "worktree", "add", "--quiet", "-b", "bench", agent);
+    return agent;
+  }
   git(options.runDir, options.env, "clone", "--quiet", "--no-checkout", options.mirror, repo);
   git(repo, options.env, "checkout", "--quiet", "--detach", options.start);
   if (options.arm === "none") {

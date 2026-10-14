@@ -13,6 +13,11 @@
  *       given --shard 1/n to n/n share the queue between them. No run starts after
  *       --stop-at. A run the model server failed is left for the next batch, and two in a
  *       row end the batch.
+ *   prepare --work <dir> --repo <name> [--source <path>] [--only <task,...>]
+ *       for a repository whose arms differ in its own comments: builds each task's two arm
+ *       commits in the mirror (stripped and as committed) and records them in
+ *       <work>/prepared/<name>.json. --source seeds the mirror from a local clone, for a
+ *       private repository.
  *   status --work <dir> [--harness ...] [--arms ...] [--reps ...] [--only ...]
  *       what that run command has finished and what is left
  *   report --work <dir>
@@ -23,10 +28,11 @@
  * (or a stand-in, for a dry run) serving `--model` under that name. `--tasks` names another
  * task file.
  */
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { globalPiCli, HARNESSES, type HarnessName } from "./harnesses.ts";
+import { findPython, prepareTask, type PreparedTask } from "./prepare.ts";
 import { providerFailed, runMetrics } from "./metrics.ts";
 import { startRecordingProxy } from "./proxy.ts";
 import { renderReport } from "./report.ts";
@@ -64,6 +70,7 @@ const { values: args, positionals } = parseArgs({
     timeout: { type: "string", default: "30" },
     keep: { type: "boolean", default: false },
     repo: { type: "string" },
+    source: { type: "string" },
     "pi-cli": { type: "string" },
     provider: { type: "string", default: ANTHROPIC_API },
     "stop-at": { type: "string" },
@@ -138,7 +145,48 @@ function commitsOf(tasks: TaskFile, repo: string): string[] {
 
 function mirrors(work: string, tasks: TaskFile, names: string[]): Map<string, string> {
   const env = isolatedEnv(path.join(work, "state"), path.join(work, "cli-home"));
-  return new Map(names.map((name) => [name, ensureMirror(work, name, tasks.repos[name]!, env, commitsOf(tasks, name))]));
+  return new Map(
+    names.map((name) => {
+      const spec = tasks.repos[name]!;
+      const seeded = args.source ? { ...spec, url: path.resolve(args.source) } : spec;
+      return [name, ensureMirror(work, name, seeded, env, commitsOf(tasks, name))];
+    }),
+  );
+}
+
+function preparedFile(work: string, repo: string): string {
+  return path.join(work, "prepared", `${repo}.json`);
+}
+
+function loadPrepared(work: string, taskFile: TaskFile, repoNames: string[]): Map<string, Record<string, PreparedTask>> {
+  const loaded = new Map<string, Record<string, PreparedTask>>();
+  for (const name of repoNames.filter((n) => taskFile.repos[n]!.treatment === "own-comments")) {
+    const file = preparedFile(work, name);
+    if (!existsSync(file)) throw new Error(`no prepared commits for ${name}; run prepare first`);
+    loaded.set(name, JSON.parse(readFileSync(file, "utf8")) as Record<string, PreparedTask>);
+  }
+  return loaded;
+}
+
+function prepare(): void {
+  const work = workDir();
+  const name = required("repo", args.repo);
+  const taskFile = loadTasks(args.tasks!);
+  if (taskFile.repos[name]?.treatment !== "own-comments") throw new Error(`${name} has no own-comments treatment in ${args.tasks}`);
+  const python = findPython();
+  if (!python) throw new Error("prepare needs Python 3 (uv, python3, or python)");
+  const mirror = mirrors(work, taskFile, [name]).get(name)!;
+  const env = isolatedEnv(path.join(work, "state"), path.join(work, "cli-home"));
+  const only = args.only?.split(",");
+  const file = preparedFile(work, name);
+  const prepared: Record<string, PreparedTask> = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
+  for (const task of taskFile.tasks.filter((t) => t.repo === name && (!only || only.includes(t.id)))) {
+    prepared[task.id] = prepareTask({ mirror, taskId: task.id, start: task.start, python, env });
+    const bytes = Object.values(prepared[task.id]!.commentBytes).reduce((sum, n) => sum + n, 0);
+    log(`${task.id}: comments add ${bytes.toLocaleString("en-US")} bytes; ${prepared[task.id]!.unstripped.length} files not stripped`);
+  }
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify(prepared, null, 2));
 }
 
 /** Total entries over the sidecars under `dir`: each entry is one `## <id>` heading. */
@@ -206,8 +254,9 @@ function plannedQueue(taskFile: TaskFile): { tasks: Task[]; arms: Arm[]; queue: 
   return { tasks, arms, queue: planRuns(tasks, arms, Number(args.reps), Number(args.seed)) };
 }
 
-function requireFrozenComments(repoNames: string[]): void {
-  const missing = repoNames.filter((name) => !existsSync(path.join(FROZEN_COMMENTS, name)));
+function requireFrozenComments(taskFile: TaskFile, repoNames: string[]): void {
+  const cairnRepos = repoNames.filter((name) => taskFile.repos[name]!.treatment !== "own-comments");
+  const missing = cairnRepos.filter((name) => !existsSync(path.join(FROZEN_COMMENTS, name)));
   if (missing.length) throw new Error(`no frozen comments for ${missing.join(", ")}; run annotate first`);
 }
 
@@ -217,6 +266,7 @@ interface Batch {
   work: string;
   taskFile: TaskFile;
   mirrorPaths: Map<string, string>;
+  prepared: Map<string, Record<string, PreparedTask>>;
 }
 
 /**
@@ -233,6 +283,7 @@ async function attempt(batch: Batch, planned: Planned, runDir: string, label: st
       mirror: batch.mirrorPaths.get(planned.task.repo)!,
       workDir: batch.work,
       comments: path.join(FROZEN_COMMENTS, planned.task.repo),
+      prepared: batch.prepared.get(planned.task.repo)?.[planned.task.id],
       keep: args.keep!,
     });
     log(`${label}: ${describeResult(result)}`);
@@ -250,9 +301,15 @@ async function run(): Promise<void> {
   const taskFile = loadTasks(args.tasks!);
   const { tasks, arms, queue: whole } = plannedQueue(taskFile);
   const repoNames = [...new Set(tasks.map((t) => t.repo))];
-  if (arms.includes("comments")) requireFrozenComments(repoNames);
+  if (arms.includes("comments")) requireFrozenComments(taskFile, repoNames);
   await checkProvider(agent);
-  const batch: Batch = { agent, work, taskFile, mirrorPaths: mirrors(work, taskFile, repoNames) };
+  const batch: Batch = {
+    agent,
+    work,
+    taskFile,
+    mirrorPaths: mirrors(work, taskFile, repoNames),
+    prepared: loadPrepared(work, taskFile, repoNames),
+  };
   const stopAt = args["stop-at"] ? nextOccurrence(args["stop-at"], new Date()) : undefined;
   const queue = shard(whole, args.shard);
   const stopNote = stopAt ? `, none started after ${stopAt.toString()}` : "";
@@ -325,6 +382,7 @@ function report(): void {
 
 const COMMANDS = new Map<string, () => void | Promise<void>>([
   ["annotate", annotate],
+  ["prepare", prepare],
   ["run", run],
   ["status", status],
   ["report", report],
