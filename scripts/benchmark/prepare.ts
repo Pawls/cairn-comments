@@ -5,23 +5,13 @@
  * No history means an agent cannot read the original comments back out of it.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Arm } from "./workspace.ts";
 
 export const STRIP_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "strip_comments.py");
-
-/** The same minimal instructions in both arms; the repository's own are markdown and go. */
-export const AGENTS_TEXT = [
-  "# Agent notes",
-  "",
-  "Run a test file with the project's virtualenv, which is already set up:",
-  "`.venv/Scripts/python.exe -m pytest tests/<file>.py -q -n0` on Windows,",
-  "`.venv/bin/python -m pytest tests/<file>.py -q -n0` elsewhere.",
-  "",
-].join("\n");
 
 /** Folders and files that carry agent instructions or plans outside the markdown. */
 const AGENT_PATHS = [".claude", ".agents", ".serena", ".pawl", ".mcp.json", ".coderabbit.yaml"];
@@ -36,6 +26,17 @@ export interface PreparedTask {
 
 export function preparedBranch(taskId: string, arm: Arm): string {
   return `prepared/${taskId}/${arm}`;
+}
+
+/** The prepared tasks recorded in `file`; throws unless every one of `taskIds` is there. */
+export function readPrepared(file: string, repo: string, taskIds: string[]): Record<string, PreparedTask> {
+  if (!existsSync(file)) throw new Error(`no prepared commits for ${repo}; run prepare first`);
+  const prepared = JSON.parse(readFileSync(file, "utf8")) as Record<string, PreparedTask>;
+  const missing = taskIds.filter((id) => !prepared[id]);
+  if (missing.length) {
+    throw new Error(`no prepared commits for ${repo} task ${missing.join(", ")}; run prepare --only ${missing.join(",")}`);
+  }
+  return prepared;
 }
 
 /** A Python 3 interpreter for the stripper, or undefined when the machine has none. */
@@ -93,6 +94,8 @@ export interface PrepareOptions {
   start: string;
   python: string;
   env: Record<string, string>;
+  /** The lines of the AGENTS.md both arms get in place of the repository's own instructions. */
+  agentNotes: string[];
 }
 
 /** Builds the task's two arm commits in the mirror, replacing any earlier ones. */
@@ -109,7 +112,7 @@ export function prepareTask(options: PrepareOptions): PreparedTask {
     removeAgentFiles(tree, env);
     // A packaging file may name the README as the project's long description.
     if (hadReadme) writeFileSync(path.join(tree, "README.md"), "# Project\n");
-    writeFileSync(path.join(tree, "AGENTS.md"), AGENTS_TEXT);
+    writeFileSync(path.join(tree, "AGENTS.md"), options.agentNotes.map((line) => `${line}\n`).join(""));
     writeFileSync(path.join(tree, "CLAUDE.md"), "@AGENTS.md\n");
 
     const commitAs = (branch: string, message: string): string => {

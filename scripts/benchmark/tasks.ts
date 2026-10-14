@@ -13,6 +13,11 @@ export interface RepoSpec {
    * (prepare.ts); `none` is the code with them stripped, `comments` is as committed.
    */
   treatment?: "own-comments";
+  /**
+   * Own-comments only: the lines of the AGENTS.md both arms get, since the repository's own
+   * instructions are removed. Say how to run a test file.
+   */
+  agentNotes?: string[];
 }
 
 interface TaskBase {

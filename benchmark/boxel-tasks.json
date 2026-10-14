@@ -7,7 +7,14 @@
         "uv venv .venv --quiet --python 3.13",
         "uv pip install --quiet --python {venv-python} -e .[dev]"
       ],
-      "treatment": "own-comments"
+      "treatment": "own-comments",
+      "agentNotes": [
+        "# Agent notes",
+        "",
+        "Run a test file with the project's virtualenv, which is already set up:",
+        "`.venv/Scripts/python.exe -m pytest tests/<file>.py -q -n0` on Windows,",
+        "`.venv/bin/python -m pytest tests/<file>.py -q -n0` elsewhere."
+      ]
     }
   },
   "tasks": [

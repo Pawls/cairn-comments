@@ -32,7 +32,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { globalPiCli, HARNESSES, type HarnessName } from "./harnesses.ts";
-import { findPython, prepareTask, type PreparedTask } from "./prepare.ts";
+import { findPython, prepareTask, readPrepared, type PreparedTask } from "./prepare.ts";
 import { providerFailed, runMetrics } from "./metrics.ts";
 import { startRecordingProxy } from "./proxy.ts";
 import { renderReport } from "./report.ts";
@@ -148,7 +148,7 @@ function mirrors(work: string, tasks: TaskFile, names: string[]): Map<string, st
   return new Map(
     names.map((name) => {
       const spec = tasks.repos[name]!;
-      const seeded = args.source ? { ...spec, url: path.resolve(args.source) } : spec;
+      const seeded = args.source && name === args.repo ? { ...spec, url: path.resolve(args.source) } : spec;
       return [name, ensureMirror(work, name, seeded, env, commitsOf(tasks, name))];
     }),
   );
@@ -158,12 +158,12 @@ function preparedFile(work: string, repo: string): string {
   return path.join(work, "prepared", `${repo}.json`);
 }
 
-function loadPrepared(work: string, taskFile: TaskFile, repoNames: string[]): Map<string, Record<string, PreparedTask>> {
+function loadPrepared(work: string, taskFile: TaskFile, tasks: Task[]): Map<string, Record<string, PreparedTask>> {
   const loaded = new Map<string, Record<string, PreparedTask>>();
-  for (const name of repoNames.filter((n) => taskFile.repos[n]!.treatment === "own-comments")) {
-    const file = preparedFile(work, name);
-    if (!existsSync(file)) throw new Error(`no prepared commits for ${name}; run prepare first`);
-    loaded.set(name, JSON.parse(readFileSync(file, "utf8")) as Record<string, PreparedTask>);
+  const repoNames = new Set(tasks.map((t) => t.repo));
+  for (const name of [...repoNames].filter((n) => taskFile.repos[n]!.treatment === "own-comments")) {
+    const taskIds = tasks.filter((t) => t.repo === name).map((t) => t.id);
+    loaded.set(name, readPrepared(preparedFile(work, name), name, taskIds));
   }
   return loaded;
 }
@@ -172,7 +172,10 @@ function prepare(): void {
   const work = workDir();
   const name = required("repo", args.repo);
   const taskFile = loadTasks(args.tasks!);
-  if (taskFile.repos[name]?.treatment !== "own-comments") throw new Error(`${name} has no own-comments treatment in ${args.tasks}`);
+  const spec = taskFile.repos[name];
+  if (spec?.treatment !== "own-comments") throw new Error(`${name} has no own-comments treatment in ${args.tasks}`);
+  const agentNotes = spec.agentNotes;
+  if (!agentNotes) throw new Error(`${name} has no agentNotes in ${args.tasks}`);
   const python = findPython();
   if (!python) throw new Error("prepare needs Python 3 (uv, python3, or python)");
   const mirror = mirrors(work, taskFile, [name]).get(name)!;
@@ -180,13 +183,14 @@ function prepare(): void {
   const only = args.only?.split(",");
   const file = preparedFile(work, name);
   const prepared: Record<string, PreparedTask> = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
+  mkdirSync(path.dirname(file), { recursive: true });
   for (const task of taskFile.tasks.filter((t) => t.repo === name && (!only || only.includes(t.id)))) {
-    prepared[task.id] = prepareTask({ mirror, taskId: task.id, start: task.start, python, env });
+    prepared[task.id] = prepareTask({ mirror, taskId: task.id, start: task.start, python, env, agentNotes });
+    // Written per task: each task's commits are already in the mirror, so a later failure must not lose them.
+    writeFileSync(file, JSON.stringify(prepared, null, 2));
     const bytes = Object.values(prepared[task.id]!.commentBytes).reduce((sum, n) => sum + n, 0);
     log(`${task.id}: comments add ${bytes.toLocaleString("en-US")} bytes; ${prepared[task.id]!.unstripped.length} files not stripped`);
   }
-  mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, JSON.stringify(prepared, null, 2));
 }
 
 /** Total entries over the sidecars under `dir`: each entry is one `## <id>` heading. */
@@ -308,7 +312,7 @@ async function run(): Promise<void> {
     work,
     taskFile,
     mirrorPaths: mirrors(work, taskFile, repoNames),
-    prepared: loadPrepared(work, taskFile, repoNames),
+    prepared: loadPrepared(work, taskFile, tasks),
   };
   const stopAt = args["stop-at"] ? nextOccurrence(args["stop-at"], new Date()) : undefined;
   const queue = shard(whole, args.shard);
