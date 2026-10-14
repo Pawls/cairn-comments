@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { nextOccurrence, planRuns, shard, warmupOf, type Planned } from "../schedule.ts";
 import type { Task } from "../tasks.ts";
+import type { WarmupChain } from "../warmup.ts";
 
-const task = (id: string): Task => ({ id, repo: "r", kind: "question", start: "s", prompt: "p", answerKey: [] });
+const task = (id: string, start = "s"): Task => ({ id, repo: "r", kind: "question", start, prompt: "p", answerKey: [] });
+const chain = (id: string, start = "s"): WarmupChain => ({ id, repo: "r", start, prompts: ["warm up"] });
+const [w1, w2] = [chain("w1"), chain("w2")];
 
 describe("planRuns", () => {
   it("plans every repetition of every task in every arm, in an order fixed by the seed", () => {
@@ -22,18 +25,27 @@ describe("planRuns", () => {
   });
 
   it("plans a deep run per chain beside the fresh ones when given both depths", () => {
-    const planned = planRuns([task("a"), task("b")], ["none", "comments"], 2, 1, { fresh: true, chains: ["w1", "w2"] });
+    const planned = planRuns([task("a"), task("b")], ["none", "comments"], 2, 1, { fresh: true, chains: [w1, w2] });
 
     expect(planned).toHaveLength(2 * 2 * 3 * 2);
     expect(planned.filter((p) => p.chain === undefined)).toHaveLength(8);
-    expect(planned.filter((p) => p.chain === "w1")).toHaveLength(8);
-    expect(planned.filter((p) => p.chain === "w2")).toHaveLength(8);
+    expect(planned.filter((p) => p.chain === w1)).toHaveLength(8);
+    expect(planned.filter((p) => p.chain === w2)).toHaveLength(8);
   });
 
   it("plans deep runs alone without fresh ones", () => {
-    const planned = planRuns([task("a")], ["none"], 1, 1, { fresh: false, chains: ["w1"] });
+    const planned = planRuns([task("a")], ["none"], 1, 1, { fresh: false, chains: [w1] });
 
-    expect(planned).toEqual([{ task: task("a"), arm: "none", rep: 1, chain: "w1" }]);
+    expect(planned).toEqual([{ task: task("a"), arm: "none", rep: 1, chain: w1 }]);
+  });
+
+  it("forks a chain only for a task that starts where the chain does", () => {
+    const elsewhere = { ...chain("w3", "t"), repo: "r" };
+    const otherRepo = { ...chain("w4"), repo: "q" };
+
+    const planned = planRuns([task("a"), task("b", "t")], ["none"], 1, 1, { fresh: false, chains: [w1, elsewhere, otherRepo] });
+
+    expect(planned.map((p) => `${p.task.id}/${p.chain?.id}`).sort()).toEqual(["a/w1", "b/w3"]);
   });
 });
 
@@ -66,8 +78,8 @@ describe("shard", () => {
   });
 
   it("keeps every run of one warm-up in one slice, since they share its checkout", () => {
-    const run = (id: string, chain?: string, arm: Planned["arm"] = "none"): Planned => ({ task: task(id), arm, rep: 1, chain });
-    const queue = [run("a", "w1"), run("b"), run("c", "w1", "comments"), run("d", "w1"), run("e"), run("f", "w1", "comments")];
+    const run = (id: string, forks?: WarmupChain, arm: Planned["arm"] = "none"): Planned => ({ task: task(id), arm, rep: 1, chain: forks });
+    const queue = [run("a", w1), run("b"), run("c", w1, "comments"), run("d", w1), run("e"), run("f", w1, "comments")];
 
     const slices = [shard(queue, "1/3", warmupOf), shard(queue, "2/3", warmupOf), shard(queue, "3/3", warmupOf)];
 
