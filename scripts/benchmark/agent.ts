@@ -51,7 +51,7 @@ export function outputStem(outputDir: string, number: number): string {
 
 /** Ends `pid` and every process it started; a harness runs tools as child processes. */
 function killTree(pid: number): void {
-  if (process.platform === "win32") spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"]);
+  if (process.platform === "win32") spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"]); // NOSONAR: taskkill is a Windows system tool on PATH
   else process.kill(-pid, "SIGKILL");
 }
 

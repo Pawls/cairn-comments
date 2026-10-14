@@ -37,7 +37,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { globalPiCli, HARNESSES, type HarnessName } from "./harnesses.ts";
-import { findPython, prepareTask, type PreparedTask } from "./prepare.ts";
+import { findPython, prepareTask, readPrepared, type PreparedTask } from "./prepare.ts";
 import { ProviderError, readLog, runAgent, type AgentOptions } from "./agent.ts";
 import { providerFailed, runMetrics } from "./metrics.ts";
 import { startRecordingProxy } from "./proxy.ts";
@@ -167,7 +167,7 @@ function mirrors(work: string, tasks: TaskFile, names: string[]): Map<string, st
   return new Map(
     names.map((name) => {
       const spec = tasks.repos[name]!;
-      const seeded = args.source ? { ...spec, url: path.resolve(args.source) } : spec;
+      const seeded = args.source && name === args.repo ? { ...spec, url: path.resolve(args.source) } : spec;
       return [name, ensureMirror(work, name, seeded, env, commitsOf(tasks, name))];
     }),
   );
@@ -177,12 +177,19 @@ function preparedFile(work: string, repo: string): string {
   return path.join(work, "prepared", `${repo}.json`);
 }
 
-function loadPrepared(work: string, taskFile: TaskFile, repoNames: string[]): Map<string, Record<string, PreparedTask>> {
+/** What a batch checks out: its tasks, and the warm-up chains its deep runs fork. */
+interface Starting {
+  id: string;
+  repo: string;
+  start: string;
+}
+
+function loadPrepared(work: string, taskFile: TaskFile, starting: Starting[]): Map<string, Record<string, PreparedTask>> {
   const loaded = new Map<string, Record<string, PreparedTask>>();
-  for (const name of repoNames.filter((n) => taskFile.repos[n]!.treatment === "own-comments")) {
-    const file = preparedFile(work, name);
-    if (!existsSync(file)) throw new Error(`no prepared commits for ${name}; run prepare first`);
-    loaded.set(name, JSON.parse(readFileSync(file, "utf8")) as Record<string, PreparedTask>);
+  const repoNames = new Set(starting.map((s) => s.repo));
+  for (const name of [...repoNames].filter((n) => taskFile.repos[n]!.treatment === "own-comments")) {
+    const repoStarts = starting.filter((s) => s.repo === name);
+    loaded.set(name, readPrepared(preparedFile(work, name), name, repoStarts, taskFile.repos[name]!.agentNotes ?? []));
   }
   return loaded;
 }
@@ -191,24 +198,30 @@ function prepare(): void {
   const work = workDir();
   const name = required("repo", args.repo);
   const taskFile = loadTasks(args.tasks!);
-  if (taskFile.repos[name]?.treatment !== "own-comments") throw new Error(`${name} has no own-comments treatment in ${args.tasks}`);
+  const spec = taskFile.repos[name];
+  if (spec?.treatment !== "own-comments") throw new Error(`${name} has no own-comments treatment in ${args.tasks}`);
+  const agentNotes = spec.agentNotes;
+  if (!agentNotes) throw new Error(`${name} has no agentNotes in ${args.tasks}`);
   const python = findPython();
   if (!python) throw new Error("prepare needs Python 3 (uv, python3, or python)");
   const mirror = mirrors(work, taskFile, [name]).get(name)!;
   const env = isolatedEnv(path.join(work, "state"), path.join(work, "cli-home"));
-  const only = args.only?.split(",");
-  const file = preparedFile(work, name);
-  const prepared: Record<string, PreparedTask> = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
   // A chain's arm commits are prepared like a task's, under the chain's id.
   const starts = [...taskFile.tasks.filter((t) => t.repo === name), ...chainsOf(name)];
+  const only = args.only?.split(",");
+  const unknown = only?.filter((id) => !starts.some((s) => s.id === id)) ?? [];
+  if (unknown.length) throw new Error(`--only names no task or warm-up chain of ${name}: ${unknown.join(", ")}`);
+  const file = preparedFile(work, name);
+  const prepared: Record<string, PreparedTask> = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
+  mkdirSync(path.dirname(file), { recursive: true });
   for (const { id, start } of starts.filter((s) => !only || only.includes(s.id))) {
-    const done = prepareTask({ mirror, taskId: id, start, python, env });
+    const done = prepareTask({ mirror, taskId: id, start, python, env, agentNotes });
     prepared[id] = done;
+    // Written per entry: each one's commits are already in the mirror, so a later failure must not lose them.
+    writeFileSync(file, JSON.stringify(prepared, null, 2));
     const bytes = Object.values(done.commentBytes).reduce((sum, n) => sum + n, 0);
     log(`${id}: comments add ${bytes.toLocaleString("en-US")} bytes; ${done.unstripped.length} files not stripped`);
   }
-  mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, JSON.stringify(prepared, null, 2));
 }
 
 /** Total entries over the sidecars under `dir`: each entry is one `## <id>` heading. */
@@ -350,13 +363,15 @@ async function run(): Promise<void> {
   const repoNames = [...new Set(tasks.map((t) => t.repo))];
   if (arms.includes("comments")) requireFrozenComments(taskFile, repoNames);
   await checkProvider(agent);
+  const chains = loadChains(args.warmups!);
+  const forked = [...chains.values()].filter((chain) => whole.some((planned) => planned.chain === chain.id));
   const batch: Batch = {
     agent,
     work,
     taskFile,
     mirrorPaths: mirrors(work, taskFile, repoNames),
-    prepared: loadPrepared(work, taskFile, repoNames),
-    chains: loadChains(args.warmups!),
+    prepared: loadPrepared(work, taskFile, [...tasks, ...forked]),
+    chains,
   };
   const stopAt = args["stop-at"] ? nextOccurrence(args["stop-at"], new Date()) : undefined;
   const queue = shard(whole, args.shard, warmupOf);
@@ -372,7 +387,7 @@ async function run(): Promise<void> {
       log(`stop time reached before ${label}`);
       return;
     }
-    providerFailures = (await attempt(batch, planned, runDir, label)) ? providerFailures + 1 : 0;
+    providerFailures = (await attempt(batch, planned, runDir, label)) ? providerFailures + 1 : 0; // NOSONAR: one run at a time on purpose; --shard runs them side by side
     if (providerFailures >= MAX_PROVIDER_FAILURES) {
       throw new Error(`the model server failed ${providerFailures} runs in a row; batch stopped`);
     }
