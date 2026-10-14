@@ -7,7 +7,14 @@
         "uv venv .venv --quiet --python 3.13",
         "uv pip install --quiet --python {venv-python} -e .[dev]"
       ],
-      "treatment": "own-comments"
+      "treatment": "own-comments",
+      "agentNotes": [
+        "# Agent notes",
+        "",
+        "Run a test file with the project's virtualenv, which is already set up:",
+        "`.venv/Scripts/python.exe -m pytest tests/<file>.py -q -n0` on Windows,",
+        "`.venv/bin/python -m pytest tests/<file>.py -q -n0` elsewhere."
+      ]
     }
   },
   "repo": "boxel",
@@ -24,7 +31,11 @@
       "modules": ["water.py", "window_water.py"],
       "prompt": "Read `solve_drain` in water.py (it re-levels a pool after the terrain around it is edited) and predict its result for the case below. Work it out from the code; do not run anything.\n\nThe world is solid everywhere except these open (air) cells: the inside of a stone tub, every cell with x 0 to 2, z 0 to 2 and y 1 to 4; and a shaft dug under the middle of the tub, the two cells (1, 0, 1) and (1, -1, 1). The cell under the shaft, (1, -2, 1), is solid. Before the shaft was dug the tub held water in every cell with x 0 to 2, z 0 to 2 and y 1 to 2: two full layers, 18 cells. The call is `solve_drain(is_open, body)`, where `is_open(cell)` is true exactly for the open cells listed above, `body` is the set of those 18 water cells, and `budget` and `sources` are left at their defaults.\n\nWhat are the result's `level`, the number of cells in `keep`, the number in `drained`, the number in `wetted`, and `spilled`? Explain briefly how the function arrives there, then end your answer with one line in exactly this form:\nANSWER: level=<n> kept=<n> drained=<n> wetted=<n> spilled=<n>",
       "expected": "level=3 kept=18 drained=2 wetted=2 spilled=0",
-      "rubric": ["conserv|volume", "partial|ragged|next layer|bottom-up|remainder|short", "discovery|breadth-first|BFS|flood order"]
+      "rubric": [
+        "conserv\\w*\\W{1,30}(volume|cell)|(volume|water)\\W{1,30}(is )?conserv",
+        "partial(ly)?[- ]fill|ragged|next layer|remainder|\\bshort\\b",
+        "discover|breadth-first|\\bBFS\\b|flood order"
+      ]
     },
     {
       "id": "fell-touching-crowns",
@@ -33,7 +44,11 @@
       "modules": ["felling.py", "window_felling.py"],
       "prompt": "Read `gather_tree` in felling.py (it decides which cells come down when a tree is felled) and predict its result for the scene below. Work it out from the code; do not run anything.\n\nThere are four block types, LOG, NEEDLE, SNOW and ROCK. Each is a plain `blocks.BlockDef` with only its name set, so all four are solid, opaque, full-light-blocking and not `self_canopy`. `world.block_at(cell)` returns a cell's type index, or None for air, and `world.block_defs` is the list of the four definitions.\n\n- A ROCK floor fills y = -1 for x -6 to 10 and z -6 to 6.\n- Two trees stand on it. Each has a LOG trunk from y 0 to 5, one at x 0, z 0 and the other at x 4, z 0. Each trunk has a ring of NEEDLE at y 4 and at y 5 on its four sides (one cell along +x, -x, +z and -z from the trunk), and one NEEDLE on top of the trunk at y 6.\n- One more NEEDLE sits at (2, 4, 0), between the two crowns.\n- SNOW lies at (1, 6, 0), on top of the first tree's needle ring.\n- A ROCK block sits at (-2, 3, 0), beside the first tree's crown, with SNOW on top of it at (-2, 4, 0).\n- Every other cell is air.\n\nThe player strikes the first tree's trunk: `felling.gather_tree(world, (0, 1, 0))`. How many cells are in the returned tree's `trunk`, and how many in its `canopy`? Explain briefly which cells are in the canopy and why the others are not, then end your answer with one line in exactly this form (or `ANSWER: none` if it returns None):\nANSWER: trunk=<n> canopy=<n>",
       "expected": "trunk=6 canopy=11",
-      "rubric": ["tie|same distance|equidistant", "lowest|lower", "rests|resting|held up|holding up|on top of|sits on"]
+      "rubric": [
+        "\\bties?\\b|same distance|equidistant",
+        "(lowest|lower)\\W{1,10}(trunk|cell|key)|\\(0, ?0, ?0\\) ?<",
+        "rests on|resting on|held up|holding up|on top of|sits on"
+      ]
     },
     {
       "id": "enemy-leash",
@@ -44,7 +59,10 @@
       "hiddenTests": ["tests/test_probe_enemy_leash.py"],
       "keptTests": ["tests/test_npc_brain.py"],
       "testCommand": "{venv-python} -m pytest -q -n0 -p no:cacheprovider tests/test_probe_enemy_leash.py tests/test_npc_brain.py",
-      "rubric": ["aware", "latch|re-?hunt|_hunt"]
+      "rubric": [
+        "aware(ness)?[^.]{1,40}(meter|1\\.0|drain|stays)|(meter|drain\\w*)[^.]{1,40}aware",
+        "\\blatch"
+      ]
     },
     {
       "id": "navgrid-changed-nodes",
@@ -55,7 +73,7 @@
       "hiddenTests": ["tests/test_probe_changed_nodes.py"],
       "keptTests": ["tests/test_navgrid.py"],
       "testCommand": "{venv-python} -m pytest -q -n0 -p no:cacheprovider tests/test_probe_changed_nodes.py tests/test_navgrid.py",
-      "rubric": ["diagonal", "corner|flank"]
+      "rubric": ["\\bdiagonal", "\\bflank|_corner_open|corner"]
     },
     {
       "id": "fog-gate-refused",

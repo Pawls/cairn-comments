@@ -149,9 +149,11 @@ function main(): void {
   const env = isolatedEnv(path.join(work, "state"), path.join(work, "cli-home"));
   const spec = tasks.repos[tasks.repo];
   if (!spec) throw new Error(`unknown repo ${tasks.repo}`);
+  const { agentNotes } = spec;
+  if (!agentNotes) throw new Error(`${tasks.repo} has no agentNotes in ${taskFile}`);
   const seeded = args.source ? { ...spec, url: path.resolve(args.source) } : spec;
   const mirror = ensureMirror(work, tasks.repo, seeded, env, [tasks.start]);
-  const prepared = prepareTask({ mirror, taskId: DEEP_PREPARED_ID, start: tasks.start, python, env });
+  const prepared = prepareTask({ mirror, taskId: DEEP_PREPARED_ID, start: tasks.start, python, env, agentNotes });
 
   const checkout = (arm: Arm): string => {
     const runDir = path.join(work, "verify", arm);
