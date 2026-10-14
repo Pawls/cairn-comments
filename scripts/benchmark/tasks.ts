@@ -3,7 +3,8 @@
  * `loadTasks` reads the one-prompt rounds; `loadDeepTasks` reads the deep-context probe set
  * (docs/plans/benchmark-deep-context.md), whose probes run fresh or after a warm-up chain.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 export interface RepoSpec {
@@ -189,6 +190,47 @@ export function loadDeepTasks(file: string): DeepTaskFile {
   }
   checkProbes(file, parsed.probes, warmups);
   return { ...parsed, warmups };
+}
+
+/** The same limit as runner.ts's edit grading, so a probe that hangs fails here as it would there. */
+const TEST_TIMEOUT_MS = 20 * 60 * 1000;
+const OUTPUT_LIMIT = 64 * 1024 * 1024;
+
+export interface ChangeGrade {
+  passed: boolean;
+  testExit: number | null;
+  output: string;
+}
+
+/**
+ * Grades a change probe in `checkout`: copies each named hidden test into place (never a
+ * whole folder, so local bytecode stays behind), puts `keptTests` back to `committed`, and
+ * runs `testCommand`. `committed` is the arm's prepared commit when HEAD has moved past it.
+ */
+export function gradeChangeProbe(
+  taskFile: string,
+  probe: ChangeProbe,
+  checkout: string,
+  env: Record<string, string>,
+  committed = "HEAD",
+): ChangeGrade {
+  for (const test of probe.hiddenTests) {
+    const destination = path.join(checkout, test);
+    mkdirSync(path.dirname(destination), { recursive: true });
+    copyFileSync(probeFile(taskFile, probe.id, test), destination);
+  }
+  if (probe.keptTests?.length) {
+    execFileSync("git", ["checkout", committed, "--", ...probe.keptTests], { cwd: checkout, env, stdio: "ignore" });
+  }
+  const run = spawnSync(expandCommand(probe.testCommand), {
+    cwd: checkout,
+    env,
+    shell: true,
+    encoding: "utf8",
+    timeout: TEST_TIMEOUT_MS,
+    maxBuffer: OUTPUT_LIMIT,
+  });
+  return { passed: run.status === 0, testExit: run.status, output: `${run.stdout}\n${run.stderr}` };
 }
 
 const ANSWER_LINE = /^\s*ANSWER:(.*)$/gim;

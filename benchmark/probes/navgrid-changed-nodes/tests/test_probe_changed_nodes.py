@@ -71,9 +71,9 @@ def test_every_edit_reports_exactly_what_a_full_rebuild_changes():
     for _ in range(25):
         solid = bumpy_ground(rng)
         grid = rebuilt(solid)
+        before = walk_edges(grid)
         for _ in range(12):
             cell = (rng.randrange(9), rng.randrange(0, 4), rng.randrange(9))
-            before = walk_edges(rebuilt(solid))
             if cell in solid:
                 solid.discard(cell)
             else:
@@ -81,5 +81,7 @@ def test_every_edit_reports_exactly_what_a_full_rebuild_changes():
 
             changed = grid.update_cells(lambda c, s=solid: c in s, [cell])
 
-            assert changed == expected_changes(before, walk_edges(rebuilt(solid))), f"edit at {cell}"
-            assert walk_edges(grid) == walk_edges(rebuilt(solid)), "the patch no longer matches a rebuild"
+            after = walk_edges(rebuilt(solid))
+            assert changed == expected_changes(before, after), f"edit at {cell}"
+            assert walk_edges(grid) == after, "the patch no longer matches a rebuild"
+            before = after

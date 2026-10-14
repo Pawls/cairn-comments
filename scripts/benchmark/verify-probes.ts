@@ -10,13 +10,14 @@
  * patched comments checkout through strip_comments.py, so one patch serves both arms.
  */
 import { execFileSync, spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { findPython, prepareTask, STRIP_SCRIPT } from "./prepare.ts";
 import {
   DEEP_PREPARED_ID,
   expandCommand,
+  gradeChangeProbe,
   loadDeepTasks,
   probeFile,
   type ChangeProbe,
@@ -34,10 +35,12 @@ import {
   type Arm,
 } from "./workspace.ts";
 
+const DEFAULT_TASKS = path.join("benchmark", "deep-tasks.json");
+
 const { values: args } = parseArgs({
   options: {
     work: { type: "string" },
-    tasks: { type: "string", default: path.join("benchmark", "deep-tasks.json") },
+    tasks: { type: "string", default: DEFAULT_TASKS },
     source: { type: "string" },
     only: { type: "string" },
   },
@@ -60,45 +63,27 @@ interface Check {
   failure: string | undefined;
 }
 
-function runShell(context: Context, command: string, arm: Arm): { status: number | null; output: string } {
-  const result = spawnSync(expandCommand(command), {
+function checkPrediction(context: Context, probe: PredictProbe, arm: Arm): string | undefined {
+  const script = path.resolve(probeFile(context.taskFile, probe.id, "compute.py"));
+  const run = spawnSync(expandCommand(`{venv-python} -I "${script}"`), {
     cwd: context.checkouts[arm],
     env: context.env,
     shell: true,
     encoding: "utf8",
-    maxBuffer: OUTPUT_LIMIT,
   });
-  return { status: result.status, output: `${result.stdout}\n${result.stderr}` };
-}
-
-function checkPrediction(context: Context, probe: PredictProbe, arm: Arm): string | undefined {
-  const script = path.resolve(probeFile(context.taskFile, probe.id, "compute.py"));
-  const printed = runShell(context, `{venv-python} -I "${script}"`, arm).output.trim().split("\n")[0]?.trim();
+  const printed = run.stdout.trim().split("\n")[0]?.trim();
   return printed === probe.expected ? undefined : `compute.py printed "${printed}", expected "${probe.expected}"`;
-}
-
-function placeHiddenTests(context: Context, probe: ChangeProbe, arm: Arm): void {
-  for (const test of probe.hiddenTests) {
-    const destination = path.join(context.checkouts[arm], test);
-    mkdirSync(path.dirname(destination), { recursive: true });
-    copyFileSync(probeFile(context.taskFile, probe.id, test), destination);
-  }
-}
-
-/** The files a patch changes, `/`-separated. */
-function patchedFiles(patch: string): string[] {
-  return [...readFileSync(patch, "utf8").matchAll(/^\+\+\+ b\/(.+)$/gm)].map(([, file]) => (file ?? "").trim());
 }
 
 /** Puts the reference solution into one arm's checkout (see the module comment). */
 function applyReference(context: Context, probe: ChangeProbe, arm: Arm): void {
-  const patch = path.resolve(probeFile(context.taskFile, probe.id, "reference.patch"));
   const { comments, none } = context.checkouts;
   if (arm === "comments") {
-    git(comments, context.env, "apply", patch);
+    git(comments, context.env, "apply", path.resolve(probeFile(context.taskFile, probe.id, "reference.patch")));
     return;
   }
-  for (const file of patchedFiles(patch)) {
+  const solvedFiles = git(comments, context.env, "diff", "--name-only").split("\n").filter(Boolean);
+  for (const file of solvedFiles) {
     const solved = readFileSync(path.join(comments, file));
     const strippedSolution = execFileSync(context.python, [STRIP_SCRIPT, "-"], { input: solved, maxBuffer: OUTPUT_LIMIT });
     writeFileSync(path.join(none, file), strippedSolution);
@@ -106,11 +91,11 @@ function applyReference(context: Context, probe: ChangeProbe, arm: Arm): void {
 }
 
 function checkChange(context: Context, probe: ChangeProbe, arm: Arm): string | undefined {
-  placeHiddenTests(context, probe, arm);
-  if (runShell(context, probe.testCommand, arm).status === 0) return "hidden tests pass at the start";
+  const checkout = context.checkouts[arm];
+  if (gradeChangeProbe(context.taskFile, probe, checkout, context.env).passed) return "hidden tests pass at the start";
   applyReference(context, probe, arm);
-  const solved = runShell(context, probe.testCommand, arm);
-  if (solved.status !== 0) return `hidden tests fail on the reference solution:\n${solved.output.slice(-2000)}`;
+  const solved = gradeChangeProbe(context.taskFile, probe, checkout, context.env);
+  if (!solved.passed) return `hidden tests fail on the reference solution:\n${solved.output.slice(-2000)}`;
   return undefined;
 }
 
@@ -142,7 +127,7 @@ function main(): void {
   if (!args.work) throw new Error("--work is required");
   const work = path.resolve(args.work);
   refuseInheritedInstructions(work);
-  const taskFile = args.tasks ?? path.join("benchmark", "deep-tasks.json");
+  const taskFile = args.tasks ?? DEFAULT_TASKS;
   const tasks = loadDeepTasks(taskFile);
   const python = findPython();
   if (!python) throw new Error("verify-probes needs Python 3 (uv, python3, or python)");
