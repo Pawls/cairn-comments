@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { legacyRunDirs, runDirFor } from "../runner.ts";
-import type { Task } from "../tasks.ts";
-import { warmupDirFor, type WarmupChain } from "../warmup.ts";
+import type { Task, WarmupChain } from "../tasks.ts";
+import { warmupDirFor } from "../warmup.ts";
 import { ARMS } from "../workspace.ts";
 
 const workDir = path.resolve("/bench");

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,31 +6,20 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ProviderError, readLog } from "../agent.ts";
 import { runDirFor, runOne, type RunSpec } from "../runner.ts";
 import { startStandIn, type StandIn } from "../standin.ts";
-import type { QuestionTask } from "../tasks.ts";
-import { chainsNamedLikeTasks, loadChains, warmupDirFor, type WarmupChain } from "../warmup.ts";
+import type { QuestionTask, WarmupChain } from "../tasks.ts";
+import { warmupDirFor } from "../warmup.ts";
 import { git, isolatedEnv } from "../workspace.ts";
+import { makeRepo } from "./fixtures.ts";
 
 const FAKE_PI = path.join(path.dirname(fileURLToPath(import.meta.url)), "fake-pi.ts");
 
 let standIn: StandIn;
 let spec: RunSpec;
 
-/** A one-commit repository to check out, made with an isolated git config. */
-function makeRepo(root: string): { repo: string; start: string } {
-  const repo = path.join(root, "source");
-  mkdirSync(repo);
-  const env = isolatedEnv(path.join(root, "git-state"), path.join(root, "cli-home"));
-  git(repo, env, "init", "--quiet");
-  writeFileSync(path.join(repo, "a.txt"), "a\n");
-  git(repo, env, "add", "a.txt");
-  git(repo, env, "commit", "--quiet", "-m", "start");
-  return { repo, start: git(repo, env, "rev-parse", "HEAD").trim() };
-}
-
 beforeEach(async () => {
   standIn = await startStandIn();
   const root = mkdtempSync(path.join(tmpdir(), "warmup-"));
-  const { repo, start } = makeRepo(root);
+  const { repo, start } = makeRepo(root, { "a.txt": "a\n" });
   const task: QuestionTask = { id: "q", repo: "r", kind: "question", start, prompt: "the probe", answerKey: ["stand-in reply"] };
   const chain: WarmupChain = { id: "w", repo: "r", start, prompts: ["first warm-up prompt", "second warm-up prompt"] };
   spec = {
@@ -145,31 +134,5 @@ describe("a fresh run", () => {
 
     await expect(run).rejects.toThrow(/made no model call/);
     await expect(run).rejects.not.toBeInstanceOf(ProviderError);
-  });
-});
-
-describe("loadChains", () => {
-  const chainsIn = (files: Record<string, string>) => {
-    const dir = mkdtempSync(path.join(tmpdir(), "chains-"));
-    for (const [name, text] of Object.entries(files)) writeFileSync(path.join(dir, name), text);
-    return dir;
-  };
-
-  it("reads each chain under its file name", () => {
-    const dir = chainsIn({ "w1.json": JSON.stringify({ repo: "r", start: "s", prompts: ["go"] }) });
-
-    expect(loadChains(dir).get("w1")).toEqual({ id: "w1", repo: "r", start: "s", prompts: ["go"] });
-  });
-
-  it("names the chains whose id is also a task's, which would share the task's prepared commits", () => {
-    const chains = [{ id: "fix-flow", repo: "r", start: "s", prompts: ["go"] }, { id: "w1", repo: "r", start: "s", prompts: ["go"] }];
-
-    expect(chainsNamedLikeTasks(chains, [{ id: "fix-flow" }, { id: "q1" }])).toEqual(["fix-flow"]);
-  });
-
-  it("refuses a chain file without a repository, a start commit, and at least one prompt, naming the file", () => {
-    expect(() => loadChains(chainsIn({ "w2.json": JSON.stringify({ repo: "r", start: "s", prompts: [] }) }))).toThrow(/w2\.json/);
-    expect(() => loadChains(chainsIn({ "w3.json": JSON.stringify({ repo: "r", prompts: ["go"] }) }))).toThrow(/w3\.json/);
-    expect(() => loadChains(chainsIn({ "w4.json": "{ not json" }))).toThrow(/w4\.json/);
   });
 });

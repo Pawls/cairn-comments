@@ -1,7 +1,7 @@
 /** The order runs happen in, and how the queue splits across processes. */
 import { shuffled } from "./stats.ts";
-import type { Task } from "./tasks.ts";
-import { warmupKey, type WarmupChain } from "./warmup.ts";
+import type { Task, WarmupChain } from "./tasks.ts";
+import { warmupKey } from "./warmup.ts";
 import type { Arm } from "./workspace.ts";
 
 export interface Planned {

@@ -36,6 +36,18 @@ export interface LaunchOptions {
   piCli: string;
   /** The model is served locally under its own name, not by the Anthropic API. */
   local: boolean;
+  /** Give the agent only tools that read files: no shell, no edits, and no subagents. */
+  readOnly: boolean;
+}
+
+/**
+ * Each harness's read-only tools, as an allowlist: a denylist would have to keep up with
+ * every tool that can run a program, such as Claude Code's PowerShell tool on Windows.
+ */
+const READ_ONLY_TOOLS: Record<HarnessName, string> = { claude: "Read,Grep,Glob", pi: "read,grep,find,ls" };
+
+function toolArgs(harness: HarnessName, options: LaunchOptions): string[] {
+  return options.readOnly ? ["--tools", READ_ONLY_TOOLS[harness]] : [];
 }
 
 /** Context and output limits declared to pi for a local model; Strata serves 262,144 tokens. */
@@ -105,6 +117,7 @@ function claudeLaunch(options: LaunchOptions): Launch {
       "--model",
       options.model,
       "--dangerously-skip-permissions",
+      ...toolArgs("claude", options),
       ...claudeSessionArgs(options.session),
     ],
     env,
@@ -161,6 +174,7 @@ function piLaunch(options: LaunchOptions): Launch {
       "--no-extensions",
       "--no-prompt-templates",
       "--no-themes",
+      ...toolArgs("pi", options),
       ...piSessionArgs(options.session),
       "--",
       options.prompt,

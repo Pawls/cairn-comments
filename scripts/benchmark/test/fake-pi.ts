@@ -3,6 +3,7 @@
  * call per prompt, with the session's history, kept per `--session-id` in `--session-dir`;
  * `--fork <id>` starts from a copy of that session's history.
  */
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
@@ -20,6 +21,7 @@ const { values, positionals } = parseArgs({
     "session-id": { type: "string" },
     fork: { type: "string" },
     model: { type: "string" },
+    tools: { type: "string" },
   },
 });
 
@@ -45,7 +47,13 @@ history.push({ role: "assistant", content: message.content[0]!.text });
 writeFileSync(historyFile(sessionId), JSON.stringify(history));
 
 const usage = { input: message.usage.input_tokens, output: message.usage.output_tokens, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } };
-console.log(JSON.stringify({ type: "session", id: sessionId }));
+// The tool allowlist is echoed so a test can see which tools a run was given.
+console.log(JSON.stringify({ type: "session", id: sessionId, tools: values.tools ?? "all" }));
 console.log(JSON.stringify({ type: "message_end", message: { role: "assistant", usage } }));
 // A prompt that starts "fail:" stands in for a harness that errors out after its call.
 if (positionals.at(-1)!.startsWith("fail:")) process.exitCode = 1;
+// One that starts "commit-kept:" stands in for an agent that edits a kept test and commits it.
+if (positionals.at(-1)!.startsWith("commit-kept:")) {
+  writeFileSync(path.join("tests", "kept.txt"), "edited and committed by the agent");
+  execFileSync("git", ["commit", "--quiet", "-am", "the agent's edit"]);
+}

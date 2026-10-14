@@ -19,6 +19,8 @@ export interface AgentOptions {
   piCli: string;
   /** For each prompt on its own. */
   timeoutMs: number;
+  /** Give the agent only tools that read files (`LaunchOptions.readOnly`). */
+  readOnly?: boolean;
 }
 
 /** A run lost to the model server rather than to the agent; it is retried, not recorded. */
@@ -118,6 +120,7 @@ async function runPrompt(
     sessionDir: path.join(dirs.homeDir, HOME_DIRS.sessions),
     piCli: spec.piCli,
     local: spec.local,
+    readOnly: spec.readOnly ?? false,
   });
   const child = spawn(launch.command, launch.args, { // NOSONAR: the harness under test is claude on PATH, or pi run by this Node
     cwd: dirs.agentDir,
