@@ -132,7 +132,9 @@ runs compete for the CPU (`npm ci`, test runs), which adds noise to wall time; t
 spreads it over both arms. Each run keeps `calls.jsonl` (the proxy log),
 the harness output, `setup.log`, `test.log`, and `result.json` under
 `<work>/runs/<harness>/<task>/<hash>/`, a name that hides the arm from the agent working
-in it (`result.json` records the arm); `--keep` also keeps the checkouts.
+in it (`result.json` records the arm); `--keep` also keeps the checkouts. `run` and `status`
+refuse a work directory from before the names were hashed (`<arm>-<rep>`); give them a new
+`--work`.
 
 The click setup uses `uv`; the cairn-comments setup runs `npm ci`. `--provider <url>`
 points the proxy at a stand-in for the API, which is how the harness was exercised end to

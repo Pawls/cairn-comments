@@ -4,7 +4,7 @@
  * in the chain's checkout (warmup.ts).
  */
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { outputStem, readLog, refuseFailedSession, runAgent, type AgentOptions } from "./agent.ts";
 import { forkTotals, harnessTotals, type HarnessName, type HarnessTotals } from "./harnesses.ts";
@@ -12,8 +12,8 @@ import { gradeAnswer, probeCalls, runMetrics, type RunMetrics } from "./metrics.
 import type { PreparedTask } from "./prepare.ts";
 import { startRecordingProxy } from "./proxy.ts";
 import { expandCommand, type EditTask, type RepoSpec, type Task } from "./tasks.ts";
-import { ensureWarmup, restoreWarmup, type WarmupChain } from "./warmup.ts";
-import { git, isolatedEnv, neutralName, placedCommentBytes, removeCheckouts, setUpCheckout, type Arm } from "./workspace.ts";
+import { ensureWarmup, refuseUnfinished, restoreWarmup, type WarmupChain } from "./warmup.ts";
+import { ARMS, git, isolatedEnv, neutralName, placedCommentBytes, removeCheckouts, setUpCheckout, type Arm } from "./workspace.ts";
 
 export type Depth = "fresh" | "deep";
 
@@ -75,6 +75,19 @@ export function depthOf(result: RunResult): Depth {
 /** A run's directory; its name hides the arm (`neutralName`), which result.json records. */
 export function runDirFor(spec: { workDir: string; harness: HarnessName; task: Task; arm: Arm; rep: number; chain?: WarmupChain }): string {
   return path.join(spec.workDir, "runs", spec.harness, spec.task.id, neutralName(spec.arm, spec.chain?.id, spec.rep));
+}
+
+/**
+ * Run directories under the `<arm>-<rep>` names used before they were hashed. `run` and
+ * `status` cannot find those results, and `report` would count them beside new ones.
+ */
+export function legacyRunDirs(workDir: string): string[] {
+  const runs = path.join(workDir, "runs");
+  if (!existsSync(runs)) return [];
+  const legacyName = new RegExp(`^(${ARMS.join("|")})-\\d+$`);
+  return readdirSync(runs, { recursive: true, encoding: "utf8" })
+    .filter((file) => path.basename(file) === "result.json" && legacyName.test(path.basename(path.dirname(file))))
+    .map((file) => path.join(runs, path.dirname(file)));
 }
 
 /** Puts the solution's tests, read from the mirror, over the agent's work. */
@@ -140,6 +153,7 @@ async function deepStart(
     throw new Error(`task ${spec.task.id} does not start where warm-up ${chain.id} does (${chain.repo} at ${chain.start})`);
   }
   const ready = await ensureWarmup({ ...spec, chain, prepared });
+  refuseUnfinished(ready);
   restoreWarmup(ready, logFile, env);
   const { dir, warmup } = ready;
   return {

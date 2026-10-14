@@ -21,7 +21,7 @@ export interface WarmupChain {
   repo: string;
   /** The commit the chain starts from; a probe forked from it must start there too. */
   start: string;
-  /** The source files the chain reads or edits; a probe's modules must not overlap them. */
+  /** The source files the chain reads or edits; the deep-task loader refuses a probe that overlaps them. */
   modules?: string[];
   prompts: string[];
 }
@@ -76,6 +76,24 @@ export function loadChains(dir: string): Map<string, WarmupChain> {
     chains.set(id, { ...readChain(path.join(dir, file)), id });
   }
   return chains;
+}
+
+/** The chains whose id is also a task's; they would share its prepared commits (prepare.ts). */
+export function chainsNamedLikeTasks(chains: WarmupChain[], tasks: Array<{ id: string }>): string[] {
+  return chains.filter((chain) => tasks.some((task) => task.id === chain.id)).map((chain) => chain.id);
+}
+
+/**
+ * Throws when a prompt of the warm-up failed or timed out: its session stops short of the
+ * chain, so a probe forked from it would start shallower than the other arm's. The record
+ * stays, so a batch does not run a failing chain again for every probe.
+ */
+export function refuseUnfinished(ready: ReadyWarmup): void {
+  const failed = ready.warmup.exits.findIndex((exit) => exit.timedOut || exit.code !== 0);
+  if (failed === -1) return;
+  const exit = ready.warmup.exits[failed]!;
+  const how = exit.timedOut ? "timed out" : `exited ${exit.code}`;
+  throw new Error(`warm-up ${ready.warmup.chain} did not finish: prompt ${failed + 1} ${how}; delete ${ready.dir} to run it again`);
 }
 
 /** What names one warm-up: its runs share a checkout, so sharding keeps them together by it. */

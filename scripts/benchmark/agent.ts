@@ -3,6 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createWriteStream, existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { finished } from "node:stream/promises";
 import { launchFor, withoutHarnessVariables, type HarnessName, type SessionStart } from "./harnesses.ts";
 import { providerFailed, type LoggedCall } from "./metrics.ts";
 
@@ -125,8 +126,7 @@ async function runPrompt(
     detached: process.platform !== "win32",
   });
   const stem = outputStem(dirs.outputDir, prompt.number);
-  child.stdout.pipe(createWriteStream(`${stem}.jsonl`));
-  child.stderr.pipe(createWriteStream(`${stem}.err`));
+  const outputs = [child.stdout.pipe(createWriteStream(`${stem}.jsonl`)), child.stderr.pipe(createWriteStream(`${stem}.err`))];
   child.stdin.end(launch.stdin);
   let timedOut = false;
   const timer = setTimeout(() => {
@@ -138,6 +138,8 @@ async function runPrompt(
     child.on("close", resolve);
   });
   clearTimeout(timer);
+  // The caller reads the output next, and a write stream can still be flushing after `close`.
+  await Promise.all(outputs.map((output) => finished(output)));
   return { code, timedOut };
 }
 

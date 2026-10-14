@@ -42,11 +42,11 @@ import { ProviderError, readLog, runAgent, type AgentOptions } from "./agent.ts"
 import { providerFailed, runMetrics } from "./metrics.ts";
 import { startRecordingProxy } from "./proxy.ts";
 import { renderReport } from "./report.ts";
-import { depthOf, runDirFor, runOne, type RunResult } from "./runner.ts";
+import { depthOf, legacyRunDirs, runDirFor, runOne, type RunResult } from "./runner.ts";
 import { nextOccurrence, planRuns, shard, unforked, warmupOf, type Depths, type Planned } from "./schedule.ts";
 import { spreadOf } from "./stats.ts";
 import { loadTasks, type Task, type TaskFile } from "./tasks.ts";
-import { loadChains, type WarmupChain } from "./warmup.ts";
+import { chainsNamedLikeTasks, loadChains, type WarmupChain } from "./warmup.ts";
 import {
   ARMS,
   cairn,
@@ -158,25 +158,26 @@ function chainsOf(repo: string): WarmupChain[] {
 
 /**
  * Every commit a repository's runs check out: its base, each task's start and solution,
- * and each warm-up chain's start.
+ * and the start of each of `chains` in it.
  */
-function commitsOf(tasks: TaskFile, repo: string): string[] {
+function commitsOf(tasks: TaskFile, repo: string, chains: WarmupChain[]): string[] {
   const commits = [tasks.repos[repo]!.base];
   for (const task of tasks.tasks.filter((t) => t.repo === repo)) {
     commits.push(task.start);
     if (task.kind !== "question") commits.push(task.solution);
   }
-  for (const chain of chainsOf(repo)) commits.push(chain.start);
+  for (const chain of chains.filter((c) => c.repo === repo)) commits.push(chain.start);
   return commits;
 }
 
-function mirrors(work: string, tasks: TaskFile, names: string[]): Map<string, string> {
+/** A mirror per repository in `names`, holding every commit its tasks and `chains` check out. */
+function mirrors(work: string, tasks: TaskFile, names: string[], chains: WarmupChain[]): Map<string, string> {
   const env = isolatedEnv(path.join(work, "state"), path.join(work, "cli-home"));
   return new Map(
     names.map((name) => {
       const spec = tasks.repos[name]!;
       const seeded = args.source && name === args.repo ? { ...spec, url: path.resolve(args.source) } : spec;
-      return [name, ensureMirror(work, name, seeded, env, commitsOf(tasks, name))];
+      return [name, ensureMirror(work, name, seeded, env, commitsOf(tasks, name, chains))];
     }),
   );
 }
@@ -212,10 +213,12 @@ function prepare(): void {
   if (!agentNotes) throw new Error(`${name} has no agentNotes in ${args.tasks}`);
   const python = findPython();
   if (!python) throw new Error("prepare needs Python 3 (uv, python3, or python)");
-  const mirror = mirrors(work, taskFile, [name]).get(name)!;
+  const chains = chainsOf(name);
+  refuseChainsNamedLikeTasks(chains, taskFile.tasks);
+  const mirror = mirrors(work, taskFile, [name], chains).get(name)!;
   const env = isolatedEnv(path.join(work, "state"), path.join(work, "cli-home"));
   // A chain's arm commits are prepared like a task's, under the chain's id.
-  const starts = [...taskFile.tasks.filter((t) => t.repo === name), ...chainsOf(name)];
+  const starts = [...taskFile.tasks.filter((t) => t.repo === name), ...chains];
   const only = args.only?.split(",");
   const unknown = only?.filter((id) => !starts.some((s) => s.id === id)) ?? [];
   if (unknown.length) throw new Error(`--only names no task or warm-up chain of ${name}: ${unknown.join(", ")}`);
@@ -251,7 +254,7 @@ async function annotate(): Promise<void> {
   const tasks = loadTasks(args.tasks!);
   const spec = tasks.repos[name];
   if (!spec) throw new Error(`no repo ${name} in ${args.tasks}`);
-  const mirror = mirrors(work, tasks, [name]).get(name)!;
+  const mirror = mirrors(work, tasks, [name], []).get(name)!;
 
   const runDir = path.join(work, "annotate", name);
   rmSync(runDir, { recursive: true, force: true });
@@ -290,11 +293,25 @@ function describeResult(result: RunResult): string {
   return `${verdict}, ${input.toLocaleString("en-US")} input tokens, ${(result.wallMs / 60_000).toFixed(1)} min`;
 }
 
+/** Throws when a chain's id is also a task's, since the two would share prepared commits. */
+function refuseChainsNamedLikeTasks(chains: WarmupChain[], tasks: Task[]): void {
+  const clashing = chainsNamedLikeTasks(chains, tasks);
+  if (clashing.length) throw new Error(`warm-up chain ${clashing.join(", ")} has the id of a task; rename the chain file`);
+}
+
+/** Throws when `work` holds results under the old `<arm>-<rep>` names, which a batch would not find. */
+function refuseLegacyRuns(work: string): void {
+  const legacy = legacyRunDirs(work);
+  if (legacy.length) {
+    throw new Error(`${work} holds ${legacy.length} results under the old <arm>-<rep> names (${legacy[0]}); start a new --work`);
+  }
+}
+
 /**
  * --depths, with the chains a deep run may fork: --chains, or every chain. A task forks only
  * the chains that start where it does (`planRuns`).
  */
-function depthsArg(tasks: Task[]): Depths {
+function depthsArg(tasks: Task[], allTasks: Task[]): Depths {
   const depths = args.depths!.split(",");
   for (const depth of depths) if (depth !== "fresh" && depth !== "deep") throw new Error("--depths takes fresh, deep");
   if (!depths.includes("deep")) return { fresh: true, chains: [] };
@@ -303,6 +320,7 @@ function depthsArg(tasks: Task[]): Depths {
   const unknown = ids.filter((id) => !chains.has(id));
   if (unknown.length) throw new Error(`no warm-up chain ${unknown.join(", ")} in ${args.warmups}`);
   const selected = [...chains.values()].filter((chain) => ids.includes(chain.id));
+  refuseChainsNamedLikeTasks(selected, allTasks);
   const alone = unforked(tasks, selected);
   if (alone.length === tasks.length) {
     throw new Error(`depth deep needs a warm-up chain in ${args.warmups} that starts where a selected task does`);
@@ -325,7 +343,7 @@ function plannedQueue(taskFile: TaskFile): { tasks: Task[]; arms: Arm[]; queue: 
   const tasks = taskFile.tasks.filter((t) => !only || only.includes(t.id));
   const arms = args.arms!.split(",") as Arm[];
   for (const arm of arms) if (!ARMS.includes(arm)) throw new Error(`--arms takes ${ARMS.join(", ")}`);
-  return { tasks, arms, queue: planRuns(tasks, arms, Number(args.reps), Number(args.seed), depthsArg(tasks)) };
+  return { tasks, arms, queue: planRuns(tasks, arms, Number(args.reps), Number(args.seed), depthsArg(tasks, taskFile.tasks)) };
 }
 
 function requireFrozenComments(taskFile: TaskFile, repoNames: string[]): void {
@@ -380,6 +398,7 @@ async function attempt(batch: Batch, planned: Planned, runDir: string, label: st
 async function run(): Promise<void> {
   const agent = agentOptions();
   const work = workDir();
+  refuseLegacyRuns(work);
   const taskFile = loadTasks(args.tasks!);
   const { tasks, arms, queue: whole } = plannedQueue(taskFile);
   const repoNames = [...new Set(tasks.map((t) => t.repo))];
@@ -390,7 +409,7 @@ async function run(): Promise<void> {
     agent,
     work,
     taskFile,
-    mirrorPaths: mirrors(work, taskFile, repoNames),
+    mirrorPaths: mirrors(work, taskFile, repoNames, forked),
     prepared: loadPrepared(work, taskFile, [...tasks, ...forked]),
   };
   const stopAt = args["stop-at"] ? nextOccurrence(args["stop-at"], new Date()) : undefined;
@@ -419,6 +438,7 @@ const passedOf = (results: RunResult[]) => `${results.filter((r) => r.grade.pass
 
 function status(): void {
   const work = path.resolve(required("work", args.work));
+  refuseLegacyRuns(work);
   const harness = harnessArg();
   const { queue } = plannedQueue(loadTasks(args.tasks!));
   const runs = queue.map((planned) => ({ planned, dir: runDirFor({ workDir: work, harness, ...planned }) }));
