@@ -16,11 +16,11 @@ import { parseArgs } from "node:util";
 import { findPython, prepareTask, STRIP_SCRIPT } from "./prepare.ts";
 import {
   DEEP_PREPARED_ID,
-  expandCommand,
   gradeChangeProbe,
   loadDeepTasks,
   OUTPUT_LIMIT,
   probeFile,
+  venvPython,
   type ChangeProbe,
   type PredictProbe,
   type Probe,
@@ -66,11 +66,12 @@ interface Check {
 const COMPUTE_TIMEOUT_MS = 5 * 60 * 1000;
 
 function checkPrediction(context: Context, probe: PredictProbe, arm: Arm): string | undefined {
+  const checkout = context.checkouts[arm];
   const script = path.resolve(probeFile(context.taskFile, probe.id, "compute.py"));
-  const run = spawnSync(expandCommand(`{venv-python} -I "${script}"`), {
-    cwd: context.checkouts[arm],
+  // No shell, so the timeout stops the interpreter itself.
+  const run = spawnSync(venvPython(checkout), ["-I", script], {
+    cwd: checkout,
     env: context.env,
-    shell: true,
     encoding: "utf8",
     timeout: COMPUTE_TIMEOUT_MS,
   });
@@ -89,6 +90,16 @@ function patchedFiles(context: Context, patch: string): string[] {
     .map((line) => line.split("\t")[2] ?? "");
 }
 
+/** A solved file as the stripped arm holds it; one the stripper cannot read keeps its comments, as in prepare. */
+function strippedSource(context: Context, file: string, solved: Buffer): Buffer {
+  if (!file.endsWith(".py")) return solved;
+  try {
+    return execFileSync(context.python, [STRIP_SCRIPT, "-"], { input: solved, maxBuffer: OUTPUT_LIMIT, stdio: ["pipe", "pipe", "ignore"] });
+  } catch {
+    return solved;
+  }
+}
+
 /** Puts the reference solution into one arm's checkout (see the module comment). */
 function applyReference(context: Context, probe: ChangeProbe, arm: Arm): void {
   const { comments, none } = context.checkouts;
@@ -97,6 +108,12 @@ function applyReference(context: Context, probe: ChangeProbe, arm: Arm): void {
     git(comments, context.env, "apply", patch);
     return;
   }
+  // A reverse check passes only when the patch is fully applied in the comments checkout.
+  try {
+    git(comments, context.env, "apply", "--check", "--reverse", patch);
+  } catch {
+    throw new Error("the comments arm's reference is not in place, so the stripped arm has none to build from");
+  }
   for (const file of patchedFiles(context, patch)) {
     const solvedFile = path.join(comments, file);
     const target = path.join(none, file);
@@ -104,13 +121,8 @@ function applyReference(context: Context, probe: ChangeProbe, arm: Arm): void {
       rmSync(target, { force: true }); // the reference deletes it
       continue;
     }
-    const solved = readFileSync(solvedFile);
     mkdirSync(path.dirname(target), { recursive: true });
-    if (!file.endsWith(".py")) {
-      writeFileSync(target, solved);
-      continue;
-    }
-    writeFileSync(target, execFileSync(context.python, [STRIP_SCRIPT, "-"], { input: solved, maxBuffer: OUTPUT_LIMIT }));
+    writeFileSync(target, strippedSource(context, file, readFileSync(solvedFile)));
   }
 }
 
@@ -135,9 +147,15 @@ function checkArm(context: Context, probe: PredictProbe | ChangeProbe, arm: Arm)
   }
 }
 
-function resetCheckout(context: Context, arm: Arm): void {
-  git(context.checkouts[arm], context.env, "reset", "--quiet", "--hard");
-  git(context.checkouts[arm], context.env, "clean", "--quiet", "-fd");
+/** Returns the arm's checkout to its committed state; why it could not, when it could not. */
+function resetCheckout(context: Context, arm: Arm): string | undefined {
+  try {
+    git(context.checkouts[arm], context.env, "reset", "--quiet", "--hard");
+    git(context.checkouts[arm], context.env, "clean", "--quiet", "-fd");
+    return undefined;
+  } catch (error) {
+    return `could not reset the checkout after this probe: ${String(error)}`;
+  }
 }
 
 /**
@@ -146,18 +164,27 @@ function resetCheckout(context: Context, arm: Arm): void {
  */
 function checkProbe(context: Context, probe: Probe): Check[] {
   if (probe.kind === "locate") return [];
-  try {
-    // The comments arm goes first: the stripped arm's reference is built from its patched files.
-    return (["comments", "none"] as const).map((arm) => ({ probe: probe.id, arm, failure: checkArm(context, probe, arm) }));
-  } finally {
-    resetCheckout(context, "comments");
-    resetCheckout(context, "none");
+  // The comments arm goes first: the stripped arm's reference is built from its patched files.
+  const checks = (["comments", "none"] as const).map((arm) => ({ probe: probe.id, arm, failure: checkArm(context, probe, arm) }));
+  for (const arm of ["comments", "none"] as const) {
+    const failure = resetCheckout(context, arm);
+    if (failure) checks.push({ probe: probe.id, arm, failure });
   }
+  return checks;
 }
 
 function describe(check: Check): string {
   const label = `${check.probe} (${check.arm})`;
   return check.failure ? `FAIL ${label}: ${check.failure}` : `ok   ${label}`;
+}
+
+/** The probes `--only` names, all of them when it is absent; an id that names none is an error. */
+function selectedProbes(probes: Probe[], only: string | undefined): Probe[] {
+  if (!only) return probes;
+  const ids = only.split(",");
+  const unknown = ids.filter((id) => !probes.some((probe) => probe.id === id));
+  if (unknown.length) throw new Error(`--only names no probe called ${unknown.join(", ")}`);
+  return probes.filter((probe) => ids.includes(probe.id));
 }
 
 function main(): void {
@@ -166,6 +193,7 @@ function main(): void {
   refuseInheritedInstructions(work);
   const taskFile = args.tasks;
   const tasks = loadDeepTasks(taskFile);
+  const probes = selectedProbes(tasks.probes, args.only);
   const python = findPython();
   if (!python) throw new Error("verify-probes needs Python 3 (uv, python3, or python)");
   const env = isolatedEnv(path.join(work, "state"), path.join(work, "cli-home"));
@@ -189,11 +217,12 @@ function main(): void {
   const checkouts = { comments: checkout("comments"), none: checkout("none") };
   const context: Context = { taskFile, checkouts, env, python };
 
-  const only = args.only?.split(",");
-  const probes = tasks.probes.filter((probe) => !only || only.includes(probe.id));
-  const checks = probes.flatMap((probe) => checkProbe(context, probe));
-  for (const check of checks) console.log(describe(check));
-  if (checks.some((check) => check.failure)) process.exitCode = 1;
+  for (const probe of probes) {
+    for (const check of checkProbe(context, probe)) {
+      console.log(describe(check));
+      if (check.failure) process.exitCode = 1;
+    }
+  }
 }
 
 main();

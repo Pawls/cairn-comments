@@ -127,6 +127,7 @@ export interface ChangeProbe extends ProbeBase {
    * agent's edits to them do not count.
    */
   keptTests?: string[];
+  /** A program and its arguments separated by spaces, run from the checkout's root with no shell. */
   testCommand: string;
   /** Patterns for facts the final answer states; scored beside the hidden tests, never alone. */
   rubric?: string[];
@@ -227,26 +228,49 @@ export function gradeChangeProbe(
   if (probe.keptTests?.length) {
     execFileSync("git", ["checkout", committed, "--", ...probe.keptTests], { cwd: checkout, env, stdio: "ignore" }); // NOSONAR: git comes from PATH, as for any tool that drives git
   }
-  const run = spawnSync(expandCommand(probe.testCommand), {
-    cwd: checkout,
-    env,
-    shell: true,
-    encoding: "utf8",
-    timeout: TEST_TIMEOUT_MS,
-    maxBuffer: OUTPUT_LIMIT,
-  });
+  const [program, args] = commandArgs(probe.testCommand, checkout);
+  // No shell, so the timeout stops the test process itself rather than a shell around it.
+  const run = spawnSync(program, args, { cwd: checkout, env, encoding: "utf8", timeout: TEST_TIMEOUT_MS, maxBuffer: OUTPUT_LIMIT });
   return { passed: run.status === 0, testExit: run.status, output: `${run.stdout}\n${run.stderr}` };
 }
 
-/** Markdown a model wraps an answer line in: emphasis, code spans, quote markers. */
-const DECORATION = /[*_`>]/g;
+/** The checkout's virtualenv interpreter, as an absolute path. */
+export function venvPython(checkout: string): string {
+  return path.resolve(checkout, expandCommand("{venv-python}"));
+}
+
+/**
+ * A test command split into its program and arguments, with `{venv-python}` expanded and a
+ * relative program path resolved against `cwd`. Words are split on spaces, with no quoting.
+ */
+function commandArgs(command: string, cwd: string): [string, string[]] {
+  const [program = "", ...args] = expandCommand(command).split(" ").filter(Boolean);
+  const isPath = program.includes("/") || program.includes("\\");
+  return [isPath ? path.resolve(cwd, program) : program, args];
+}
+
+/** Markdown a model puts around an answer line: emphasis, code spans, quote markers. */
+const LINE_DECORATION = new Set(["*", "_", "`", ">"]);
+/** ...and around the answer's value; an underscore or sign inside it is part of the answer. */
+const VALUE_DECORATION = new Set(["*", "`"]);
+
+/** `text` without the whitespace and `decoration` characters at either end. */
+function trimDecoration(text: string, decoration: Set<string>): string {
+  const isEdge = (char: string) => decoration.has(char) || char.trim() === "";
+  let start = 0;
+  let end = text.length;
+  while (start < end && isEdge(text.charAt(start))) start += 1;
+  while (end > start && isEdge(text.charAt(end - 1))) end -= 1;
+  return text.slice(start, end);
+}
 
 /** The text after `ANSWER:` on one line, or undefined when the line is not an answer line. */
 function answerOn(line: string): string | undefined {
-  let plain = line.replaceAll(DECORATION, "").trim();
-  if (plain.startsWith("-")) plain = plain.slice(1).trim(); // a list item
+  let plain = trimDecoration(line, LINE_DECORATION);
+  if (plain.startsWith("- ")) plain = trimDecoration(plain.slice(2), LINE_DECORATION); // a list item
   if (!plain.toLowerCase().startsWith("answer:")) return undefined;
-  return plain.slice("answer:".length).replace(/\.$/, "");
+  const value = trimDecoration(plain.slice("answer:".length), VALUE_DECORATION);
+  return trimDecoration(value.endsWith(".") ? value.slice(0, -1) : value, VALUE_DECORATION);
 }
 
 function normalized(text: string): string {
