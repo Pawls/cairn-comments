@@ -214,6 +214,12 @@ describe("gradePrediction", () => {
     }
   });
 
+  it("reads an ANSWER line that is a numbered or plus-marked list item", () => {
+    for (const line of ["1. ANSWER: keep=6 level=2", "2) **ANSWER:** keep=6 level=2", "+ ANSWER: keep=6 level=2"]) {
+      expect(gradePrediction(`Reasoning.\n${line}\n`, "keep=6 level=2").passed, line).toBe(true);
+    }
+  });
+
   it("keeps underscores and comparison signs inside the answer itself", () => {
     expect(gradePrediction("**ANSWER:** `spilled_cells=0 level>3`.", "spilled_cells=0 level>3").passed).toBe(true);
   });

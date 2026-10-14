@@ -7,6 +7,7 @@ import {
   loadChains,
   loadDeepTasks,
   loadTaskFile,
+  preparedEntries,
   type DeepTaskFile,
   type LocateProbe,
 } from "../tasks.ts";
@@ -70,6 +71,30 @@ describe("loadChains", () => {
   });
 });
 
+describe("preparedEntries", () => {
+  it("lists each prepared entry once, under the id its tasks and chains share", () => {
+    const starting = [
+      { id: "a", repo: "r", start: "s", preparedId: "deep" },
+      { id: "w", repo: "r", start: "s", preparedId: "deep" },
+      { id: "q", repo: "r", start: "t" },
+    ];
+
+    expect(preparedEntries(starting)).toEqual([
+      { id: "deep", repo: "r", start: "s" },
+      { id: "q", repo: "r", start: "t" },
+    ]);
+  });
+
+  it("refuses two tasks that share a prepared entry but start in different places", () => {
+    const starting = [
+      { id: "a", repo: "r", start: "s", preparedId: "deep" },
+      { id: "b", repo: "r", start: "t", preparedId: "deep" },
+    ];
+
+    expect(() => preparedEntries(starting)).toThrow(/b starts at r@t, but prepared entry deep is r@s/);
+  });
+});
+
 describe("loadTaskFile", () => {
   it("reads a probe set as tasks that start where the set does, with its own chains and one prepared entry", () => {
     writeLeashFiles();
@@ -98,6 +123,12 @@ describe("loadTaskFile", () => {
     write("typo.json", { repos: { r: REPO }, repo: "r", start: "s", warmups: [], probs: [] });
 
     expect(() => loadTaskFile(path.join(dir, "typo.json"))).toThrow(/typo\.json has neither tasks nor probes/);
+  });
+
+  it("refuses a probe's kind in a round's file, where nothing gives it the folder or answer its grader reads", () => {
+    write("round.json", { repos: { r: REPO }, tasks: [{ id: "p", repo: "r", kind: "change", start: "s", prompt: "" }] });
+
+    expect(() => loadTaskFile(path.join(dir, "round.json"))).toThrow(/task p: kind change belongs in a probe set/);
   });
 
   it("refuses a round's task in a repository the file does not define", () => {

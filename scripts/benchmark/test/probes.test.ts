@@ -19,8 +19,17 @@ function makeProbeSet(root: string, repo: string, start: string): string {
   const prompts = ["first warm-up prompt", "second warm-up prompt"];
   writeUnder(dir, "warmups/w.json", { repo: "r", start, modules: ["warmup.py"], prompts });
   writeUnder(dir, "probes/predict-it/compute.py", "print(42)\n");
-  writeUnder(dir, "probes/change-it/tests/hidden.txt", "hidden");
-  writeUnder(dir, "probes/change-it/reference.patch", "");
+  for (const id of ["change-it", "commit-it"]) {
+    writeUnder(dir, `probes/${id}/tests/hidden.txt`, "hidden");
+    writeUnder(dir, `probes/${id}/reference.patch`, "");
+  }
+  const change = {
+    use: "understanding",
+    kind: "change",
+    hiddenTests: ["tests/hidden.txt"],
+    keptTests: ["tests/kept.txt"],
+    testCommand: "node check.mjs",
+  };
   const probes = [
     {
       id: "predict-it",
@@ -32,17 +41,9 @@ function makeProbeSet(root: string, repo: string, start: string): string {
       rubric: ["stand-in"],
     },
     { id: "locate-it", use: "navigation", kind: "locate", modules: ["b.py"], prompt: "locate", answerKey: ["stand-in reply"] },
-    {
-      id: "change-it",
-      use: "understanding",
-      kind: "change",
-      modules: ["c.py"],
-      prompt: "change",
-      hiddenTests: ["tests/hidden.txt"],
-      keptTests: ["tests/kept.txt"],
-      testCommand: "node check.mjs",
-      rubric: ["nothing the stand-in says"],
-    },
+    { ...change, id: "change-it", modules: ["c.py"], prompt: "change", rubric: ["nothing the stand-in says"] },
+    // Its agent commits an edit to the kept test, which grading must put back to the arm's commit.
+    { ...change, id: "commit-it", modules: ["d.py"], prompt: "commit-kept: change" },
   ];
   const repos = { r: { url: repo, base: start, setup: [] } };
   writeUnder(dir, "deep-tasks.json", { repos, repo: "r", start, warmups: ["warmups/w.json"], probes });
@@ -99,7 +100,16 @@ describe("a probe set's runs", () => {
   it("plans a fresh run and a run forked from the chain for every probe", () => {
     const starts = queue.map((planned) => `${planned.task.id} ${planned.chain?.id ?? "fresh"}`).sort();
 
-    expect(starts).toEqual(["change-it fresh", "change-it w", "locate-it fresh", "locate-it w", "predict-it fresh", "predict-it w"]);
+    expect(starts).toEqual([
+      "change-it fresh",
+      "change-it w",
+      "commit-it fresh",
+      "commit-it w",
+      "locate-it fresh",
+      "locate-it w",
+      "predict-it fresh",
+      "predict-it w",
+    ]);
   });
 
   it("grades a prediction on its ANSWER line, with the rubric beside it", () => {
@@ -125,6 +135,12 @@ describe("a probe set's runs", () => {
         testExit: 0,
         rubric: { passed: false, missing: ["nothing the stand-in says"] },
       });
+    }
+  });
+
+  it("puts a kept test back to the arm's commit, not to the agent's, when the agent committed an edit to it", () => {
+    for (const depth of ["fresh", "deep"] as const) {
+      expect(resultOf("commit-it", depth).grade, depth).toEqual({ passed: true, testExit: 0 });
     }
   });
 
