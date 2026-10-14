@@ -230,23 +230,32 @@ the code was developed rather than after the fact. The arms differ only in those
 
 - **comments (as committed):** the task's start commit as it is.
 - **none (stripped):** the same commit with every comment removed except functional ones
-  (shebangs, encoding lines, `# noqa`, `# type: ignore`, `# pragma`, `# fmt:`). Docstrings stay
-  in both arms. `scripts/benchmark/strip_comments.py` removes them with Python's `tokenize` and
+  (shebangs, encoding lines, `# noqa`, `# type:`, `# pragma`, `# fmt:`, and the `pylint:`,
+  `pyright:`, `mypy:`, `isort:`, `ruff:`, and `nosec` directives; BoxelBuilder has none of the
+  last six). Docstrings stay in both arms.
+  [strip_comments.py](../scripts/benchmark/strip_comments.py) removes them with Python's `tokenize` and
   refuses to write a file whose `ast.dump` differs from the original's; all 771 files parsed
   and passed. Comments inside triple-quoted strings (shader source) are not comments to
   Python and stay.
 - **in both arms:** every markdown file, `.claude/`, `.agents/`, `.serena/`, `.pawl/`, `.mcp.json`,
   and `.coderabbit.yaml` are removed, since committed plans and handoffs can describe the fix a
   task asks for. A one-line README stub stays because the packaging file names it. An identical,
-  minimal AGENTS.md says only how to run a test file, and a CLAUDE.md imports it.
+  minimal AGENTS.md (the task file's `agentNotes`) says only how to run a test file, and a
+  CLAUDE.md imports it.
 - **No history:** `npm run benchmark -- prepare --repo boxel --source <clone>` builds each
   task's two arm commits as parentless commits in the mirror, and the run clones only that
-  branch with no remote. An agent cannot read the original comments or the solution out of
-  git. The solution's test files are read from the mirror at grading time.
+  branch, with `--no-local` so no other object or tag comes along, and no remote. An agent
+  cannot read the original comments or the solution out of git. The solution's test files
+  are read from the mirror at grading time.
+- **The recorded round had a weaker clone.** Its runs cloned by local path, which copied the
+  mirror's whole object store and its 16 tags, so the original history was reachable from
+  `git tag` or `git log --all`. A check of all 100 transcripts found no run that looked: the
+  agents ran only `git log -N`, `git diff`, `git status`, `git stash list`, and `git show` on
+  their own commit.
 - **No Cairn at all:** neither arm uses the filter or the hook, so this tests the
   repository's own comments, not the tool.
 
-Tasks (`benchmark/boxel-tasks.json`): five fixes from real history, each verified to fail on
+Tasks ([boxel-tasks.json](../benchmark/boxel-tasks.json)): five fixes from real history, each verified to fail on
 its new tests at its start commit in both arms and to pass at its solution commit, and five
 questions graded by answer key. The edit prompts describe a symptom as a user would, but
 the tests need a few contracts spelled out (a warning text, a return value), so some
