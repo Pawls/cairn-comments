@@ -143,9 +143,12 @@ function workDir(): string {
   return dir;
 }
 
+/** The warm-up chains in --warmups, by id. */
+const chains = loadChains(args.warmups!);
+
 /** The warm-up chains in --warmups that start in `repo`. */
 function chainsOf(repo: string): WarmupChain[] {
-  return [...loadChains(args.warmups!).values()].filter((chain) => chain.repo === repo);
+  return [...chains.values()].filter((chain) => chain.repo === repo);
 }
 
 /**
@@ -282,23 +285,27 @@ function describeResult(result: RunResult): string {
   return `${verdict}, ${input.toLocaleString("en-US")} input tokens, ${(result.wallMs / 60_000).toFixed(1)} min`;
 }
 
-/** --depths, with the chains a deep run forks: --chains, or every chain in a selected task's repository. */
+/**
+ * --depths, with the chains a deep run may fork: --chains, or every chain. A task forks only
+ * the chains that start where it does (`planRuns`).
+ */
 function depthsArg(tasks: Task[]): Depths {
   const depths = args.depths!.split(",");
   for (const depth of depths) if (depth !== "fresh" && depth !== "deep") throw new Error("--depths takes fresh, deep");
   if (!depths.includes("deep")) return { fresh: true, chains: [] };
-  const known = loadChains(args.warmups!);
-  const repos = new Set(tasks.map((t) => t.repo));
-  const chains = args.chains?.split(",") ?? [...known.values()].filter((c) => repos.has(c.repo)).map((c) => c.id);
-  const unknown = chains.filter((id) => !known.has(id));
+  const ids = args.chains?.split(",") ?? [...chains.keys()];
+  const unknown = ids.filter((id) => !chains.has(id));
   if (unknown.length) throw new Error(`no warm-up chain ${unknown.join(", ")} in ${args.warmups}`);
-  if (!chains.length) throw new Error(`depth deep needs a warm-up chain in ${args.warmups}`);
-  return { fresh: depths.includes("fresh"), chains };
+  const selected = [...chains.values()].filter((chain) => ids.includes(chain.id));
+  if (!tasks.some((task) => selected.some((chain) => chain.repo === task.repo && chain.start === task.start))) {
+    throw new Error(`depth deep needs a warm-up chain in ${args.warmups} that starts where a selected task does`);
+  }
+  return { fresh: depths.includes("fresh"), chains: selected };
 }
 
 /** A run as the logs name it; its directory's name does not say. */
 function describePlanned(planned: Planned): string {
-  const start = planned.chain === undefined ? "" : ` from ${planned.chain}`;
+  const start = planned.chain === undefined ? "" : ` from ${planned.chain.id}`;
   return `${planned.task.id} ${planned.arm}-${planned.rep}${start}`;
 }
 
@@ -324,12 +331,11 @@ interface Batch {
   taskFile: TaskFile;
   mirrorPaths: Map<string, string>;
   prepared: Map<string, Record<string, PreparedTask>>;
-  chains: Map<string, WarmupChain>;
 }
 
 /** A deep run's chain and the chain's arm commits, if its repository has prepared ones. */
 function warmupFor(batch: Batch, planned: Planned): { chain: WarmupChain; prepared?: PreparedTask } | undefined {
-  const chain = planned.chain === undefined ? undefined : batch.chains.get(planned.chain);
+  const chain = planned.chain;
   if (!chain) return undefined;
   return { chain, prepared: batch.prepared.get(chain.repo)?.[chain.id] };
 }
@@ -369,15 +375,13 @@ async function run(): Promise<void> {
   const repoNames = [...new Set(tasks.map((t) => t.repo))];
   if (arms.includes("comments")) requireFrozenComments(taskFile, repoNames);
   await checkProvider(agent);
-  const chains = loadChains(args.warmups!);
-  const forked = [...chains.values()].filter((chain) => whole.some((planned) => planned.chain === chain.id));
+  const forked = [...new Set(whole.flatMap((planned) => (planned.chain ? [planned.chain] : [])))];
   const batch: Batch = {
     agent,
     work,
     taskFile,
     mirrorPaths: mirrors(work, taskFile, repoNames),
     prepared: loadPrepared(work, taskFile, [...tasks, ...forked]),
-    chains,
   };
   const stopAt = args["stop-at"] ? nextOccurrence(args["stop-at"], new Date()) : undefined;
   const queue = shard(whole, args.shard, warmupOf);

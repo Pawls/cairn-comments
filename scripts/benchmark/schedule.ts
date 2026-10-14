@@ -1,6 +1,7 @@
 /** The order runs happen in, and how the queue splits across processes. */
 import { shuffled } from "./stats.ts";
 import type { Task } from "./tasks.ts";
+import { warmupKey, type WarmupChain } from "./warmup.ts";
 import type { Arm } from "./workspace.ts";
 
 export interface Planned {
@@ -8,26 +9,27 @@ export interface Planned {
   arm: Arm;
   rep: number;
   /** The warm-up chain a deep run forks from; a fresh run has none. */
-  chain?: string;
+  chain?: WarmupChain;
 }
 
 /** Which runs start from an empty session, and which warm-up chains the deep runs fork. */
 export interface Depths {
   fresh: boolean;
-  chains: string[];
+  chains: WarmupChain[];
 }
 
 const FRESH_ONLY: Depths = { fresh: true, chains: [] };
 
 /**
- * Every (task, arm, start, repetition), where a start is fresh or one of the chains,
- * shuffled by `seed` so neither arm runs in a block of its own.
+ * Every (task, arm, start, repetition), where a start is fresh or a chain that starts where
+ * the task does, shuffled by `seed` so neither arm runs in a block of its own.
  */
 export function planRuns(tasks: Task[], arms: Arm[], reps: number, seed: number, depths = FRESH_ONLY): Planned[] {
-  // A start is the chain a deep run forks, or undefined for a fresh run.
-  const starts: (string | undefined)[] = depths.fresh ? [undefined, ...depths.chains] : depths.chains;
   const all: Planned[] = [];
   for (const task of tasks) {
+    // A start is the chain a deep run forks, or undefined for a fresh run.
+    const forked = depths.chains.filter((chain) => chain.repo === task.repo && chain.start === task.start);
+    const starts = depths.fresh ? [undefined, ...forked] : forked;
     for (const arm of arms) {
       for (const chain of starts) all.push(...repetitions(task, arm, chain, reps));
     }
@@ -35,7 +37,7 @@ export function planRuns(tasks: Task[], arms: Arm[], reps: number, seed: number,
   return shuffled(all, seed);
 }
 
-function repetitions(task: Task, arm: Arm, chain: string | undefined, reps: number): Planned[] {
+function repetitions(task: Task, arm: Arm, chain: WarmupChain | undefined, reps: number): Planned[] {
   const planned: Planned[] = [];
   for (let rep = 1; rep <= reps; rep++) planned.push({ task, arm, rep, chain });
   return planned;
@@ -43,7 +45,7 @@ function repetitions(task: Task, arm: Arm, chain: string | undefined, reps: numb
 
 /** The warm-up a deep run forks: one per chain and arm. Its runs share one checkout. */
 export function warmupOf(planned: Planned): string | undefined {
-  return planned.chain === undefined ? undefined : `${planned.chain}-${planned.arm}`;
+  return planned.chain === undefined ? undefined : warmupKey(planned.chain.id, planned.arm);
 }
 
 /** The next time the clock reads `hhmm` (local time) after `now`: today, or else tomorrow. */
@@ -62,15 +64,15 @@ export function nextOccurrence(hhmm: string, now: Date): Date {
  * item of a group shares the place of the group's first.
  */
 function slots<T>(queue: T[], groupOf: (item: T) => string | undefined): Array<{ item: T; slot: number }> {
-  const groupSlots = new Map<string, number>();
+  const slotOf = new Map<string, number>();
   const result: Array<{ item: T; slot: number }> = [];
-  let next = 0;
-  for (const item of queue) {
+  for (const [position, item] of queue.entries()) {
     const group = groupOf(item);
-    let slot = group === undefined ? undefined : groupSlots.get(group);
+    const key = group === undefined ? `item ${position}` : `group ${group}`;
+    let slot = slotOf.get(key);
     if (slot === undefined) {
-      slot = next++;
-      if (group !== undefined) groupSlots.set(group, slot);
+      slot = slotOf.size;
+      slotOf.set(key, slot);
     }
     result.push({ item, slot });
   }

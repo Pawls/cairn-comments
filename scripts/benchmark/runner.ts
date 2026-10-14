@@ -8,7 +8,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { outputStem, ProviderError, readLog, runAgent, type AgentOptions } from "./agent.ts";
 import { forkTotals, harnessTotals, type HarnessName, type HarnessTotals } from "./harnesses.ts";
-import { gradeAnswer, providerFailed, runMetrics, type RunMetrics } from "./metrics.ts";
+import { gradeAnswer, probeCalls, providerFailed, runMetrics, type RunMetrics } from "./metrics.ts";
 import type { PreparedTask } from "./prepare.ts";
 import { startRecordingProxy } from "./proxy.ts";
 import { expandCommand, type EditTask, type RepoSpec, type Task } from "./tasks.ts";
@@ -73,8 +73,8 @@ export function depthOf(result: RunResult): Depth {
 }
 
 /** A run's directory; its name hides the arm (`neutralName`), which result.json records. */
-export function runDirFor(spec: { workDir: string; harness: HarnessName; task: Task; arm: Arm; rep: number; chain?: string }): string {
-  return path.join(spec.workDir, "runs", spec.harness, spec.task.id, neutralName(spec.arm, spec.chain, spec.rep));
+export function runDirFor(spec: { workDir: string; harness: HarnessName; task: Task; arm: Arm; rep: number; chain?: WarmupChain }): string {
+  return path.join(spec.workDir, "runs", spec.harness, spec.task.id, neutralName(spec.arm, spec.chain?.id, spec.rep));
 }
 
 /** Puts the solution's tests, read from the mirror, over the agent's work. */
@@ -155,7 +155,7 @@ function probeTotals(harness: HarnessName, start: Start, runDir: string): Harnes
 
 export async function runOne(spec: RunSpec): Promise<RunResult> {
   const chain = spec.warmup?.chain.id;
-  const runDir = runDirFor({ ...spec, chain });
+  const runDir = runDirFor({ ...spec, chain: spec.warmup?.chain });
   mkdirSync(runDir, { recursive: true });
   const env = isolatedEnv(path.join(runDir, "state"), path.join(spec.workDir, "cli-home"));
   const logFile = path.join(runDir, "calls.jsonl");
@@ -170,10 +170,10 @@ export async function runOne(spec: RunSpec): Promise<RunResult> {
   if (!exit) throw new Error("the probe's prompt never ran");
 
   const log = readLog(logFile);
-  const probeCalls = log.filter((call) => call.phase === "probe");
-  if (providerFailed(probeCalls)) {
+  const ownCalls = probeCalls(log);
+  if (providerFailed(ownCalls)) {
     // No result.json, so the next batch runs this one again; the checkouts stay for a look.
-    throw new ProviderError(`the model server failed this run (${probeCalls.length} calls); see calls.jsonl and harness-1.err`);
+    throw new ProviderError(`the model server failed this run (${ownCalls.length} calls); see calls.jsonl and harness-1.err`);
   }
   const metrics = runMetrics(log, { model: spec.model, agentDir: start.agentDir });
   const result: RunResult = {
@@ -197,6 +197,7 @@ export async function runOne(spec: RunSpec): Promise<RunResult> {
     commentBytesRead: metrics.filesRead.reduce((sum, file) => sum + (start.commentBytes[file] ?? 0), 0),
   };
   writeFileSync(path.join(runDir, "result.json"), JSON.stringify(result, null, 2));
-  if (!spec.keep && !chain) removeCheckouts(runDir);
+  // A deep run's checkouts are its warm-up's, so its own directory has none to remove.
+  if (!spec.keep) removeCheckouts(runDir);
   return result;
 }

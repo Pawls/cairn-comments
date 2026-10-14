@@ -52,9 +52,14 @@ export function loadChains(dir: string): Map<string, WarmupChain> {
   return chains;
 }
 
+/** What names one warm-up: its runs share a checkout, so sharding keeps them together by it. */
+export function warmupKey(chain: string, arm: Arm): string {
+  return neutralName(chain, arm);
+}
+
 /** A warm-up's directory; its name hides the arm (`neutralName`), which warmup.json records. */
 export function warmupDirFor(workDir: string, harness: HarnessName, chain: string, arm: Arm): string {
-  return path.join(workDir, "warmups", harness, neutralName(chain, arm));
+  return path.join(workDir, "warmups", harness, warmupKey(chain, arm));
 }
 
 export interface WarmupSpec extends AgentOptions {

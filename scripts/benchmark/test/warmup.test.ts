@@ -63,7 +63,7 @@ describe("a deep run", () => {
 
     expect(result).toMatchObject({ depth: "deep", chain: "w", grade: { passed: true } });
     expect(result.metrics.calls).toBe(1);
-    const log = readLog(path.join(runDirFor({ ...spec, chain: "w" }), "calls.jsonl"));
+    const log = readLog(path.join(runDirFor({ ...spec, chain: spec.warmup?.chain }), "calls.jsonl"));
     expect(log.map((call) => call.phase)).toEqual(["warmup", "warmup", "probe"]);
     expect(result.metrics.firstCallContext).toBe(log[2]?.response?.usage.input);
   });

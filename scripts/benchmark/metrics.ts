@@ -24,6 +24,11 @@ export function contextOf(usage: Usage): number {
   return usage.input + usage.cacheRead + usage.cacheWrite;
 }
 
+/** The probe's calls; a deep run's log also holds its warm-up's. */
+export function probeCalls(log: LoggedCall[]): LoggedCall[] {
+  return log.filter((call) => call.phase !== "warmup");
+}
+
 /** Each harness's file-reading tool and the argument that names the file. */
 const READ_TOOLS = new Map([
   ["Read", "file_path"],
@@ -56,8 +61,7 @@ function relativeToAgent(agentDir: string, file: string): string {
  * asked for.
  */
 export function runMetrics(log: LoggedCall[], options: { model: string; agentDir: string }): RunMetrics {
-  const probeCalls = log.filter((call) => call.phase !== "warmup");
-  const responses = probeCalls.flatMap((call) => (call.response ? [call.response] : []));
+  const responses = probeCalls(log).flatMap((call) => (call.response ? [call.response] : []));
   const ownModel = responses.filter((r) => r.model.startsWith(options.model));
   const tokens: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   const toolCalls: Record<string, number> = {};
