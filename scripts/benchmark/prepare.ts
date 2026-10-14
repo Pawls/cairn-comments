@@ -81,7 +81,7 @@ export function findPython(): string | undefined {
 }
 
 function git(cwd: string, env: Record<string, string>, ...args: string[]): string {
-  return execFileSync("git", args, { cwd, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 256 * 1024 * 1024 });
+  return execFileSync("git", args, { cwd, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 256 * 1024 * 1024 }); // NOSONAR: git comes from PATH, as for any tool that drives git
 }
 
 function removeAgentFiles(tree: string, env: Record<string, string>): void {

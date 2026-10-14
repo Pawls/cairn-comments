@@ -331,7 +331,7 @@ async function run(): Promise<void> {
       log(`stop time reached before ${label}`);
       return;
     }
-    providerFailures = (await attempt(batch, planned, runDir, label)) ? providerFailures + 1 : 0;
+    providerFailures = (await attempt(batch, planned, runDir, label)) ? providerFailures + 1 : 0; // NOSONAR: one run at a time on purpose; --shard runs them side by side
     if (providerFailures >= MAX_PROVIDER_FAILURES) {
       throw new Error(`the model server failed ${providerFailures} runs in a row; batch stopped`);
     }

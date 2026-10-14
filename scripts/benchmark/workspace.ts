@@ -66,7 +66,7 @@ export function isolatedEnv(stateDir: string, cliHome: string): Record<string, s
 }
 
 function git(cwd: string, env: Record<string, string>, ...args: string[]): string {
-  return execFileSync("git", args, { cwd, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  return execFileSync("git", args, { cwd, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); // NOSONAR: git comes from PATH, as for any tool that drives git
 }
 
 function cairn(cwd: string, env: Record<string, string>, ...args: string[]): string {

@@ -18,11 +18,10 @@ import tokenize
 from pathlib import Path
 
 # Shebang and encoding lines are checked by position in strip(); these are the rest.
-# "type:" covers both "type: ignore" and PEP 484 type comments; flake8 and ruff read noqa in
-# any case, mypy reads "type:" only in lower case.
-FUNCTIONAL = re.compile(
-    r"#\s*((?i:noqa)\b|type:|pragma\b|fmt:|pylint:|pyright:|pyre-|mypy:|isort:|ruff:|yapf:|autopep8:|nosec\b)"
-)
+# "type:" covers both "type: ignore" and PEP 484 type comments, and mypy reads it only in
+# lower case; flake8 and ruff read noqa in any case.
+FUNCTIONAL = re.compile(r"#\s*(type:|pragma\b|fmt:|pylint:|pyright:|pyre-|mypy:|isort:|ruff:|yapf:|autopep8:|nosec\b)")
+NOQA = re.compile(r"#\s*noqa\b", re.IGNORECASE)
 BOM = "\ufeff"
 ENCODING_LINE = re.compile(r"#.*?coding[:=]\s*[-\w.]+")
 SKIPPED_DIRS = {".git", ".venv", "node_modules", "__pycache__"}
@@ -33,7 +32,7 @@ def is_functional(text, row):
         return True
     if row <= 2 and ENCODING_LINE.match(text):
         return True
-    return FUNCTIONAL.match(text) is not None
+    return FUNCTIONAL.match(text) is not None or NOQA.match(text) is not None
 
 
 def strip(source):
@@ -71,7 +70,8 @@ def strip_tree(root):
             with open(path, encoding="utf-8", newline="") as handle:
                 source = handle.read()
             result = strip(source)
-        except (SyntaxError, ValueError, tokenize.TokenError, UnicodeDecodeError) as error:
+        # ValueError covers UnicodeDecodeError and strip()'s changed-tree error.
+        except (SyntaxError, ValueError, tokenize.TokenError) as error:
             summary["skipped"][path.relative_to(root).as_posix()] = f"{type(error).__name__}: {error}"
             continue
         if result == source:

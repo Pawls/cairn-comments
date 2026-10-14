@@ -81,7 +81,7 @@ export interface Exit {
 
 /** Ends `pid` and every process it started; a harness runs tools as child processes. */
 function killTree(pid: number): void {
-  if (process.platform === "win32") spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"]);
+  if (process.platform === "win32") spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"]); // NOSONAR: taskkill is a Windows system tool on PATH
   else process.kill(-pid, "SIGKILL");
 }
 
@@ -131,7 +131,7 @@ export async function runAgent(
 /** Puts the solution's tests, read from the mirror, over the agent's work. */
 function placeSolutionTests(task: EditTask, mirror: string, agentDir: string, env: Record<string, string>): void {
   for (const file of task.testFiles) {
-    const content = execFileSync("git", ["--git-dir", mirror, "show", `${task.solution}:${file}`], { env, maxBuffer: 64 * 1024 * 1024 });
+    const content = execFileSync("git", ["--git-dir", mirror, "show", `${task.solution}:${file}`], { env, maxBuffer: 64 * 1024 * 1024 }); // NOSONAR: git comes from PATH, as for any tool that drives git
     mkdirSync(path.dirname(path.join(agentDir, file)), { recursive: true });
     writeFileSync(path.join(agentDir, file), content);
   }
