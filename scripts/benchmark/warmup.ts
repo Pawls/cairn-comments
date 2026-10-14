@@ -4,27 +4,15 @@
  * the chain left it. The checkout cannot move: the session's tool calls name its files by
  * absolute path, so a probe in a copy elsewhere would read and edit the warm-up's files.
  */
-import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { HOME_DIRS, readLog, refuseFailedSession, runAgent, type AgentOptions, type Exit } from "./agent.ts";
 import type { HarnessName } from "./harnesses.ts";
 import { contextOf, isAgentCall } from "./metrics.ts";
 import type { PreparedTask } from "./prepare.ts";
 import { startRecordingProxy } from "./proxy.ts";
-import type { RepoSpec } from "./tasks.ts";
+import type { RepoSpec, WarmupChain } from "./tasks.ts";
 import { CHECKOUTS, git, isolatedEnv, neutralName, setUpCheckout, type Arm } from "./workspace.ts";
-
-/** Prompts run in one session before a probe forks from its end. */
-export interface WarmupChain {
-  /** The file name without `.json`. */
-  id: string;
-  repo: string;
-  /** The commit the chain starts from; a probe forked from it must start there too. */
-  start: string;
-  /** The source files the chain reads or edits; the deep-task loader refuses a probe that overlaps them. */
-  modules?: string[];
-  prompts: string[];
-}
 
 /**
  * What a finished warm-up leaves for the probes forked from it, as `warmup.json`. It sits
@@ -40,42 +28,6 @@ export interface Warmup {
   wallMs: number;
   /** The context the chain's last agent call carried: about where a probe starts. */
   finalContext: number;
-}
-
-const isText = (value: unknown): value is string => typeof value === "string" && value !== "";
-
-/** Why `parsed` is not a chain file's contents, or undefined when it is one. */
-function chainProblem(parsed: unknown): string | undefined {
-  const chain = parsed as Partial<WarmupChain> | null;
-  if (typeof chain !== "object" || chain === null) return "not a JSON object";
-  if (!isText(chain.repo) || !isText(chain.start)) return "needs a repo and a start commit";
-  if (!Array.isArray(chain.prompts) || !chain.prompts.length || !chain.prompts.every((p) => isText(p))) {
-    return "needs at least one prompt, each a string";
-  }
-  return undefined;
-}
-
-function readChain(file: string): Omit<WarmupChain, "id"> {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(readFileSync(file, "utf8"));
-  } catch (error) {
-    throw new Error(`warm-up chain ${file} is not JSON`, { cause: error });
-  }
-  const problem = chainProblem(parsed);
-  if (problem) throw new Error(`warm-up chain ${file} ${problem}`);
-  return parsed as Omit<WarmupChain, "id">;
-}
-
-/** Every chain in `dir`, one `<id>.json` file each holding `repo`, `start`, and `prompts`. */
-export function loadChains(dir: string): Map<string, WarmupChain> {
-  const chains = new Map<string, WarmupChain>();
-  if (!existsSync(dir)) return chains;
-  for (const file of readdirSync(dir).filter((name) => name.endsWith(".json"))) {
-    const id = path.basename(file, ".json");
-    chains.set(id, { ...readChain(path.join(dir, file)), id });
-  }
-  return chains;
 }
 
 /** The chains whose id is also a task's; they would share its prepared commits (prepare.ts). */

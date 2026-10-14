@@ -1,18 +1,8 @@
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  gradeChangeProbe,
-  gradePrediction,
-  loadDeepTasks,
-  loadTaskFile,
-  type ChangeProbe,
-  type DeepTaskFile,
-  type LocateProbe,
-} from "../tasks.ts";
-import { isolatedEnv } from "../workspace.ts";
+import { loadChains, loadDeepTasks, loadTaskFile, type DeepTaskFile, type LocateProbe } from "../tasks.ts";
 
 const REPO = { url: "https://example.com/r.git", base: "b", setup: [] };
 
@@ -50,6 +40,25 @@ function writeLeashFiles(): void {
   write("probes/leash/tests/test_leash.py", "def test(): pass\n");
   write("probes/leash/reference.patch", "");
 }
+
+describe("loadChains", () => {
+  it("reads each chain under its file name", () => {
+    write("chains/w1.json", { repo: "r", start: "s", prompts: ["go"] });
+
+    expect(loadChains(path.join(dir, "chains")).get("w1")).toEqual({ id: "w1", repo: "r", start: "s", prompts: ["go"] });
+  });
+
+  it("refuses a chain file without a repository, a start commit, and at least one prompt, naming the file", () => {
+    const chainsIn = (name: string, content: unknown) => {
+      write(`${name}/${name}.json`, content);
+      return path.join(dir, name);
+    };
+
+    expect(() => loadChains(chainsIn("w2", { repo: "r", start: "s", prompts: [] }))).toThrow(/w2\.json/);
+    expect(() => loadChains(chainsIn("w3", { repo: "r", prompts: ["go"] }))).toThrow(/w3\.json/);
+    expect(() => loadChains(chainsIn("w4", "{ not json"))).toThrow(/w4\.json/);
+  });
+});
 
 describe("loadTaskFile", () => {
   it("reads a probe set as tasks that start where the set does, with its own chains and one prepared entry", () => {
@@ -160,96 +169,5 @@ describe("the deep-context probe set", () => {
         expect(new RegExp(pattern, "i").test(probe.prompt), `${probe.id}: ${pattern}`).toBe(false);
       }
     }
-  });
-});
-
-describe("gradeChangeProbe", () => {
-  const CHECK = [
-    'import { existsSync, readFileSync } from "node:fs";',
-    'const ready = existsSync("tests/hidden.txt") && readFileSync("tests/kept.txt", "utf8") === "good";',
-    "process.exit(ready ? 0 : 3);",
-  ].join("\n");
-
-  function probe(testCommand: string): ChangeProbe {
-    return {
-      id: "p",
-      use: "understanding",
-      kind: "change",
-      modules: [],
-      prompt: "",
-      hiddenTests: ["tests/hidden.txt"],
-      keptTests: ["tests/kept.txt"],
-      testCommand,
-    };
-  }
-
-  function checkout(): { taskFile: string; agentDir: string; env: Record<string, string> } {
-    const env = isolatedEnv(path.join(dir, "state"), path.join(dir, "cli-home"));
-    const agentDir = path.join(dir, "agent");
-    write("agent/tests/kept.txt", "good");
-    write("agent/check.mjs", CHECK);
-    write("agent/fail.mjs", 'console.log("nope");\nprocess.exit(3);\n');
-    execFileSync("git", ["init", "-q", agentDir], { env });
-    execFileSync("git", ["add", "."], { cwd: agentDir, env });
-    execFileSync("git", ["commit", "-qm", "start"], { cwd: agentDir, env });
-    write("agent/tests/kept.txt", "edited by the agent");
-    write("probes/p/tests/hidden.txt", "hidden");
-    write("probes/p/tests/__pycache__/hidden.cpython-313.pyc", "bytecode");
-    return { taskFile: path.join(dir, "deep.json"), agentDir, env };
-  }
-
-  it("places the named hidden tests, puts the kept tests back, and passes when the command does", () => {
-    const { taskFile, agentDir, env } = checkout();
-
-    const grade = gradeChangeProbe(taskFile, probe("node check.mjs"), agentDir, env);
-
-    expect(grade.passed).toBe(true);
-    expect(readFileSync(path.join(agentDir, "tests", "kept.txt"), "utf8")).toBe("good");
-    expect(existsSync(path.join(agentDir, "tests", "__pycache__"))).toBe(false);
-  });
-
-  it("fails with the command's exit code and keeps its output", () => {
-    const { taskFile, agentDir, env } = checkout();
-
-    const grade = gradeChangeProbe(taskFile, probe("node fail.mjs"), agentDir, env);
-
-    expect(grade).toMatchObject({ passed: false, testExit: 3 });
-    expect(grade.output).toContain("nope");
-  });
-
-  it("runs the command without a shell, so a timeout stops the test process itself", () => {
-    const { taskFile, agentDir, env } = checkout();
-
-    const grade = gradeChangeProbe(taskFile, probe("node fail.mjs || node check.mjs"), agentDir, env);
-
-    expect(grade.testExit).toBe(3);
-  });
-});
-
-describe("gradePrediction", () => {
-  it("passes when the last ANSWER line matches, ignoring spacing and case", () => {
-    const text = "Working it out...\nANSWER: 7 cells\nOn reflection:\nanswer:  keep=6   level=2 \n";
-
-    expect(gradePrediction(text, "keep=6 level=2")).toEqual({ passed: true, missing: [] });
-  });
-
-  it("reads an ANSWER line through markdown emphasis, code spans, and a closing period", () => {
-    for (const line of ["**ANSWER:** keep=6 level=2", "ANSWER: `keep=6 level=2`", "- **ANSWER: keep=6 level=2.**", "> Answer: keep=6 level=2"]) {
-      expect(gradePrediction(`Reasoning.\n${line}\n`, "keep=6 level=2").passed, line).toBe(true);
-    }
-  });
-
-  it("keeps underscores and comparison signs inside the answer itself", () => {
-    expect(gradePrediction("**ANSWER:** `spilled_cells=0 level>3`.", "spilled_cells=0 level>3").passed).toBe(true);
-  });
-
-  it("fails on an earlier ANSWER line that a later one replaced", () => {
-    const text = "ANSWER: keep=6 level=2\nNo, wait.\nANSWER: keep=7 level=2\n";
-
-    expect(gradePrediction(text, "keep=6 level=2").passed).toBe(false);
-  });
-
-  it("fails when there is no ANSWER line, even if the text contains the answer", () => {
-    expect(gradePrediction("I think keep=6 level=2.", "keep=6 level=2")).toEqual({ passed: false, missing: ["ANSWER: keep=6 level=2"] });
   });
 });

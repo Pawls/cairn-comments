@@ -13,10 +13,10 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
+import { gradeChangeProbe } from "./metrics.ts";
 import { findPython, prepareTask, STRIP_SCRIPT } from "./prepare.ts";
 import {
   DEEP_PREPARED_ID,
-  gradeChangeProbe,
   loadDeepTasks,
   OUTPUT_LIMIT,
   probeFile,

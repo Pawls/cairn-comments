@@ -3,22 +3,33 @@
  * starts an empty session in a new checkout; a `deep` run forks a warm-up chain's session
  * in the chain's checkout (warmup.ts).
  */
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { outputStem, readLog, refuseFailedSession, runAgent, type AgentOptions } from "./agent.ts";
 import { forkTotals, harnessTotals, type HarnessName, type HarnessTotals } from "./harnesses.ts";
-import { gradeAnswer, probeCalls, runMetrics, type RunMetrics } from "./metrics.ts";
+import {
+  gradeAnswer,
+  gradeChangeProbe,
+  gradePrediction,
+  probeCalls,
+  runMetrics,
+  runTestCommand,
+  type AnswerGrade,
+  type RunMetrics,
+} from "./metrics.ts";
 import type { PreparedTask } from "./prepare.ts";
 import { startRecordingProxy } from "./proxy.ts";
-import { expandCommand, type EditTask, type RepoSpec, type Task } from "./tasks.ts";
-import { ensureWarmup, refuseUnfinished, restoreWarmup, type WarmupChain } from "./warmup.ts";
+import { answersByReading, OUTPUT_LIMIT, type EditTask, type RepoSpec, type Task, type WarmupChain } from "./tasks.ts";
+import { ensureWarmup, refuseUnfinished, restoreWarmup } from "./warmup.ts";
 import { ARMS, git, isolatedEnv, neutralName, placedCommentBytes, removeCheckouts, setUpCheckout, type Arm } from "./workspace.ts";
 
 export type Depth = "fresh" | "deep";
 
 export interface RunSpec extends AgentOptions {
   task: Task;
+  /** The file the task came from; a change probe's hidden tests sit beside it. */
+  taskFile: string;
   repo: RepoSpec;
   mirror: string;
   arm: Arm;
@@ -36,10 +47,12 @@ export interface RunSpec extends AgentOptions {
 
 export interface Grade {
   passed: boolean;
-  /** Exit code of the task's test command, for an edit task. */
+  /** Exit code of the test command, for an edit task or a change probe. */
   testExit?: number | null;
-  /** Answer-key patterns the answer missed, for a question. */
+  /** What the answer lacked, for a question, a location, or a prediction (`AnswerGrade`). */
   missing?: string[];
+  /** The probe's rubric against the final answer: a secondary score, never part of `passed`. */
+  rubric?: AnswerGrade;
 }
 
 export interface RunResult {
@@ -93,7 +106,7 @@ export function legacyRunDirs(workDir: string): string[] {
 /** Puts the solution's tests, read from the mirror, over the agent's work. */
 function placeSolutionTests(task: EditTask, mirror: string, agentDir: string, env: Record<string, string>): void {
   for (const file of task.testFiles) {
-    const content = execFileSync("git", ["--git-dir", mirror, "show", `${task.solution}:${file}`], { env, maxBuffer: 64 * 1024 * 1024 }); // NOSONAR: git comes from PATH, as for any tool that drives git
+    const content = execFileSync("git", ["--git-dir", mirror, "show", `${task.solution}:${file}`], { env, maxBuffer: OUTPUT_LIMIT }); // NOSONAR: git comes from PATH, as for any tool that drives git
     mkdirSync(path.dirname(path.join(agentDir, file)), { recursive: true });
     writeFileSync(path.join(agentDir, file), content);
   }
@@ -105,40 +118,58 @@ function gradeEdit(task: EditTask, spec: RunSpec, agentDir: string, env: Record<
   // rounds did; a prepared clone lacks it.
   if (spec.prepared) placeSolutionTests(task, spec.mirror, agentDir, env);
   else git(agentDir, env, "checkout", task.solution, "--", ...task.testFiles);
-  const test = spawnSync(expandCommand(task.testCommand), {
-    cwd: agentDir,
-    env,
-    shell: true,
-    encoding: "utf8",
-    timeout: 20 * 60 * 1000,
-    maxBuffer: 64 * 1024 * 1024,
-  });
-  writeFileSync(path.join(runDir, "test.log"), `${test.stdout}\n${test.stderr}`);
-  return { passed: test.status === 0, testExit: test.status };
+  const test = runTestCommand(task.testCommand, "shell", agentDir, env);
+  writeFileSync(path.join(runDir, "test.log"), test.output);
+  return { passed: test.passed, testExit: test.testExit };
 }
 
-function grade(spec: RunSpec, metrics: RunMetrics, agentDir: string, env: Record<string, string>, runDir: string): Grade {
-  if (spec.task.kind === "question") {
-    const { passed, missing } = gradeAnswer(metrics.finalText, spec.task.answerKey);
-    return { passed, missing };
+/** The rubric's score beside a probe's grade, when the probe has a rubric. */
+function rubricOf(rubric: string[] | undefined, finalText: string): Pick<Grade, "rubric"> {
+  return rubric ? { rubric: gradeAnswer(finalText, rubric) } : {};
+}
+
+function grade(spec: RunSpec, finalText: string, start: Start, env: Record<string, string>, runDir: string): Grade {
+  const { task } = spec;
+  switch (task.kind) {
+    case "question":
+    case "locate":
+      return gradeAnswer(finalText, task.answerKey);
+    case "predict":
+      return { ...gradePrediction(finalText, task.expected), ...rubricOf(task.rubric, finalText) };
+    case "change": {
+      const test = gradeChangeProbe(spec.taskFile, task, start.agentDir, env, start.committed);
+      writeFileSync(path.join(runDir, "test.log"), test.output);
+      return { passed: test.passed, testExit: test.testExit, ...rubricOf(task.rubric, finalText) };
+    }
+    default:
+      return gradeEdit(task, spec, start.agentDir, env, runDir);
   }
-  return gradeEdit(spec.task, spec, agentDir, env, runDir);
 }
 
 /** Where the probe runs, and the session it forks from, if any. */
 interface Start {
   agentDir: string;
   homeDir: string;
+  /**
+   * The arm's commit, read from the `repo` worktree beside the agent's before the probe runs.
+   * A warm-up or the probe may commit on the agent's branch, which moves only the agent's HEAD.
+   */
+  committed: string;
   from?: string;
   /** The output of the last prompt before the fork, whose totals a Claude Code fork carries. */
   parentOutput?: string;
   commentBytes: Record<string, number>;
 }
 
+/** The commit the checkout in `dir` started from (see `Start.committed`). */
+function committedIn(dir: string, env: Record<string, string>): string {
+  return git(path.join(dir, "repo"), env, "rev-parse", "HEAD").trim();
+}
+
 /** A new checkout in the run's own directory, and a new session. */
 function freshStart(spec: RunSpec, runDir: string, env: Record<string, string>): Start {
   const checkout = setUpCheckout({ ...spec, dir: runDir, start: spec.task.start, setup: spec.repo.setup, env });
-  return { ...checkout, homeDir: runDir };
+  return { ...checkout, homeDir: runDir, committed: committedIn(runDir, env) };
 }
 
 /** The warm-up's checkout as the chain left it, and a fork of its session. */
@@ -159,6 +190,7 @@ async function deepStart(
   return {
     agentDir: path.join(dir, "agent"),
     homeDir: dir,
+    committed: committedIn(dir, env),
     from: warmup.sessionId,
     parentOutput: `${outputStem(dir, chain.prompts.length)}.jsonl`,
     commentBytes: placedCommentBytes(spec.arm, dir, env, prepared),
@@ -183,7 +215,9 @@ export async function runOne(spec: RunSpec): Promise<RunResult> {
   const proxy = await startRecordingProxy(spec.provider, logFile, "probe");
   const startedAt = new Date();
   const dirs = { agentDir: start.agentDir, homeDir: start.homeDir, outputDir: runDir };
-  const session = await runAgent(spec, [spec.task.prompt], dirs, env, proxy.url, start.from).finally(() => proxy.close());
+  const agent = { ...spec, readOnly: answersByReading(spec.task) };
+  const prompts = [spec.task.prompt];
+  const session = await runAgent(agent, prompts, dirs, env, proxy.url, start.from).finally(() => proxy.close());
   const wallMs = Date.now() - startedAt.getTime();
   const exit = session.exits[0];
   if (!exit) throw new Error("the probe's prompt never ran");
@@ -206,7 +240,7 @@ export async function runOne(spec: RunSpec): Promise<RunResult> {
     wallMs,
     exitCode: exit.code,
     timedOut: exit.timedOut,
-    grade: grade(spec, metrics, start.agentDir, env, runDir),
+    grade: grade(spec, metrics.finalText, start, env, runDir),
     metrics,
     harnessTotals: probeTotals(spec.harness, start, runDir),
     commentBytes: start.commentBytes,

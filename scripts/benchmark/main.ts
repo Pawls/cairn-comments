@@ -11,18 +11,20 @@
  *       [--shard i/n] [--stop-at HH:MM] [--timeout <minutes>] [--keep]
  *       every (task, arm, start, repetition) in an order shuffled by the seed, where a start
  *       is fresh (an empty session) or, at depth deep, a fork of each warm-up chain's
- *       session (warmup.ts; all of benchmark/warmups/ for the tasks' repositories unless
- *       --chains names some). A chain runs once per harness and arm, before the first
- *       probe that forks it. A run that already has a result.json is skipped, so an
- *       interrupted benchmark resumes. n processes given --shard 1/n to n/n share the
+ *       session (warmup.ts; the probe set's own chains, or for a round all of
+ *       benchmark/warmups/ for the tasks' repositories, unless --chains names some).
+ *       A chain runs once per harness and arm, before the first probe that forks it.
+ *       Predictions and locations run with read-only tools. A run that already has a
+ *       result.json is skipped, so an interrupted benchmark resumes. n processes given --shard 1/n to n/n share the
  *       queue between them, each warm-up's runs in one process. No run starts after
  *       --stop-at. A run the model server failed is left for the next batch, and two in a
  *       row end the batch.
  *   prepare --work <dir> --repo <name> [--source <path>] [--only <task or chain,...>]
  *       for a repository whose arms differ in its own comments: builds the two arm commits
- *       of each task and each warm-up chain in the mirror (stripped and as committed) and
- *       records them in <work>/prepared/<name>.json. --source seeds the mirror from a
- *       local clone, for a private repository.
+ *       of each task and each warm-up chain in the mirror (stripped and as committed), or the
+ *       probe set's one pair under the id `deep`, and records them in
+ *       <work>/prepared/<name>.json. --source seeds the mirror from a local clone, for a
+ *       private repository.
  *   status --work <dir> [--harness ...] [--arms ...] [--reps ...] [--depths ...] [--chains ...] [--only ...]
  *       what that run command has finished and what is left
  *   report --work <dir>
@@ -31,7 +33,8 @@
  * `--provider` names the API the proxy forwards to. Against the Anthropic API (the default)
  * `annotate` and `run` need ANTHROPIC_API_KEY; any other provider is a local model server
  * (or a stand-in, for a dry run) serving `--model` under that name. `--tasks` names another
- * task file, and `--warmups` another folder of warm-up chains.
+ * task file, such as the probe set benchmark/deep-tasks.json, and `--warmups` another
+ * folder of warm-up chains for a round's task file.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -45,8 +48,8 @@ import { renderReport } from "./report.ts";
 import { depthOf, legacyRunDirs, runDirFor, runOne, type RunResult } from "./runner.ts";
 import { nextOccurrence, planRuns, shard, unforked, warmupOf, type Depths, type Planned } from "./schedule.ts";
 import { spreadOf } from "./stats.ts";
-import { loadTasks, type Task, type TaskFile } from "./tasks.ts";
-import { chainsNamedLikeTasks, loadChains, type WarmupChain } from "./warmup.ts";
+import { isEditTask, loadChains, loadTaskFile, type Task, type TaskFile, type WarmupChain } from "./tasks.ts";
+import { chainsNamedLikeTasks } from "./warmup.ts";
 import {
   ARMS,
   cairn,
@@ -143,28 +146,25 @@ function workDir(): string {
   return dir;
 }
 
-let loadedChains: Map<string, WarmupChain> | undefined;
-
-/** The warm-up chains in --warmups, by id, read when a command first needs them. */
-function warmupChains(): Map<string, WarmupChain> {
-  loadedChains ??= loadChains(args.warmups!);
-  return loadedChains;
+/** The warm-up chains the task file's deep runs may fork: a probe set's own, or else those in --warmups. */
+function chainsFor(taskFile: TaskFile): WarmupChain[] {
+  return taskFile.chains ?? [...loadChains(args.warmups!).values()];
 }
 
-/** The warm-up chains in --warmups that start in `repo`. */
-function chainsOf(repo: string): WarmupChain[] {
-  return [...warmupChains().values()].filter((chain) => chain.repo === repo);
+/** Where `chainsFor` read the chains, for an error message. */
+function chainSource(taskFile: TaskFile): string | undefined {
+  return taskFile.chains ? args.tasks : args.warmups;
 }
 
 /**
- * Every commit a repository's runs check out: its base, each task's start and solution,
- * and the start of each of `chains` in it.
+ * Every commit a repository's runs check out: its base, each task's start and an edit
+ * task's solution, and the start of each of `chains` in it.
  */
 function commitsOf(tasks: TaskFile, repo: string, chains: WarmupChain[]): string[] {
   const commits = [tasks.repos[repo]!.base];
   for (const task of tasks.tasks.filter((t) => t.repo === repo)) {
     commits.push(task.start);
-    if (task.kind !== "question") commits.push(task.solution);
+    if (isEditTask(task)) commits.push(task.solution);
   }
   for (const chain of chains.filter((c) => c.repo === repo)) commits.push(chain.start);
   return commits;
@@ -193,12 +193,22 @@ interface Starting {
   start: string;
 }
 
+/**
+ * The prepared entries `starting` checks out: one per task and chain, each under its own
+ * id, or a probe set's one shared entry.
+ */
+function preparedEntries(taskFile: TaskFile, starting: Starting[]): Starting[] {
+  return taskFile.sharedStart ? [taskFile.sharedStart] : starting;
+}
+
 function loadPrepared(work: string, taskFile: TaskFile, starting: Starting[]): Map<string, Record<string, PreparedTask>> {
   const loaded = new Map<string, Record<string, PreparedTask>>();
-  const repoNames = new Set(starting.map((s) => s.repo));
+  const entries = preparedEntries(taskFile, starting);
+  const repoNames = new Set(entries.map((s) => s.repo));
   for (const name of [...repoNames].filter((n) => taskFile.repos[n]!.treatment === "own-comments")) {
-    const repoStarts = starting.filter((s) => s.repo === name);
-    loaded.set(name, readPrepared(preparedFile(work, name), name, repoStarts, taskFile.repos[name]!.agentNotes ?? []));
+    const repoEntries = entries.filter((s) => s.repo === name);
+    const agentNotes = taskFile.repos[name]!.agentNotes ?? [];
+    loaded.set(name, readPrepared(preparedFile(work, name), name, repoEntries, agentNotes));
   }
   return loaded;
 }
@@ -206,19 +216,19 @@ function loadPrepared(work: string, taskFile: TaskFile, starting: Starting[]): M
 function prepare(): void {
   const work = workDir();
   const name = required("repo", args.repo);
-  const taskFile = loadTasks(args.tasks!);
+  const taskFile = loadTaskFile(args.tasks!);
   const spec = taskFile.repos[name];
   if (spec?.treatment !== "own-comments") throw new Error(`${name} has no own-comments treatment in ${args.tasks}`);
   const agentNotes = spec.agentNotes;
   if (!agentNotes) throw new Error(`${name} has no agentNotes in ${args.tasks}`);
   const python = findPython();
   if (!python) throw new Error("prepare needs Python 3 (uv, python3, or python)");
-  const chains = chainsOf(name);
+  const chains = chainsFor(taskFile).filter((chain) => chain.repo === name);
   refuseChainsNamedLikeTasks(chains, taskFile.tasks);
   const mirror = mirrors(work, taskFile, [name], chains).get(name)!;
   const env = isolatedEnv(path.join(work, "state"), path.join(work, "cli-home"));
-  // A chain's arm commits are prepared like a task's, under the chain's id.
-  const starts = [...taskFile.tasks.filter((t) => t.repo === name), ...chains];
+  // A chain's arm commits are prepared like a task's (`preparedEntries`).
+  const starts = preparedEntries(taskFile, [...taskFile.tasks, ...chains]).filter((s) => s.repo === name);
   const only = args.only?.split(",");
   const unknown = only?.filter((id) => !starts.some((s) => s.id === id)) ?? [];
   if (unknown.length) throw new Error(`--only names no task or warm-up chain of ${name}: ${unknown.join(", ")}`);
@@ -251,7 +261,7 @@ async function annotate(): Promise<void> {
   const agent = agentOptions();
   const work = workDir();
   const name = required("repo", args.repo);
-  const tasks = loadTasks(args.tasks!);
+  const tasks = loadTaskFile(args.tasks!);
   const spec = tasks.repos[name];
   if (!spec) throw new Error(`no repo ${name} in ${args.tasks}`);
   const mirror = mirrors(work, tasks, [name], []).get(name)!;
@@ -311,19 +321,19 @@ function refuseLegacyRuns(work: string): void {
  * --depths, with the chains a deep run may fork: --chains, or every chain. A task forks only
  * the chains that start where it does (`planRuns`).
  */
-function depthsArg(tasks: Task[], allTasks: Task[]): Depths {
+function depthsArg(tasks: Task[], taskFile: TaskFile): Depths {
   const depths = args.depths!.split(",");
   for (const depth of depths) if (depth !== "fresh" && depth !== "deep") throw new Error("--depths takes fresh, deep");
   if (!depths.includes("deep")) return { fresh: true, chains: [] };
-  const chains = warmupChains();
-  const ids = args.chains?.split(",") ?? [...chains.keys()];
-  const unknown = ids.filter((id) => !chains.has(id));
-  if (unknown.length) throw new Error(`no warm-up chain ${unknown.join(", ")} in ${args.warmups}`);
-  const selected = [...chains.values()].filter((chain) => ids.includes(chain.id));
-  refuseChainsNamedLikeTasks(selected, allTasks);
+  const chains = chainsFor(taskFile);
+  const ids = args.chains?.split(",") ?? chains.map((chain) => chain.id);
+  const unknown = ids.filter((id) => !chains.some((chain) => chain.id === id));
+  if (unknown.length) throw new Error(`no warm-up chain ${unknown.join(", ")} in ${chainSource(taskFile)}`);
+  const selected = chains.filter((chain) => ids.includes(chain.id));
+  refuseChainsNamedLikeTasks(selected, taskFile.tasks);
   const alone = unforked(tasks, selected);
   if (alone.length === tasks.length) {
-    throw new Error(`depth deep needs a warm-up chain in ${args.warmups} that starts where a selected task does`);
+    throw new Error(`depth deep needs a warm-up chain in ${chainSource(taskFile)} that starts where a selected task does`);
   }
   if (alone.length) {
     log(`no deep runs for ${alone.map((t) => t.id).join(", ")}: no selected warm-up chain starts at the same repository and commit`);
@@ -343,7 +353,8 @@ function plannedQueue(taskFile: TaskFile): { tasks: Task[]; arms: Arm[]; queue: 
   const tasks = taskFile.tasks.filter((t) => !only || only.includes(t.id));
   const arms = args.arms!.split(",") as Arm[];
   for (const arm of arms) if (!ARMS.includes(arm)) throw new Error(`--arms takes ${ARMS.join(", ")}`);
-  return { tasks, arms, queue: planRuns(tasks, arms, Number(args.reps), Number(args.seed), depthsArg(tasks, taskFile.tasks)) };
+  const queue = planRuns(tasks, arms, Number(args.reps), Number(args.seed), depthsArg(tasks, taskFile));
+  return { tasks, arms, queue };
 }
 
 function requireFrozenComments(taskFile: TaskFile, repoNames: string[]): void {
@@ -361,11 +372,16 @@ interface Batch {
   prepared: Map<string, Record<string, PreparedTask>>;
 }
 
-/** A deep run's chain and the chain's arm commits, if its repository has prepared ones. */
+/** The arm commits a task or chain checks out, if its repository has prepared ones (`preparedEntries`). */
+function preparedFor(batch: Batch, starting: Starting): PreparedTask | undefined {
+  return batch.prepared.get(starting.repo)?.[batch.taskFile.sharedStart?.id ?? starting.id];
+}
+
+/** A deep run's chain and the chain's arm commits. */
 function warmupFor(batch: Batch, planned: Planned): { chain: WarmupChain; prepared?: PreparedTask } | undefined {
   const chain = planned.chain;
   if (!chain) return undefined;
-  return { chain, prepared: batch.prepared.get(chain.repo)?.[chain.id] };
+  return { chain, prepared: preparedFor(batch, chain) };
 }
 
 /**
@@ -378,11 +394,12 @@ async function attempt(batch: Batch, planned: Planned, runDir: string, label: st
     const result = await runOne({
       ...batch.agent,
       ...planned,
+      taskFile: args.tasks!,
       repo: batch.taskFile.repos[planned.task.repo]!,
       mirror: batch.mirrorPaths.get(planned.task.repo)!,
       workDir: batch.work,
       comments: path.join(FROZEN_COMMENTS, planned.task.repo),
-      prepared: batch.prepared.get(planned.task.repo)?.[planned.task.id],
+      prepared: preparedFor(batch, planned.task),
       warmup: warmupFor(batch, planned),
       keep: args.keep!,
     });
@@ -399,7 +416,7 @@ async function run(): Promise<void> {
   const agent = agentOptions();
   const work = workDir();
   refuseLegacyRuns(work);
-  const taskFile = loadTasks(args.tasks!);
+  const taskFile = loadTaskFile(args.tasks!);
   const { tasks, arms, queue: whole } = plannedQueue(taskFile);
   const repoNames = [...new Set(tasks.map((t) => t.repo))];
   if (arms.includes("comments")) requireFrozenComments(taskFile, repoNames);
@@ -440,7 +457,7 @@ function status(): void {
   const work = path.resolve(required("work", args.work));
   refuseLegacyRuns(work);
   const harness = harnessArg();
-  const { queue } = plannedQueue(loadTasks(args.tasks!));
+  const { queue } = plannedQueue(loadTaskFile(args.tasks!));
   const runs = queue.map((planned) => ({ planned, dir: runDirFor({ workDir: work, harness, ...planned }) }));
   const finished = runs.filter((run) => existsSync(path.join(run.dir, "result.json"))).map((run) => run.dir);
   const failed = runs.filter((run) => !finished.includes(run.dir) && existsSync(path.join(run.dir, "error.txt")));
@@ -452,12 +469,10 @@ function status(): void {
   const groupOf = (r: RunResult) => `${depthOf(r)} ${r.arm}`;
   for (const group of new Set(results.map((r) => groupOf(r)))) {
     const groupResults = results.filter((r) => groupOf(r) === group);
-    const edits = groupResults.filter((r) => r.kind !== "question");
-    const questions = groupResults.filter((r) => r.kind === "question");
-    console.log(
-      `  ${group}: edit tasks ${passedOf(edits)} passed, questions ${passedOf(questions)} passed, ` +
-        `${groupResults.filter((r) => r.timedOut).length} timed out`,
-    );
+    const kinds = [...new Set(groupResults.map((r) => r.kind))];
+    const passedByKind = kinds.map((kind) => `${kind} ${passedOf(groupResults.filter((r) => r.kind === kind))}`);
+    const timedOut = groupResults.filter((r) => r.timedOut).length;
+    console.log(`  ${group}: ${passedByKind.join(", ")} passed, ${timedOut} timed out`);
   }
   if (minutes !== undefined) {
     console.log(`  median ${minutes.toFixed(1)} min of agent time per run; about ${((remaining * minutes) / 60).toFixed(1)} h of agent time left`);

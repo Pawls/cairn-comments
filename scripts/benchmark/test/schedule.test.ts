@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { nextOccurrence, planRuns, shard, unforked, warmupOf, type Planned } from "../schedule.ts";
-import type { Task } from "../tasks.ts";
-import type { WarmupChain } from "../warmup.ts";
+import type { Task, WarmupChain } from "../tasks.ts";
 
 const task = (id: string, start = "s"): Task => ({ id, repo: "r", kind: "question", start, prompt: "p", answerKey: [] });
 const chain = (id: string, start = "s"): WarmupChain => ({ id, repo: "r", start, prompts: ["warm up"] });

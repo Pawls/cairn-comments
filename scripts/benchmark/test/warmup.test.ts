@@ -6,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ProviderError, readLog } from "../agent.ts";
 import { runDirFor, runOne, type RunSpec } from "../runner.ts";
 import { startStandIn, type StandIn } from "../standin.ts";
-import type { QuestionTask } from "../tasks.ts";
-import { chainsNamedLikeTasks, loadChains, warmupDirFor, type WarmupChain } from "../warmup.ts";
+import type { QuestionTask, WarmupChain } from "../tasks.ts";
+import { chainsNamedLikeTasks, warmupDirFor } from "../warmup.ts";
 import { git, isolatedEnv } from "../workspace.ts";
 
 const FAKE_PI = path.join(path.dirname(fileURLToPath(import.meta.url)), "fake-pi.ts");
@@ -42,6 +42,7 @@ beforeEach(async () => {
     piCli: FAKE_PI,
     timeoutMs: 60_000,
     task,
+    taskFile: path.join(root, "tasks.json"),
     repo: { url: repo, base: start, setup: [] },
     mirror: repo,
     arm: "none",
@@ -148,28 +149,10 @@ describe("a fresh run", () => {
   });
 });
 
-describe("loadChains", () => {
-  const chainsIn = (files: Record<string, string>) => {
-    const dir = mkdtempSync(path.join(tmpdir(), "chains-"));
-    for (const [name, text] of Object.entries(files)) writeFileSync(path.join(dir, name), text);
-    return dir;
-  };
-
-  it("reads each chain under its file name", () => {
-    const dir = chainsIn({ "w1.json": JSON.stringify({ repo: "r", start: "s", prompts: ["go"] }) });
-
-    expect(loadChains(dir).get("w1")).toEqual({ id: "w1", repo: "r", start: "s", prompts: ["go"] });
-  });
-
+describe("chainsNamedLikeTasks", () => {
   it("names the chains whose id is also a task's, which would share the task's prepared commits", () => {
     const chains = [{ id: "fix-flow", repo: "r", start: "s", prompts: ["go"] }, { id: "w1", repo: "r", start: "s", prompts: ["go"] }];
 
     expect(chainsNamedLikeTasks(chains, [{ id: "fix-flow" }, { id: "q1" }])).toEqual(["fix-flow"]);
-  });
-
-  it("refuses a chain file without a repository, a start commit, and at least one prompt, naming the file", () => {
-    expect(() => loadChains(chainsIn({ "w2.json": JSON.stringify({ repo: "r", start: "s", prompts: [] }) }))).toThrow(/w2\.json/);
-    expect(() => loadChains(chainsIn({ "w3.json": JSON.stringify({ repo: "r", prompts: ["go"] }) }))).toThrow(/w3\.json/);
-    expect(() => loadChains(chainsIn({ "w4.json": "{ not json" }))).toThrow(/w4\.json/);
   });
 });

@@ -1,10 +1,10 @@
 /**
- * The task files: repositories, their base commits, and the tasks run against them.
- * `loadTasks` reads the one-prompt rounds; `loadDeepTasks` reads the deep-context probe set
- * (docs/plans/benchmark-deep-context.md), whose probes run fresh or after a warm-up chain.
+ * The task files: repositories, their base commits, the tasks run against them, and the
+ * warm-up chains a deep run forks. `loadTaskFile` reads either kind of file: a round of
+ * one-prompt tasks, or the deep-context probe set (docs/plans/benchmark-deep-context.md),
+ * whose probes run fresh or after a warm-up chain.
  */
-import { execFileSync, spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 export interface RepoSpec {
@@ -48,43 +48,8 @@ export interface QuestionTask extends TaskBase {
   answerKey: string[];
 }
 
-export type Task = EditTask | QuestionTask;
-
-export interface TaskFile {
-  repos: Record<string, RepoSpec>;
-  tasks: Task[];
-}
-
-/** A setup or test command with `{venv-python}` replaced by the checkout's virtualenv interpreter. */
-export function expandCommand(command: string): string {
-  const venvPython = process.platform === "win32" ? path.join(".venv", "Scripts", "python.exe") : ".venv/bin/python";
-  return command.replaceAll("{venv-python}", venvPython);
-}
-
-export function loadTasks(file: string): TaskFile {
-  const parsed = JSON.parse(readFileSync(file, "utf8")) as TaskFile;
-  for (const task of parsed.tasks) {
-    if (!parsed.repos[task.repo]) throw new Error(`task ${task.id}: unknown repo ${task.repo}`);
-  }
-  return parsed;
-}
-
-/**
- * A warm-up chain, run as one session to put a probe deep into a full context: ordinary
- * work, one prompt after another. Stored as `<id>.json` without the id.
- */
-export interface WarmupChain {
-  id: string;
-  repo: string;
-  /** Must be the probes' start: a probe forks from the chain's checkout. */
-  start: string;
-  /** Every source file the chain's prompts lead the agent to read or change. */
-  modules: string[];
-  prompts: string[];
-}
-
-interface ProbeBase {
-  id: string;
+/** A probe's `repo` and `start` are the probe set's, which `loadDeepTasks` copies onto it. */
+interface ProbeBase extends TaskBase {
   /** Finding the code it needs, or reading a complicated function correctly. */
   use: "navigation" | "understanding";
   /**
@@ -92,7 +57,6 @@ interface ProbeBase {
    * straight to it, and what the hidden tests import.
    */
   modules: string[];
-  prompt: string;
 }
 
 /**
@@ -135,6 +99,98 @@ export interface ChangeProbe extends ProbeBase {
 
 export type Probe = PredictProbe | LocateProbe | ChangeProbe;
 
+export type Task = EditTask | QuestionTask | Probe;
+
+export function isEditTask(task: Task): task is EditTask {
+  return task.kind === "fix" || task.kind === "feature";
+}
+
+/** A prediction or a location is answered from reading alone, so its run gets no shell and no edits. */
+export function answersByReading(task: Task): boolean {
+  return task.kind === "predict" || task.kind === "locate";
+}
+
+export interface TaskFile {
+  repos: Record<string, RepoSpec>;
+  tasks: Task[];
+  /** A probe set's own warm-up chains. A round's file has none; its deep runs take `--warmups`. */
+  chains?: WarmupChain[];
+  /**
+   * The one prepared entry every task and chain of a probe set uses, since all start at one
+   * commit. A round prepares each task and chain under its own id.
+   */
+  sharedStart?: { id: string; repo: string; start: string };
+}
+
+/** A setup or test command with `{venv-python}` replaced by the checkout's virtualenv interpreter. */
+export function expandCommand(command: string): string {
+  const venvPython = process.platform === "win32" ? path.join(".venv", "Scripts", "python.exe") : ".venv/bin/python";
+  return command.replaceAll("{venv-python}", venvPython);
+}
+
+/** The checkout's virtualenv interpreter, as an absolute path. */
+export function venvPython(checkout: string): string {
+  return path.resolve(checkout, expandCommand("{venv-python}"));
+}
+
+/** Room for a test run's or a git command's whole output. */
+export const OUTPUT_LIMIT = 64 * 1024 * 1024;
+
+/**
+ * A warm-up chain, run as one session to put a probe deep into a full context: ordinary
+ * work, one prompt after another. Stored as `<id>.json` without the id.
+ */
+export interface WarmupChain {
+  /** The file name without `.json`. */
+  id: string;
+  repo: string;
+  /** The commit the chain starts from; a probe forked from it must start there too. */
+  start: string;
+  /**
+   * Every source file the chain's prompts lead the agent to read or change. A probe set
+   * requires them, and refuses a probe that overlaps them.
+   */
+  modules?: string[];
+  prompts: string[];
+}
+
+const isText = (value: unknown): value is string => typeof value === "string" && value !== "";
+
+/** Why `parsed` is not a chain file's contents, or undefined when it is one. */
+function chainProblem(parsed: unknown): string | undefined {
+  const chain = parsed as Partial<WarmupChain> | null;
+  if (typeof chain !== "object" || chain === null) return "not a JSON object";
+  if (!isText(chain.repo) || !isText(chain.start)) return "needs a repo and a start commit";
+  if (!Array.isArray(chain.prompts) || !chain.prompts.length || !chain.prompts.every((p) => isText(p))) {
+    return "needs at least one prompt, each a string";
+  }
+  return undefined;
+}
+
+/** The chain in `file`, named by the file. */
+function readChain(file: string): WarmupChain {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(file, "utf8"));
+  } catch (error) {
+    throw new Error(`warm-up chain ${file} is not JSON`, { cause: error });
+  }
+  const problem = chainProblem(parsed);
+  if (problem) throw new Error(`warm-up chain ${file} ${problem}`);
+  return { ...(parsed as Omit<WarmupChain, "id">), id: path.basename(file, ".json") };
+}
+
+/** Every chain in `dir`, one `<id>.json` file each holding `repo`, `start`, and `prompts`. */
+export function loadChains(dir: string): Map<string, WarmupChain> {
+  const chains = new Map<string, WarmupChain>();
+  if (!existsSync(dir)) return chains;
+  for (const file of readdirSync(dir).filter((name) => name.endsWith(".json"))) {
+    const chain = readChain(path.join(dir, file));
+    chains.set(chain.id, chain);
+  }
+  return chains;
+}
+
 /** The prepared-commit id the probe set's start is stored under (`prepared/deep/<arm>`). */
 export const DEEP_PREPARED_ID = "deep";
 
@@ -164,7 +220,7 @@ function checkProbes(taskFile: string, probes: Probe[], warmups: WarmupChain[]):
     if (ids.has(probe.id)) throw new Error(`duplicate probe id ${probe.id}`);
     ids.add(probe.id);
     for (const module of probe.modules) {
-      const chain = warmups.find((warmup) => warmup.modules.includes(module));
+      const chain = warmups.find((warmup) => warmup.modules?.includes(module));
       if (chain) throw new Error(`probe ${probe.id}: ${module} is also in warm-up chain ${chain.id}`);
     }
     for (const name of filesOf(probe)) {
@@ -174,119 +230,57 @@ function checkProbes(taskFile: string, probes: Probe[], warmups: WarmupChain[]):
   }
 }
 
-function loadChain(taskFile: string, chainFile: string): WarmupChain {
+/** A probe set's chain, which must sit in the task file's folder and list its modules. */
+function loadSetChain(taskFile: string, chainFile: string): WarmupChain {
   const folder = path.resolve(path.dirname(taskFile));
   const relative = path.relative(folder, path.resolve(folder, chainFile));
   if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`warm-up chain ${chainFile} is outside ${folder}`);
-  const text = readFileSync(path.join(folder, relative), "utf8");
-  const chain = JSON.parse(text) as Omit<WarmupChain, "id">;
-  return { id: path.basename(chainFile, ".json"), ...chain };
+  const chain = readChain(path.join(folder, relative));
+  if (!chain.modules?.length) {
+    throw new Error(`warm-up chain ${chain.id} lists no modules, so no probe can be checked against it`);
+  }
+  return chain;
 }
 
-export function loadDeepTasks(file: string): DeepTaskFile {
+function readTaskJson(file: string): Record<string, unknown> {
   // The task file is the operator's own --tasks choice on a local benchmark script.
-  const text = readFileSync(file, "utf8"); // NOSONAR
-  const parsed = JSON.parse(text) as Omit<DeepTaskFile, "warmups"> & { warmups: string[] };
+  return JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>; // NOSONAR
+}
+
+type DeepTaskJson = Omit<DeepTaskFile, "warmups"> & { warmups: string[] };
+
+function deepTasksFrom(file: string, parsed: DeepTaskJson): DeepTaskFile {
   if (!parsed.repos[parsed.repo]) throw new Error(`unknown repo ${parsed.repo}`);
-  const warmups = parsed.warmups.map((chainFile) => loadChain(file, chainFile));
+  const warmups = parsed.warmups.map((chainFile) => loadSetChain(file, chainFile));
   for (const chain of warmups) {
     if (chain.repo !== parsed.repo || chain.start !== parsed.start) {
       throw new Error(`warm-up chain ${chain.id} starts at ${chain.repo}@${chain.start}, not ${parsed.repo}@${parsed.start}`);
     }
   }
-  checkProbes(file, parsed.probes, warmups);
-  return { ...parsed, warmups };
+  const probes = parsed.probes.map((probe) => ({ ...probe, repo: parsed.repo, start: parsed.start }));
+  checkProbes(file, probes, warmups);
+  return { ...parsed, warmups, probes };
 }
 
-/** The same limit as runner.ts's edit grading, so a probe that hangs fails here as it would there. */
-const TEST_TIMEOUT_MS = 20 * 60 * 1000;
-export const OUTPUT_LIMIT = 64 * 1024 * 1024;
-
-export interface ChangeGrade {
-  passed: boolean;
-  testExit: number | null;
-  output: string;
+export function loadDeepTasks(file: string): DeepTaskFile {
+  return deepTasksFrom(file, readTaskJson(file) as unknown as DeepTaskJson);
 }
 
-/**
- * Grades a change probe in `checkout`: copies each named hidden test into place (never a
- * whole folder, so local bytecode stays behind), puts `keptTests` back to `committed`, and
- * runs `testCommand`. `committed` is the arm's prepared commit when HEAD has moved past it.
- */
-export function gradeChangeProbe(
-  taskFile: string,
-  probe: ChangeProbe,
-  checkout: string,
-  env: Record<string, string>,
-  committed = "HEAD",
-): ChangeGrade {
-  for (const test of probe.hiddenTests) {
-    const destination = path.join(checkout, test);
-    mkdirSync(path.dirname(destination), { recursive: true });
-    copyFileSync(probeFile(taskFile, probe.id, test), destination);
+/** A round's tasks, or a probe set's probes as tasks; a probe set is the file that has `probes`. */
+export function loadTaskFile(file: string): TaskFile {
+  const parsed = readTaskJson(file);
+  if ("probes" in parsed) {
+    const deep = deepTasksFrom(file, parsed as unknown as DeepTaskJson);
+    return {
+      repos: deep.repos,
+      tasks: deep.probes,
+      chains: deep.warmups,
+      sharedStart: { id: DEEP_PREPARED_ID, repo: deep.repo, start: deep.start },
+    };
   }
-  if (probe.keptTests?.length) {
-    execFileSync("git", ["checkout", committed, "--", ...probe.keptTests], { cwd: checkout, env, stdio: "ignore" }); // NOSONAR: git comes from PATH, as for any tool that drives git
+  const round = parsed as unknown as TaskFile;
+  for (const task of round.tasks) {
+    if (!round.repos[task.repo]) throw new Error(`task ${task.id}: unknown repo ${task.repo}`);
   }
-  const [program, args] = commandArgs(probe.testCommand, checkout);
-  // No shell, so the timeout stops the test process itself rather than a shell around it.
-  const run = spawnSync(program, args, { cwd: checkout, env, encoding: "utf8", timeout: TEST_TIMEOUT_MS, maxBuffer: OUTPUT_LIMIT });
-  return { passed: run.status === 0, testExit: run.status, output: `${run.stdout}\n${run.stderr}` };
-}
-
-/** The checkout's virtualenv interpreter, as an absolute path. */
-export function venvPython(checkout: string): string {
-  return path.resolve(checkout, expandCommand("{venv-python}"));
-}
-
-/**
- * A test command split into its program and arguments, with `{venv-python}` expanded and a
- * relative program path resolved against `cwd`. Words are split on spaces, with no quoting.
- */
-function commandArgs(command: string, cwd: string): [string, string[]] {
-  const [program = "", ...args] = expandCommand(command).split(" ").filter(Boolean);
-  const isPath = program.includes("/") || program.includes("\\");
-  return [isPath ? path.resolve(cwd, program) : program, args];
-}
-
-/** Markdown a model puts around an answer line: emphasis, code spans, quote markers. */
-const LINE_DECORATION = new Set(["*", "_", "`", ">"]);
-/** ...and around the answer's value; an underscore or sign inside it is part of the answer. */
-const VALUE_DECORATION = new Set(["*", "`"]);
-
-/** `text` without the whitespace and `decoration` characters at either end. */
-function trimDecoration(text: string, decoration: Set<string>): string {
-  const isEdge = (char: string) => decoration.has(char) || char.trim() === "";
-  let start = 0;
-  let end = text.length;
-  while (start < end && isEdge(text.charAt(start))) start += 1;
-  while (end > start && isEdge(text.charAt(end - 1))) end -= 1;
-  return text.slice(start, end);
-}
-
-/** The text after `ANSWER:` on one line, or undefined when the line is not an answer line. */
-function answerOn(line: string): string | undefined {
-  let plain = trimDecoration(line, LINE_DECORATION);
-  if (plain.startsWith("- ")) plain = trimDecoration(plain.slice(2), LINE_DECORATION); // a list item
-  if (!plain.toLowerCase().startsWith("answer:")) return undefined;
-  const value = trimDecoration(plain.slice("answer:".length), VALUE_DECORATION);
-  return trimDecoration(value.endsWith(".") ? value.slice(0, -1) : value, VALUE_DECORATION);
-}
-
-function normalized(text: string): string {
-  return text.trim().replaceAll(/\s+/g, " ").toLowerCase();
-}
-
-/**
- * Exact match on the last `ANSWER:` line of the final answer, so a run that changes its
- * mind is graded on where it ended. Spacing, case, markdown decoration and a closing period
- * do not count.
- */
-export function gradePrediction(finalText: string, expected: string): { passed: boolean; missing: string[] } {
-  const last = finalText
-    .split("\n")
-    .map((line) => answerOn(line))
-    .findLast((answer) => answer !== undefined);
-  const passed = last !== undefined && normalized(last) === normalized(expected);
-  return { passed, missing: passed ? [] : [`ANSWER: ${expected}`] };
+  return round;
 }

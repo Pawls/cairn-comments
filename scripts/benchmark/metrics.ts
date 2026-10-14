@@ -1,6 +1,9 @@
-/** Per-run measurements taken from the recording proxy's log. */
+/** Per-run measurements taken from the recording proxy's log, and the graders that score a run. */
+import { execFileSync, spawnSync, type SpawnSyncOptionsWithStringEncoding } from "node:child_process";
+import { copyFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import type { ModelResponse, Usage } from "./responses.ts";
+import { expandCommand, OUTPUT_LIMIT, probeFile, type ChangeProbe } from "./tasks.ts";
 
 /**
  * Which part of a run made a call: a deep run's warm-up chain, or the probe itself, which
@@ -115,14 +118,118 @@ export function providerFailed(log: LoggedCall[]): boolean {
   return log.some((call) => call.status >= 500) || !log.some((call) => call.response);
 }
 
-export interface Grade {
+export interface AnswerGrade {
   passed: boolean;
-  /** Answer-key patterns the answer did not match. */
+  /** What the answer lacked: answer-key patterns, or the expected `ANSWER:` line. */
   missing: string[];
 }
 
 /** An answer passes when it matches every pattern in the key, ignoring case. */
-export function gradeAnswer(answer: string, key: string[]): Grade {
+export function gradeAnswer(answer: string, key: string[]): AnswerGrade {
   const missing = key.filter((pattern) => !new RegExp(pattern, "i").test(answer));
   return { passed: missing.length === 0, missing };
+}
+
+/** Markdown a model puts around an answer line: emphasis, code spans, quote markers. */
+const LINE_DECORATION = new Set(["*", "_", "`", ">"]);
+/** ...and around the answer's value; an underscore or sign inside it is part of the answer. */
+const VALUE_DECORATION = new Set(["*", "`"]);
+
+/** `text` without the whitespace and `decoration` characters at either end. */
+function trimDecoration(text: string, decoration: Set<string>): string {
+  const isEdge = (char: string) => decoration.has(char) || char.trim() === "";
+  let start = 0;
+  let end = text.length;
+  while (start < end && isEdge(text.charAt(start))) start += 1;
+  while (end > start && isEdge(text.charAt(end - 1))) end -= 1;
+  return text.slice(start, end);
+}
+
+/** The text after `ANSWER:` on one line, or undefined when the line is not an answer line. */
+function answerOn(line: string): string | undefined {
+  let plain = trimDecoration(line, LINE_DECORATION);
+  if (plain.startsWith("- ")) plain = trimDecoration(plain.slice(2), LINE_DECORATION); // a list item
+  if (!plain.toLowerCase().startsWith("answer:")) return undefined;
+  const value = trimDecoration(plain.slice("answer:".length), VALUE_DECORATION);
+  return trimDecoration(value.endsWith(".") ? value.slice(0, -1) : value, VALUE_DECORATION);
+}
+
+function normalized(text: string): string {
+  return text.trim().replaceAll(/\s+/g, " ").toLowerCase();
+}
+
+/**
+ * Exact match on the last `ANSWER:` line of the final answer, so a run that changes its
+ * mind is graded on where it ended. Spacing, case, markdown decoration and a closing period
+ * do not count.
+ */
+export function gradePrediction(finalText: string, expected: string): AnswerGrade {
+  const last = finalText
+    .split("\n")
+    .map((line) => answerOn(line))
+    .findLast((answer) => answer !== undefined);
+  const passed = last !== undefined && normalized(last) === normalized(expected);
+  return { passed, missing: passed ? [] : [`ANSWER: ${expected}`] };
+}
+
+/** Long enough for any task's tests; a test run that hangs fails rather than stalling the batch. */
+const TEST_TIMEOUT_MS = 20 * 60 * 1000;
+
+export interface TestRun {
+  passed: boolean;
+  testExit: number | null;
+  /** Standard output, then standard error. */
+  output: string;
+}
+
+/**
+ * Runs a test command from `cwd` with `{venv-python}` expanded. A round's task gives a shell
+ * command line, `&&` and all. A probe gives a program and its arguments, run with no shell
+ * so the timeout stops the test process itself rather than a shell around it.
+ */
+export function runTestCommand(command: string, form: TestCommandForm, cwd: string, env: Record<string, string>): TestRun {
+  const options = { cwd, env, encoding: "utf8", timeout: TEST_TIMEOUT_MS, maxBuffer: OUTPUT_LIMIT } as const;
+  const run = spawnTest(command, form, options);
+  return { passed: run.status === 0, testExit: run.status, output: `${run.stdout}\n${run.stderr}` };
+}
+
+type TestCommandForm = "shell" | "program";
+
+function spawnTest(command: string, form: TestCommandForm, options: SpawnSyncOptionsWithStringEncoding & { cwd: string }) {
+  if (form === "shell") return spawnSync(expandCommand(command), { ...options, shell: true });
+  const [program, args] = programArgs(command, options.cwd);
+  return spawnSync(program, args, options);
+}
+
+/**
+ * A probe's test command split into its program and arguments, with `{venv-python}` expanded
+ * and a relative program path resolved against `cwd`. Words are split on spaces, with no quoting.
+ */
+function programArgs(command: string, cwd: string): [string, string[]] {
+  const [program = "", ...args] = expandCommand(command).split(" ").filter(Boolean);
+  const isPath = program.includes("/") || program.includes("\\");
+  return [isPath ? path.resolve(cwd, program) : program, args];
+}
+
+/**
+ * Grades a change probe in `checkout`: copies each named hidden test into place (never a
+ * whole folder, so local bytecode stays behind), puts `keptTests` back to `committed`, and
+ * runs `testCommand`. `committed` is the arm's prepared commit when HEAD has moved past it.
+ */
+export function gradeChangeProbe(
+  taskFile: string,
+  probe: ChangeProbe,
+  checkout: string,
+  env: Record<string, string>,
+  committed = "HEAD",
+): TestRun {
+  for (const test of probe.hiddenTests) {
+    const destination = path.join(checkout, test);
+    mkdirSync(path.dirname(destination), { recursive: true });
+    copyFileSync(probeFile(taskFile, probe.id, test), destination);
+  }
+  if (probe.keptTests?.length) {
+    execFileSync("git", ["checkout", committed, "--", ...probe.keptTests], { cwd: checkout, env, stdio: "ignore" }); // NOSONAR: git comes from PATH, as for any tool that drives git
+  }
+  return runTestCommand(probe.testCommand, "program", checkout, env);
 }
