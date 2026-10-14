@@ -29,7 +29,8 @@ changes code. The sidecars it leaves are copied into `benchmark/comments/<repo>/
 committed, and every comments-arm run places that same set at its task's start commit, as
 an owner's later commits reach an agent worktree.
 
-**Tasks.** Nine tasks from real history, each verified failing at its start and passing at
+**Tasks.** Nine tasks from real history on these two repositories (the large-repository
+test has its own ten, § Large repository), each verified failing at its start and passing at
 its solution:
 
 | Repository | Fix | Feature | Question |
@@ -114,6 +115,11 @@ npm run benchmark -- run $P --stop-at 07:00               # Claude Code
 npm run benchmark -- run $P --harness pi --stop-at 07:00
 npm run benchmark -- status --work /c/cb                   # what is done and left
 npm run benchmark -- report --work /c/cb
+
+# the large repository (own comments, no Cairn): build the arm commits once, then run
+B="--work /c/cbb --tasks benchmark/boxel-tasks.json --model qwen3.8-flash-next-iq2_xs --provider http://127.0.0.1:8411"
+npm run benchmark -- prepare --repo boxel $B --source <local clone>
+npm run benchmark -- run $B
 ```
 
 Against the Anthropic API, leave out `--provider`, name a Claude model, and set
@@ -149,14 +155,20 @@ the tasks: they are the treatment, written once.
 
 ## Results
 
+**On a large repository, the repository's own comments made no measurable difference to
+success or to input tokens** ([§ Large repository](#large-repository-boxelbuilder)):
+every run passed in both arms, and the comments arm's median per-task change in input tokens was
++20.7% with a 95% bootstrap interval of -15.1% to +30.6%. It was faster on 7 of 10 tasks, by
+a median 8.8% (-21.0% to +4.9%). The small-repository result follows.
+
 **On two small repositories, comments made no measurable difference.** Every Claude Code run
 passed in both arms, so success could not discriminate, and the comments arm used 15.8% more
 input tokens (median per-task change; the 95% bootstrap interval runs from -5.4% to +47.2%).
 On pi the change was -2.0% (-18.5% to +35.8%) with 36 of 45 runs passing against 35 of 45.
 Both intervals include zero, so the runs show neither a saving nor a cost. The kill criterion
 is not settled by this alone: both repositories are small enough to read in a few files, which
-is where comments should help least (§ What this does not show). A test on a large
-repository decides it.
+is where comments should help least (§ What this does not show). The large-repository
+test below was the next step.
 
 ### Setup
 
@@ -189,7 +201,8 @@ repository decides it.
 
 ### What this does not show
 
-- **Whether comments help on a large codebase.** Non-test source is about 8,200 lines in
+- **Whether comments help on a large codebase** (the large-repository test below answers
+  this for one). Non-test source is about 8,200 lines in
   cairn-comments and 12,700 in click, and agents read a median of 4 or 5 files per run. When
   a search and a few reads find the answer, comments can only add bytes to read. They are
   expected to pay where the code is too large to explore cheaply.
@@ -208,24 +221,113 @@ repository decides it.
   they would about private code.
 - **Whether it carries over to Claude.** Every run used one local model.
 
-### The next test: a large repository
+### Large repository (BoxelBuilder)
 
-The owner chose BoxelBuilder (about 377,000 lines of Python, 2026-10-11), on the same
-Strata model so the two results compare. Its own comments are the treatment: about 22,000
-own-line comments, roughly one per 17 lines, written as the code was developed rather than
-after the fact. The arms differ only in those comments:
+The owner chose BoxelBuilder (a Python voxel-world editor; 771 Python files, 14.1 MB at the
+chosen commits, 2026-10-11), on the same Strata model so the two results compare. Its own
+comments are the treatment: they add 2.4 MB, 17% of the bytes of Python source, written as
+the code was developed rather than after the fact. The arms differ only in those comments:
 
-- **as committed:** the task's start commit as it is.
-- **stripped:** the same commit with every comment removed except functional ones
-  (shebangs, encoding lines, `# noqa`, `# type: ignore`, `# pragma`, `# fmt:`). Docstrings
-  stay in both arms. Removal goes through Python's `tokenize`, and `ast.dump` of every file
-  must match before and after, proving nothing else changed.
-- **in both arms:** markdown files, `.claude/`, and other agent skill folders are removed,
-  since committed plans and handoffs can describe the fix a task asks for. An identical,
-  minimal AGENTS.md says only how to run the tests.
+- **comments (as committed):** the task's start commit as it is.
+- **none (stripped):** the same commit with every comment removed except functional ones
+  (shebangs, encoding lines, `# noqa` in any case, `# type:`, `# pragma`, `# fmt:`, and the
+  `pylint:`, `pyright:`, `pyre-`, `mypy:`, `isort:`, `ruff:`, `yapf:`, `autopep8:`, and `nosec`
+  directives; BoxelBuilder's only directives are lowercase `# noqa`). Docstrings stay in both
+  arms, and so does a byte-order mark.
+  [strip_comments.py](../scripts/benchmark/strip_comments.py) removes them with Python's `tokenize` and
+  refuses to write a file whose `ast.dump` differs from the original's; all 771 files parsed
+  and passed. Comments inside triple-quoted strings (shader source) are not comments to
+  Python and stay.
+- **in both arms:** every markdown file, `.claude/`, `.agents/`, `.serena/`, `.pawl/`, `.mcp.json`,
+  and `.coderabbit.yaml` are removed, since committed plans and handoffs can describe the fix a
+  task asks for. A one-line README stub stays because the packaging file names it. An identical,
+  minimal AGENTS.md (the task file's `agentNotes`) says only how to run a test file, and a
+  CLAUDE.md imports it.
+- **No history:** `npm run benchmark -- prepare --repo boxel --source <clone>` builds each
+  task's two arm commits as parentless commits in the mirror, and the run clones only that
+  branch, with `--no-local` so no other object or tag comes along, and no remote. An agent
+  cannot read the original comments or the solution out of git. Both arm commits have the
+  message `Initial commit`, and the clone keeps no branch but the agent's `bench`, so git
+  does not say which arm a run is in. The solution's test files are read from the mirror at
+  grading time. `<work>/prepared/<repo>.json` records each task's start commit and agent
+  notes, and `run` refuses a task whose entry no longer matches the task file. Preparing all
+  ten tasks takes about 3 minutes; rebuilt with these rules, all 20 arm trees are identical
+  to the ones the recorded round ran on.
+- **The recorded round had a weaker clone.** Its runs cloned by local path, which copied the
+  mirror's whole object store and its 16 tags, so the original history was reachable from
+  `git tag` or `git log --all`. A check of all 100 transcripts found no run that looked: the
+  agents ran only `git log -N`, `git diff`, `git status`, `git stash list`, and `git show` on
+  their own commit. Its commits did name the arm (`<task>: the code without comments`, or
+  `as committed`), and 11 none runs and 7 comments runs printed that subject with `git log`
+  or `git show --stat`. The arm is also in every run's directory path
+  (`runs/<harness>/<task>/<arm>-<rep>/agent`), in both rounds.
+- **No Cairn at all:** neither arm uses the filter or the hook, so this tests the
+  repository's own comments, not the tool.
 
-The tasks name symptoms rather than files or functions, about half are questions, and a
-calibration run of the stripped arm must leave room below a full pass.
+Tasks ([boxel-tasks.json](../benchmark/boxel-tasks.json)): five fixes from real history, each verified to fail on
+its new tests at its start commit in both arms and to pass at its solution commit, and five
+questions graded by answer key. The keys were tightened after the round so that a phrase like
+"First, ..." or a stray number no longer passes; all 50 recorded answers pass the new keys,
+so the question results stand. The edit prompts describe a symptom as a user would, but
+the tests need a few contracts spelled out (a warning text, a return value), so some
+name an identifier or message. Setup is `uv venv` and an editable install of the project
+with its dev extras on Python 3.13; a task's test command is one or two pytest files run
+serially. Five repetitions per task per arm, Claude Code only, shuffled with seed 1.
+
+**Calibration did not leave room.** The plan required the stripped arm to fall below a full
+pass on a calibration run. One run of each task in the stripped arm (the `none-1` runs, which
+count toward the matrix, as in the small-repository runs) passed 10 of 10, in 0.4 to 11.5
+minutes. The tasks were not made harder: success is at its ceiling in both arms, so only
+tokens, turns, and time can move, as for Claude Code on the small repositories.
+
+**Deviations.** Claude Code only; pi did not run on this repository. The Strata front end
+was stopped once during setup by a stray process kill and restarted with its own start
+script before any run; the matrix then ran in one unattended batch, 2026-10-14 02:34 to
+08:35, with no errors and no timeouts. The task selection is the author's: five fixes and
+five questions chosen from one repository's recent history, not a sample of all work.
+
+The report (`npm run benchmark -- report --work /c/cbb`, a work directory holding only these runs):
+
+### claude, BoxelBuilder (qwen3.8-flash-next-iq2_xs)
+
+Median (interquartile range) per run.
+
+| Arm | Success | Input tokens, all | Uncached input | Cache read | Output | Turns | Tool calls | Files read | Wall time (s) | Comment bytes read |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| comments | 50/50 | 297,770 (128,467 to 1,226,312) | 32,875 (25,444 to 43,565) | 266,674 (104,139 to 1,182,492) | 5,286 (1,486 to 18,235) | 11 (5 to 31) | 14 (6 to 31) | 3 (1 to 4) | 65 (31 to 316) | 15,782 (6,075 to 25,610) |
+| none | 50/50 | 416,583 (136,660 to 1,237,994) | 31,872 (25,611 to 44,029) | 378,321 (111,919 to 1,201,901) | 6,423 (2,026 to 16,032) | 12 (6 to 31) | 14 (8 to 33) | 3 (2 to 4) | 78 (33 to 549) | 0 (0 to 0) |
+
+The pooled medians favor the comments arm (-28% input tokens), but pooling mixes easy and hard
+tasks. Per task, each arm's median and the comments arm's change against none:
+
+| Task | Kind | Input tokens, all, none | comments | change | Wall time (s), none | comments | change |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| bad-block-row-half-loads | fix | 1,578,440 | 2,109,856 | +33.7% | 674 | 469 | -30.5% |
+| bad-command-resets-database | fix | 2,207,895 | 1,531,114 | -30.7% | 611 | 516 | -15.6% |
+| spaced-effect-ids | fix | 1,277,193 | 1,784,509 | +39.7% | 512 | 567 | +10.7% |
+| spaced-variable-source | fix | 795,620 | 978,693 | +23.0% | 552 | 162 | -70.7% |
+| ray-inside-event-box | fix | 259,423 | 352,686 | +36.0% | 90 | 95 | +5.9% |
+| behavior-transitions | question | 581,509 | 157,490 | -72.9% | 65 | 43 | -33.7% |
+| carry-refusals | question | 87,455 | 138,064 | +57.9% | 28 | 30 | +4.0% |
+| day-night-phases | question | 84,603 | 87,605 | +3.5% | 25 | 24 | -3.4% |
+| latest-save-slot | question | 121,878 | 102,121 | -16.2% | 32 | 28 | -14.3% |
+| undo-block-edits | question | 206,213 | 244,123 | +18.4% | 45 | 44 | -1.9% |
+
+Median per-task change: input tokens +20.7% (95% interval -15.1% to +30.6%; lower on 3 of 10
+tasks); cost (a weighted token count, since Strata charges nothing) +4.9% (-6.8% to +14.0%);
+wall time -8.8% (-21.0% to +4.9%; lower on 7 of 10 tasks). Proxy and harness token totals
+agree to 0.0% over 100 runs. Every comments-arm run read some comments, a median of 15.8 KB.
+
+**What it shows.** No success difference (50/50 against 50/50), and no token difference
+that five repetitions can separate from run-to-run noise: the interval includes both a
+15% saving and a 31% cost. The effect varies by task more than it points one way: four of the
+five fixes used more input tokens with comments and one fewer (-30.7%), and the questions
+split two lower, three higher.
+
+**What it does not show.** Success is at its ceiling, so a harder task set could still show
+a success effect. Five fixes and five questions is a small set, and the questions are quick
+to answer without comments (a median 25 to 65 seconds). One local, quantized model; Claude
+Code only; no summaries arm.
 
 ### Where the change came from
 
