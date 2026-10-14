@@ -80,6 +80,13 @@ describe("loadDeepTasks", () => {
     expect(() => loadDeepTasks(taskFile([predict]))).toThrow(/drain.*compute\.py/);
   });
 
+  it("refuses a warm-up chain file outside the task file's folder", () => {
+    writeLeashFiles();
+    write("deep.json", { repos: { r: REPO }, repo: "r", start: "s", warmups: ["../elsewhere.json"], probes: [change] });
+
+    expect(() => loadDeepTasks(path.join(dir, "deep.json"))).toThrow(/warm-up chain \.\.\/elsewhere\.json is outside/);
+  });
+
   it("refuses two probes with one id", () => {
     const locate = { id: "x", use: "navigation", kind: "locate", modules: ["a.py"], prompt: "p", answerKey: ["a"] };
 
@@ -172,6 +179,12 @@ describe("gradePrediction", () => {
     const text = "Working it out...\nANSWER: 7 cells\nOn reflection:\nanswer:  keep=6   level=2 \n";
 
     expect(gradePrediction(text, "keep=6 level=2")).toEqual({ passed: true, missing: [] });
+  });
+
+  it("reads an ANSWER line through markdown emphasis, code spans, and a closing period", () => {
+    for (const line of ["**ANSWER:** keep=6 level=2", "ANSWER: `keep=6 level=2`", "- **ANSWER: keep=6 level=2.**", "> Answer: keep=6 level=2"]) {
+      expect(gradePrediction(`Reasoning.\n${line}\n`, "keep=6 level=2").passed, line).toBe(true);
+    }
   });
 
   it("fails on an earlier ANSWER line that a later one replaced", () => {
