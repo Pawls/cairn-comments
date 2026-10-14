@@ -84,7 +84,7 @@ export function runDirFor(spec: { workDir: string; harness: HarnessName; task: T
 export function legacyRunDirs(workDir: string): string[] {
   const runs = path.join(workDir, "runs");
   if (!existsSync(runs)) return [];
-  const legacyName = new RegExp(`^(${ARMS.join("|")})-\\d+$`);
+  const legacyName = new RegExp(String.raw`^(${ARMS.join("|")})-\d+$`);
   return readdirSync(runs, { recursive: true, encoding: "utf8" })
     .filter((file) => path.basename(file) === "result.json" && legacyName.test(path.basename(path.dirname(file))))
     .map((file) => path.join(runs, path.dirname(file)));
