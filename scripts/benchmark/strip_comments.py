@@ -18,8 +18,12 @@ import tokenize
 from pathlib import Path
 
 # Shebang and encoding lines are checked by position in strip(); these are the rest.
-# "type:" covers both "type: ignore" and PEP 484 type comments.
-FUNCTIONAL = re.compile(r"#\s*(noqa\b|type:|pragma\b|fmt:|pylint:|pyright:|mypy:|isort:|ruff:|nosec\b)")
+# "type:" covers both "type: ignore" and PEP 484 type comments; flake8 and ruff read noqa in
+# any case, mypy reads "type:" only in lower case.
+FUNCTIONAL = re.compile(
+    r"#\s*((?i:noqa)\b|type:|pragma\b|fmt:|pylint:|pyright:|pyre-|mypy:|isort:|ruff:|yapf:|autopep8:|nosec\b)"
+)
+BOM = "﻿"
 ENCODING_LINE = re.compile(r"#.*?coding[:=]\s*[-\w.]+")
 SKIPPED_DIRS = {".git", ".venv", "node_modules", "__pycache__"}
 
@@ -34,6 +38,9 @@ def is_functional(text, row):
 
 def strip(source):
     """Returns `source` without its removable comments; raises if the tree would change."""
+    if source.startswith(BOM):
+        # ast.parse refuses a BOM in a str; a file read as UTF-8 keeps it.
+        return BOM + strip(source[len(BOM):])
     # Lines with their terminators, split where tokenize splits: at "\r\n", "\n", or a lone "\r".
     lines = io.StringIO(source, newline="").readlines()
     comments = [
