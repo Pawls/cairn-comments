@@ -53,6 +53,12 @@ platform (WSL Ubuntu so far). The integration suites already run each scenario u
   too (design.md § Packaging).
 - **Detector changes move measured numbers.** `scan.corpus.test.ts` pins each detector's
   score and enabled flag; update the table in design.md § Scan detectors with them.
+- **A benchmark tests the product's claim, and a failed gate stops it.** Before building
+  tasks, write the claim and the condition that produces it (Cairn's: an agent lost deep in a
+  long session, needing to find code or to understand a complicated function) and show the
+  tasks reproduce that condition. A fresh agent on a small fix does not. Calibration must
+  show the control arm can fail; if it passes at ceiling, redesign the tasks and do not run
+  the matrix (docs/plans/benchmark-deep-context.md § What this benchmark must be able to detect).
 
 ## Known noise
 
