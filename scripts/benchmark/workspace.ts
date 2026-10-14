@@ -246,9 +246,12 @@ export function runSetup(commands: string[], cwd: string, env: Record<string, st
   }
 }
 
+/** What `checkoutArm` makes in a run's directory: the agent's worktree and the clone that holds its git data. */
+export const CHECKOUTS = ["agent", "repo"];
+
 /** Removes the checkouts, which hold dependencies, and keeps the run's logs. */
 export function removeCheckouts(runDir: string): void {
-  for (const dir of ["agent", "repo"]) {
+  for (const dir of CHECKOUTS) {
     rmSync(path.join(runDir, dir), { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
   }
 }

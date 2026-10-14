@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -9,7 +8,7 @@ import { runDirFor, runOne, type RunSpec } from "../runner.ts";
 import { startStandIn, type StandIn } from "../standin.ts";
 import type { QuestionTask } from "../tasks.ts";
 import { warmupDirFor, type WarmupChain } from "../warmup.ts";
-import { isolatedEnv } from "../workspace.ts";
+import { git, isolatedEnv } from "../workspace.ts";
 
 const FAKE_PI = path.join(path.dirname(fileURLToPath(import.meta.url)), "fake-pi.ts");
 
@@ -21,12 +20,11 @@ function makeRepo(root: string): { repo: string; start: string } {
   const repo = path.join(root, "source");
   mkdirSync(repo);
   const env = isolatedEnv(path.join(root, "git-state"), path.join(root, "cli-home"));
-  const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, env, encoding: "utf8" }).trim();
-  git("init", "--quiet");
+  git(repo, env, "init", "--quiet");
   writeFileSync(path.join(repo, "a.txt"), "a\n");
-  git("add", "a.txt");
-  git("commit", "--quiet", "-m", "start");
-  return { repo, start: git("rev-parse", "HEAD") };
+  git(repo, env, "add", "a.txt");
+  git(repo, env, "commit", "--quiet", "-m", "start");
+  return { repo, start: git(repo, env, "rev-parse", "HEAD").trim() };
 }
 
 beforeEach(async () => {

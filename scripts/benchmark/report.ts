@@ -1,4 +1,5 @@
 /** The benchmark report: Markdown tables from every run's `result.json`. */
+import { contextOf } from "./metrics.ts";
 import { depthOf, type RunResult } from "./runner.ts";
 import { bootstrapMedianChange, pairedDifferences, spreadOf } from "./stats.ts";
 import type { Usage } from "./responses.ts";
@@ -17,7 +18,7 @@ const percent = (n: number) => `${n >= 0 ? "+" : ""}${(n * 100).toFixed(1)}%`;
 
 const INPUT: Measure = {
   label: "Input tokens, all",
-  value: (r) => r.metrics.tokens.input + r.metrics.tokens.cacheRead + r.metrics.tokens.cacheWrite,
+  value: (r) => contextOf(r.metrics.tokens),
   format: whole,
 };
 const COST: Measure = { label: "Cost ($)", value: (r) => r.harnessTotals?.costUsd ?? Number.NaN, format: dollars };

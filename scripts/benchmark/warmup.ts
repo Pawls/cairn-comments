@@ -12,7 +12,7 @@ import { contextOf, providerFailed } from "./metrics.ts";
 import type { PreparedTask } from "./prepare.ts";
 import { startRecordingProxy } from "./proxy.ts";
 import type { RepoSpec } from "./tasks.ts";
-import { isolatedEnv, neutralName, setUpCheckout, type Arm } from "./workspace.ts";
+import { CHECKOUTS, isolatedEnv, neutralName, removeCheckouts, setUpCheckout, type Arm } from "./workspace.ts";
 
 /** Prompts run in one session before a probe forks from its end. */
 export interface WarmupChain {
@@ -69,20 +69,24 @@ export interface WarmupSpec extends AgentOptions {
   prepared?: PreparedTask;
 }
 
-/** The checkouts a probe can change: the agent's worktree and the clone that holds its git data. */
-const CHECKOUTS = ["agent", "repo"];
-
 /** Where a copy of `CHECKOUTS` keeps them as the chain left them. */
 const SNAPSHOT = "snapshot";
 
 /** Written last, so its presence means the warm-up finished. */
 const RECORD = "warmup.json";
 
+export interface ReadyWarmup {
+  dir: string;
+  warmup: Warmup;
+  /** The chain ran just now, so its checkouts are still as it left them. */
+  ranNow: boolean;
+}
+
 /** The warm-up the spec names, run now unless an earlier batch finished it. */
-export async function ensureWarmup(spec: WarmupSpec): Promise<{ dir: string; warmup: Warmup }> {
+export async function ensureWarmup(spec: WarmupSpec): Promise<ReadyWarmup> {
   const dir = warmupDirFor(spec.workDir, spec.harness, spec.chain.id, spec.arm);
   const record = path.join(dir, RECORD);
-  if (existsSync(record)) return { dir, warmup: JSON.parse(readFileSync(record, "utf8")) as Warmup };
+  if (existsSync(record)) return { dir, warmup: JSON.parse(readFileSync(record, "utf8")) as Warmup, ranNow: false };
 
   rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
   mkdirSync(dir, { recursive: true });
@@ -107,22 +111,23 @@ export async function ensureWarmup(spec: WarmupSpec): Promise<{ dir: string; war
     sessionId: session.sessionId,
     exits: session.exits,
     wallMs: Date.now() - startedAt,
-    finalContext: last ? contextOf(last) : 0,
+    finalContext: last ? contextOf(last.usage) : 0,
     commentBytes: checkout.commentBytes,
   };
   for (const name of CHECKOUTS) cpSync(path.join(dir, name), path.join(dir, SNAPSHOT, name), { recursive: true });
   writeFileSync(record, JSON.stringify(warmup, null, 2));
-  return { dir, warmup };
+  return { dir, warmup, ranNow: true };
 }
 
 /**
- * Puts the warm-up's checkouts back as the chain left them, undoing an earlier probe, and
- * starts `logFile` with the chain's calls so one log holds the whole session.
+ * Readies the warm-up's checkouts for a probe, putting them back as the chain left them
+ * unless the chain ran just now, and starts `logFile` with the chain's calls so one log
+ * holds the whole session.
  */
-export function restoreWarmup(dir: string, logFile: string): void {
-  for (const name of CHECKOUTS) {
-    rmSync(path.join(dir, name), { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
-    cpSync(path.join(dir, SNAPSHOT, name), path.join(dir, name), { recursive: true });
+export function restoreWarmup(ready: ReadyWarmup, logFile: string): void {
+  if (!ready.ranNow) {
+    removeCheckouts(ready.dir);
+    for (const name of CHECKOUTS) cpSync(path.join(ready.dir, SNAPSHOT, name), path.join(ready.dir, name), { recursive: true });
   }
-  copyFileSync(path.join(dir, "calls.jsonl"), logFile);
+  copyFileSync(path.join(ready.dir, "calls.jsonl"), logFile);
 }

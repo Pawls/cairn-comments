@@ -19,9 +19,9 @@ export interface LoggedCall {
   response?: ModelResponse;
 }
 
-/** Every token of context a call's model read: uncached, read from cache, and written to it. */
-export function contextOf(response: ModelResponse): number {
-  return response.usage.input + response.usage.cacheRead + response.usage.cacheWrite;
+/** Every input token: uncached, read from cache, and written to it. For one call, its context. */
+export function contextOf(usage: Usage): number {
+  return usage.input + usage.cacheRead + usage.cacheWrite;
 }
 
 /** Each harness's file-reading tool and the argument that names the file. */
@@ -76,7 +76,7 @@ export function runMetrics(log: LoggedCall[], options: { model: string; agentDir
   }
   return {
     calls: responses.length,
-    firstCallContext: responses[0] ? contextOf(responses[0]) : 0,
+    firstCallContext: responses[0] ? contextOf(responses[0].usage) : 0,
     turns: ownModel.length,
     tokens,
     toolCalls,

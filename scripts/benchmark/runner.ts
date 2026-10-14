@@ -134,8 +134,9 @@ async function deepStart(spec: RunSpec, warmupSpec: NonNullable<RunSpec["warmup"
   if (chain.repo !== spec.task.repo || chain.start !== spec.task.start) {
     throw new Error(`task ${spec.task.id} does not start where warm-up ${chain.id} does (${chain.repo} at ${chain.start})`);
   }
-  const { dir, warmup } = await ensureWarmup({ ...spec, chain, prepared });
-  restoreWarmup(dir, logFile);
+  const ready = await ensureWarmup({ ...spec, chain, prepared });
+  restoreWarmup(ready, logFile);
+  const { dir, warmup } = ready;
   return {
     agentDir: path.join(dir, "agent"),
     homeDir: dir,
