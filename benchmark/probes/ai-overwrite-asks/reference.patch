@@ -1,0 +1,36 @@
+diff --git a/clearguard.py b/clearguard.py
+index cb824f1c..ad096508 100644
+--- a/clearguard.py
++++ b/clearguard.py
+@@ -20,11 +20,9 @@
+   (~1,000 cells) must be exceeded. Clearing any box removes ~100% of that box by definition, so
+   the fraction alone would fire on every doorway; the floor is what suppresses that.
+ 
+-"Destroyed" means *made air*: ``fill_box(block="air")`` and ``fill_biome(clear=True)``, which
+-empties the box before it generates. Overwriting a build with stone is not counted -- this is a
+-gate on wholesale clearing, and the strike criterion (a gate that fires more than about once a
+-session trains the user to click Allow without reading) buys more from the narrow reading than
+-the broad one.
++"Destroyed" means *made air or overwritten*: ``fill_box`` with any block (overwriting a build
++with stone loses it as surely as clearing it) and ``fill_biome(clear=True)``, which empties the
++box before it generates.
+ 
+ ``run_script`` is deliberately NOT gated -- see the plan's G1 for why moving the check into the
+ GameKit facade was chosen and then reversed the same day (a script stopped part-way through
+@@ -175,14 +173,12 @@ def _hollow_interior(box: Box, floor: bool, ceiling: bool) -> Box | None:
+ 
+ 
+ def destroyed_by(name: str, args: dict, chunks: dict) -> int:
+-    """How many placed cells this call would turn to air, counted against the world as it is
+-    now. Zero for every call that is not one of :data:`CLEAR_TOOLS` clearing something."""
++    """How many placed cells this call would turn to air or overwrite, counted against the world
++    as it is now. Zero for every call that is not one of :data:`CLEAR_TOOLS` clearing something."""
+     box = args_box(args)
+     if box is None:
+         return 0
+     if name == "fill_box":
+-        if str(args.get("block") or "air").strip().lower() not in ("", "air"):
+-            return 0  # a solid fill overwrites; this gate is about clearing
+         if not args.get("hollow"):
+             return count_solid(chunks, box)
+         inner = _hollow_interior(

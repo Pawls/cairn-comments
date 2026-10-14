@@ -18,6 +18,7 @@ Finished plans, v1 included, are in `docs/plans/archived/`.
 | `npm run lint` | eslint over the whole workspace. |
 | `npm run bench` | 2,000-file checkout benchmark (design.md § Filter process). Slow; run only when touching the filter path. |
 | `npm run benchmark -- <annotate\|run\|status\|report> --work <dir> ...` | Paired agent runs with and without AI comments ([docs/benchmark.md](docs/benchmark.md)). Takes hours and holds the GPUs (local model) or spends API money; never run it unasked. Overnight batches follow [docs/plans/archived/benchmark-runs.md](docs/plans/archived/benchmark-runs.md). |
+| `node scripts/benchmark/verify-probes.ts --work <dir> [--source <clone>] [--only <probe,...>]` | Checks the deep-context probes ([benchmark/deep-tasks.json](benchmark/deep-tasks.json)) in both arms: each prediction's script prints its expected answer, and each change probe fails at its start and passes on its reference. Prepares the start commit and installs both checkouts' virtualenvs, so it takes a few minutes; it runs no model. Run it after changing a probe. |
 | `npm run replay -- --repo <path>` | Comment placement replayed over a repository's history (design.md § Anchoring, "Measured"). Minutes per repository; run when changing placement. |
 
 A change is signed off on Windows (`autocrlf=true` scenarios included) and on an LF
@@ -53,6 +54,12 @@ platform (WSL Ubuntu so far). The integration suites already run each scenario u
   too (design.md § Packaging).
 - **Detector changes move measured numbers.** `scan.corpus.test.ts` pins each detector's
   score and enabled flag; update the table in design.md § Scan detectors with them.
+- **A benchmark tests the product's claim, and a failed gate stops it.** Before building
+  tasks, write the claim and the condition that produces it (Cairn's: an agent lost deep in a
+  long session, needing to find code or to understand a complicated function) and show the
+  tasks reproduce that condition. A fresh agent on a small fix does not. Calibration must
+  show the control arm can fail; if it passes at ceiling, redesign the tasks and do not run
+  the matrix (docs/plans/benchmark-deep-context.md § What this benchmark must be able to detect).
 
 ## Known noise
 
