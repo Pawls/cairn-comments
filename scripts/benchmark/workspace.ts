@@ -66,7 +66,7 @@ export function isolatedEnv(stateDir: string, cliHome: string): Record<string, s
 }
 
 function git(cwd: string, env: Record<string, string>, ...args: string[]): string {
-  return execFileSync("git", args, { cwd, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  return execFileSync("git", args, { cwd, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); // NOSONAR: git comes from PATH, as for any tool that drives git
 }
 
 function cairn(cwd: string, env: Record<string, string>, ...args: string[]): string {
@@ -86,6 +86,7 @@ function hasCommit(repo: string, env: Record<string, string>, sha: string): bool
 /**
  * A bare mirror of `spec.url` under `workDir` holding every commit in `commits`. It is
  * fetched only when one is missing, so shards started together do not fetch into it at once.
+ * The fetch never prunes: the prepared branches (prepare.ts) exist only in the mirror.
  */
 export function ensureMirror(
   workDir: string,
@@ -99,7 +100,7 @@ export function ensureMirror(
     mkdirSync(path.dirname(mirror), { recursive: true });
     git(workDir, env, "clone", "--mirror", spec.url, mirror);
   } else if (!commits.every((sha) => hasCommit(mirror, env, sha))) {
-    git(mirror, env, "fetch", "--prune", "origin");
+    git(mirror, env, "fetch", "origin");
   }
   return mirror;
 }
@@ -129,9 +130,16 @@ export function checkoutArm(options: CheckoutOptions): string {
   const agent = path.join(options.runDir, "agent");
   if (options.prepared) {
     // One branch, no remote: the original commits and the solution are not in the clone.
+    // A clone by local path copies every object and follows every tag; --no-local fetches
+    // only what the branch reaches.
     const branch = preparedBranch(options.prepared.taskId, options.arm);
-    git(options.runDir, options.env, "clone", "--quiet", "--no-checkout", "--single-branch", "--branch", branch, options.mirror, repo);
+    const cloneArgs = ["clone", "--quiet", "--no-local", "--no-checkout", "--single-branch", "--branch", branch];
+    git(options.runDir, options.env, ...cloneArgs, options.mirror, repo);
     git(repo, options.env, "remote", "remove", "origin");
+    // The cloned branch's name says which arm this is; leave only the agent's `bench`.
+    const head = git(repo, options.env, "rev-parse", "HEAD").trim();
+    git(repo, options.env, "update-ref", "--no-deref", "HEAD", head);
+    git(repo, options.env, "branch", "--quiet", "--delete", "--force", branch);
     git(repo, options.env, "worktree", "add", "--quiet", "-b", "bench", agent);
     return agent;
   }

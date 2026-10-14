@@ -7,7 +7,7 @@ import { gradeAnswer, providerFailed, runMetrics, type LoggedCall, type RunMetri
 import type { PreparedTask } from "./prepare.ts";
 import { startRecordingProxy } from "./proxy.ts";
 import { expandCommand, type EditTask, type RepoSpec, type Task } from "./tasks.ts";
-import { checkoutArm, commentBytes, isolatedEnv, removeCheckouts, runSetup, type Arm } from "./workspace.ts";
+import { checkoutArm, commentBytes, git, isolatedEnv, removeCheckouts, runSetup, type Arm } from "./workspace.ts";
 
 /** What starts an agent, whatever it is asked. */
 export interface AgentOptions {
@@ -81,7 +81,7 @@ export interface Exit {
 
 /** Ends `pid` and every process it started; a harness runs tools as child processes. */
 function killTree(pid: number): void {
-  if (process.platform === "win32") spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"]);
+  if (process.platform === "win32") spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"]); // NOSONAR: taskkill is a Windows system tool on PATH
   else process.kill(-pid, "SIGKILL");
 }
 
@@ -131,7 +131,7 @@ export async function runAgent(
 /** Puts the solution's tests, read from the mirror, over the agent's work. */
 function placeSolutionTests(task: EditTask, mirror: string, agentDir: string, env: Record<string, string>): void {
   for (const file of task.testFiles) {
-    const content = execFileSync("git", ["--git-dir", mirror, "show", `${task.solution}:${file}`], { env, maxBuffer: 64 * 1024 * 1024 });
+    const content = execFileSync("git", ["--git-dir", mirror, "show", `${task.solution}:${file}`], { env, maxBuffer: 64 * 1024 * 1024 }); // NOSONAR: git comes from PATH, as for any tool that drives git
     mkdirSync(path.dirname(path.join(agentDir, file)), { recursive: true });
     writeFileSync(path.join(agentDir, file), content);
   }
@@ -139,7 +139,10 @@ function placeSolutionTests(task: EditTask, mirror: string, agentDir: string, en
 
 /** Puts the solution's tests over the agent's work and runs the task's test command. */
 function gradeEdit(task: EditTask, spec: RunSpec, agentDir: string, env: Record<string, string>, runDir: string): Grade {
-  placeSolutionTests(task, spec.mirror, agentDir, env);
+  // A Cairn checkout has the solution and checks it out through its filters, as the recorded
+  // rounds did; a prepared clone lacks it.
+  if (spec.prepared) placeSolutionTests(task, spec.mirror, agentDir, env);
+  else git(agentDir, env, "checkout", task.solution, "--", ...task.testFiles);
   const test = spawnSync(expandCommand(task.testCommand), {
     cwd: agentDir,
     env,
