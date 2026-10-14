@@ -22,7 +22,7 @@ describe.skipIf(!python)("prepareTask", () => {
     return execFileSync("git", args, { cwd, env, encoding: "utf8" });
   }
 
-  function lines(output: string): string[] {
+  function sortedLines(output: string): string[] {
     return output.split("\n").filter(Boolean).sort();
   }
 
@@ -85,8 +85,8 @@ describe.skipIf(!python)("prepareTask", () => {
   it("copies only the arm's own objects into the clone, so no unreachable original is left to read", () => {
     const agent = checkout("none");
 
-    const stored = lines(git(agent, "cat-file", "--batch-all-objects", "--batch-check=%(objectname)"));
-    const reachable = lines(git(agent, "rev-list", "--objects", "--all").replaceAll(/ .*/g, ""));
+    const stored = sortedLines(git(agent, "cat-file", "--batch-all-objects", "--batch-check=%(objectname)"));
+    const reachable = sortedLines(git(agent, "rev-list", "--objects", "--all").replaceAll(/ .*/g, ""));
     expect(stored).toEqual(reachable);
   });
 

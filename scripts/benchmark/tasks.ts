@@ -14,8 +14,8 @@ export interface RepoSpec {
    */
   treatment?: "own-comments";
   /**
-   * Own-comments only: the lines of the AGENTS.md both arms get, since the repository's own
-   * instructions are removed. Say how to run a test file.
+   * Own-comments only: the lines of the AGENTS.md both arms get in place of the repository's
+   * removed instructions, such as how to run a test file.
    */
   agentNotes?: string[];
 }
