@@ -21,6 +21,8 @@ export interface WarmupChain {
   repo: string;
   /** The commit the chain starts from; a probe forked from it must start there too. */
   start: string;
+  /** The source files the chain reads or edits; a probe's modules must not overlap them. */
+  modules?: string[];
   prompts: string[];
 }
 

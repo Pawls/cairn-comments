@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { harnessTotals, launchFor, type LaunchOptions, type SessionStart } from "../harnesses.ts";
+import { forkTotals, harnessTotals, launchFor, type LaunchOptions, type SessionStart } from "../harnesses.ts";
 
 const jsonl = (events: object[]) => events.map((e) => JSON.stringify(e)).join("\n") + "\n";
 
@@ -123,6 +123,36 @@ describe("harnessTotals", () => {
 
     expect(totals?.tokens).toEqual({ input: 7, output: 10, cacheRead: 14, cacheWrite: 2 });
     expect(totals?.costUsd).toBeCloseTo(0.03);
+  });
+
+  it("gives a Claude Code fork its own spend: the session's totals less those at the fork", () => {
+    const result = (input: number, cost: number) =>
+      jsonl([
+        {
+          type: "result",
+          total_cost_usd: cost,
+          modelUsage: { m: { inputTokens: input, outputTokens: input / 1000, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 } },
+        },
+      ]);
+
+    const totals = forkTotals("claude", result(69_000, 0.4), result(52_000, 0.3));
+
+    expect(totals?.tokens).toEqual({ input: 17_000, output: 17, cacheRead: 0, cacheWrite: 0 });
+    expect(totals?.costUsd).toBeCloseTo(0.1);
+  });
+
+  it("knows no Claude Code fork's spend when the session's totals at the fork are missing", () => {
+    const fork = jsonl([{ type: "result", total_cost_usd: 0.4, modelUsage: {} }]);
+
+    expect(forkTotals("claude", fork, "")).toBeUndefined();
+  });
+
+  it("takes a pi fork's totals as they are, since pi counts each process alone", () => {
+    const stdout = jsonl([
+      { type: "message_end", message: { role: "assistant", usage: { input: 3, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } } } },
+    ]);
+
+    expect(forkTotals("pi", stdout, stdout)).toEqual(harnessTotals("pi", stdout));
   });
 
   it("skips lines that are not JSON", () => {
