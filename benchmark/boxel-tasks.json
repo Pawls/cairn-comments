@@ -1,0 +1,144 @@
+{
+  "repos": {
+    "boxel": {
+      "url": "https://github.com/Pawls/BoxelBuilder.git",
+      "base": "546c3b584e41d865f1c2ff7ac1940f62ae1409a3",
+      "setup": [
+        "uv venv .venv --quiet --python 3.13",
+        "uv pip install --quiet --python {venv-python} -e .[dev]"
+      ],
+      "treatment": "own-comments"
+    }
+  },
+  "tasks": [
+    {
+      "id": "spaced-variable-source",
+      "repo": "boxel",
+      "kind": "fix",
+      "start": "9c987760f0f949f807d10a1607eaec8e7c363b06",
+      "solution": "2e457c4c6f2719e58e105e77284991a8de5a06f4",
+      "testFiles": [
+        "tests/test_rpg_database.py"
+      ],
+      "testCommand": "{venv-python} -m pytest -q -n0 -p no:cacheprovider tests/test_rpg_database.py",
+      "prompt": "In the event editor, a Set Variable command typed as `gold = $other loot` (copy from a variable whose name has a space) ends up copying from a variable called `other`: the last word is dropped. Variable conditions do the same: `shards == $courage bonus` compares against `courage`. Everything after the `$` up to the end of the line is the variable's name, and a half-typed `$ other` (space after the dollar sign) should still read the words after it. Names that already contain spaces before the operator work today. Please fix it; the repository has headless tests for the event editing syntax."
+    },
+    {
+      "id": "bad-block-row-half-loads",
+      "repo": "boxel",
+      "kind": "fix",
+      "start": "008231bca600b9f26f126412078b02ef358ae938",
+      "solution": "77cd077378c2323ce28feaef8947b6ac2dfd9b87",
+      "testFiles": [
+        "tests/test_worldio.py"
+      ],
+      "testCommand": "{venv-python} -m pytest -q -n0 -p no:cacheprovider tests/test_worldio.py",
+      "prompt": "If I open a hand-edited world file whose block list has one malformed row (a position with only two numbers, a non-numeric coordinate or id, a row that is not a pair, or a block list that is a string), the load fails with an exception, but the map I had open before is left half erased: it was cleared and the valid rows ahead of the bad one are already placed. A bad file must raise ValueError before the open world is touched, so the previous map is unchanged. It must not start rejecting any file that loads today (a position with extra entries, or a three-character string position, still loads as before). The bare-list legacy form of the block data has the same contract. Please fix it; there are headless tests for world file loading."
+    },
+    {
+      "id": "bad-command-resets-database",
+      "repo": "boxel",
+      "kind": "fix",
+      "start": "c0a203a9c54685af9d7ff76313215725dd487a3f",
+      "solution": "447e01a64bcd548def3fb8a2cbe9b77c13ca3bfe",
+      "testFiles": [
+        "tests/test_rpg_database.py"
+      ],
+      "testCommand": "{venv-python} -m pytest -q -n0 -p no:cacheprovider tests/test_rpg_database.py",
+      "prompt": "A hand-edited database.json with one broken command inside a common event (a dict with no \"kind\") makes the whole database load come back empty: every item, event, behavior, effect and the player config is lost, and saving is then refused. One bad entry should cost only itself. Skip it, log a warning (for a command the message contains `skipping malformed command`, and for a non-dict entry in a section such as items it contains `skipping non-dict items entry`, using the section's name), and keep the rest of the file, in every section of the database, not only the commands. A file that cannot be parsed at all should still fall back as it does now. Please fix it; there are headless tests for the database."
+    },
+    {
+      "id": "ray-inside-event-box",
+      "repo": "boxel",
+      "kind": "fix",
+      "start": "dd4afac95742a64e137be4e8b06b4d7446a7015b",
+      "solution": "33cfde370c091212ac4111e4e6a7f1dd8ee40efd",
+      "testFiles": [
+        "tests/test_event_rect_once.py"
+      ],
+      "testCommand": "{venv-python} -m pytest -q -n0 -p no:cacheprovider tests/test_event_rect_once.py",
+      "prompt": "In the Logic Events tool I cannot pick an event whose footprint is one cell tall while the camera is standing inside that cell: the pick ray starts inside the event's box and nothing is selected. The ray-against-box test should report a hit at distance 0.0 when the ray's origin is inside the box (or on its near face pointing in), and still miss when the origin is on the far face pointing out. A hit at 0.0 should beat a farther box on the same ray in the caller's nearest-hit comparison. Please fix it; there are headless tests for the event footprint code."
+    },
+    {
+      "id": "spaced-effect-ids",
+      "repo": "boxel",
+      "kind": "fix",
+      "start": "546c3b584e41d865f1c2ff7ac1940f62ae1409a3",
+      "solution": "240ac41f3ea9b73e45a56ca827a7bf6fd9ef4b1c",
+      "testFiles": [
+        "tests/test_fx.py",
+        "tests/test_eventpanel.py"
+      ],
+      "testCommand": "{venv-python} -m pytest -q -n0 -p no:cacheprovider tests/test_fx.py tests/test_eventpanel.py",
+      "prompt": "The Database panel names new effects \"New Effect 1\" by default, but a Play Effect event command cannot target such an effect: while typing the effect's name into the command's line in the event editor, everything past the first word fails to parse and the command silently keeps its last good value. The effect id should run up to the first clause keyword (`at`, `npc`, `dir`, `scale`), so `New Effect 1 at 3 4 5 scale 2` and `Boss Main npc Cold Spirit dir facing` parse with the spaced id intact, and formatting a command and parsing it back gives the same command. A line that starts directly on a clause keyword has no id and should still be an error. Please fix it; there are headless tests for the effects syntax and the event panel."
+    },
+    {
+      "id": "undo-block-edits",
+      "repo": "boxel",
+      "kind": "question",
+      "start": "fcbcc06cb1c5b3fca9988d661552649394748fc8",
+      "prompt": "In the map editor, how is one Ctrl+Z step for block edits stored and replayed without copying the whole map, which functions of the world do that, and how many steps does the map's undo history keep? Answer from the code; do not change any files.",
+      "answerKey": [
+        "begin_edit",
+        "commit_edit",
+        "apply_block_delta",
+        "\\b200\\b"
+      ],
+      "answer": "World.begin_edit arms a journal that add_block/del_block write per-cell [old, new] texture pairs into; commit_edit returns that delta (dropping cells with no net change); apply_block_delta replays it forward (redo) or inverted (undo) through the normal mutators, so only the touched chunks update. The editor's _map_history is an UndoStack(limit=200). Non-block state (npcs, metadata, events, game_state) uses a small entity snapshot instead."
+    },
+    {
+      "id": "latest-save-slot",
+      "repo": "boxel",
+      "kind": "question",
+      "start": "fcbcc06cb1c5b3fca9988d661552649394748fc8",
+      "prompt": "On the game-over screen, 'load last save' picks a slot. Where on disk do the save slot files live relative to the worlds folder, and how is the newest slot chosen, including when two slots have the same timestamp and when they tie on everything else? Answer from the code; do not change any files.",
+      "answerKey": [
+        "saves",
+        "mtime|modification time|modified time|file time",
+        "lower|smallest|lowest"
+      ],
+      "answer": "saveload.latest_slot compares (saved_at, file mtime) per slot; slots live in a saves/ folder next to worlds/ as slot1.json..; the strictly greater key wins so a full tie keeps the lower slot number."
+    },
+    {
+      "id": "day-night-phases",
+      "repo": "boxel",
+      "kind": "question",
+      "start": "fcbcc06cb1c5b3fca9988d661552649394748fc8",
+      "prompt": "At which in-game hours do dawn, day, dusk and night begin, where are those values configured, and which function should gameplay code call to ask what phase it is? Answer from the code; do not change any files.",
+      "answerKey": [
+        "tuning\\.json",
+        "phase_of",
+        "\\b5\\b",
+        "\\b18\\b",
+        "\\b21\\b"
+      ],
+      "answer": "data/tuning.json section day_night: dawn_hour 5, day_hour 6, dusk_hour 18, night_hour 21; daynight.phase_of(t) returns dawn/day/dusk/night with night wrapping across midnight."
+    },
+    {
+      "id": "carry-refusals",
+      "repo": "boxel",
+      "kind": "question",
+      "start": "fcbcc06cb1c5b3fca9988d661552649394748fc8",
+      "prompt": "In the endless walkabout, which kinds of blocks can the player not pick up by hand, and which kind is deliberately allowed but has a side effect on water? Answer from the code; do not change any files.",
+      "answerKey": [
+        "liquid|water",
+        "standing tree|tree that is (still )?(standing|rooted)|rooted tree|tree is still",
+        "falling|toppling",
+        "\\bice\\b"
+      ],
+      "answer": "carry.can_pick_up refuses out-of-reach, liquid (water), a still-rooted standing tree, a tree currently falling, and already holding; ice is allowed but taking it breaches the lake so the carve re-solve is owed."
+    },
+    {
+      "id": "behavior-transitions",
+      "repo": "boxel",
+      "kind": "question",
+      "start": "fcbcc06cb1c5b3fca9988d661552649394748fc8",
+      "prompt": "In an authored NPC behavior state machine, what happens when two transitions of the current state both hold on the same frame, and what does a time_between transition do on a map that has no day/night clock? Answer from the code; do not change any files.",
+      "answerKey": [
+        "first",
+        "never|does not hold|doesn.t hold|not hold|false"
+      ],
+      "answer": "npc_fsm._check_transitions returns the first transition in list order whose condition holds; time_between never holds when the context has no time_of_day."
+    }
+  ]
+}
