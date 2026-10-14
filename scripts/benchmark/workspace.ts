@@ -3,9 +3,11 @@
  * config, ignore file, and CLI home (see `isolatedEnv`), never the machine owner's.
  */
 import { execFileSync, execSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { HarnessName } from "./harnesses.ts";
 import { preparedBranch, type PreparedTask } from "./prepare.ts";
 import { expandCommand, type RepoSpec } from "./tasks.ts";
 
@@ -35,6 +37,14 @@ export function refuseInheritedInstructions(workDir: string): void {
     if (parent === dir) return;
     dir = parent;
   }
+}
+
+/**
+ * A directory name that tells runs apart without saying which arm each is in. Agents see the
+ * path they work in, and a name like `none-3` would tell them their arm.
+ */
+export function neutralName(...parts: Array<string | number | undefined>): string {
+  return createHash("sha256").update(JSON.stringify(parts)).digest("hex").slice(0, 12);
 }
 
 /** The process environment without git variables, with git and the CLI pointed into `stateDir`. */
@@ -156,6 +166,47 @@ export function checkoutArm(options: CheckoutOptions): string {
   return agent;
 }
 
+export interface SetUpOptions {
+  harness: HarnessName;
+  mirror: string;
+  /** The directory that gets `repo` and `agent`. */
+  dir: string;
+  start: string;
+  arm: Arm;
+  /** Frozen sidecars for the comments arm. */
+  comments: string;
+  prepared?: PreparedTask;
+  setup: string[];
+  env: Record<string, string>;
+}
+
+/**
+ * The agent's checkout of `start` in `dir`, with the repository's setup run, and the
+ * bytes its comments add to each file.
+ */
+export function setUpCheckout(options: SetUpOptions): { agentDir: string; commentBytes: Record<string, number> } {
+  const { dir, env, prepared } = options;
+  const agentDir = checkoutArm({
+    mirror: options.mirror,
+    runDir: dir,
+    start: options.start,
+    arm: options.arm,
+    comments: options.comments,
+    // Cairn's Claude Code hooks matter only where Cairn places the comments.
+    hooks: options.harness === "claude" && !prepared ? ["claude-code"] : [],
+    env,
+    prepared,
+  });
+  runSetup(options.setup, agentDir, env, path.join(dir, "setup.log"));
+  return { agentDir, commentBytes: placedCommentBytes(options.arm, dir, env, prepared) };
+}
+
+/** The bytes the comments add to each file of the checkout in `dir`; none in the `none` arm. */
+export function placedCommentBytes(arm: Arm, dir: string, env: Record<string, string>, prepared?: PreparedTask): Record<string, number> {
+  if (arm !== "comments") return {};
+  return prepared?.commentBytes ?? commentBytes(dir, env);
+}
+
 /** Every file with a sidecar in `store`, as a repository-relative path with `/` separators. */
 function sidecarSources(store: string, prefix = ""): string[] {
   if (!existsSync(store)) return [];
@@ -200,9 +251,12 @@ export function runSetup(commands: string[], cwd: string, env: Record<string, st
   }
 }
 
+/** What `checkoutArm` makes in a run's directory: the agent's worktree and the clone that holds its git data. */
+export const CHECKOUTS = ["agent", "repo"];
+
 /** Removes the checkouts, which hold dependencies, and keeps the run's logs. */
 export function removeCheckouts(runDir: string): void {
-  for (const dir of ["agent", "repo"]) {
+  for (const dir of CHECKOUTS) {
     rmSync(path.join(runDir, dir), { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
   }
 }

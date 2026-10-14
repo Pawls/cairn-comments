@@ -1,5 +1,10 @@
-/** The task file: repositories, their base commits, and the tasks run against them. */
-import { readFileSync } from "node:fs";
+/**
+ * The task files: repositories, their base commits, and the tasks run against them.
+ * `loadTasks` reads the one-prompt rounds; `loadDeepTasks` reads the deep-context probe set
+ * (docs/plans/benchmark-deep-context.md), whose probes run fresh or after a warm-up chain.
+ */
+import { execFileSync, spawnSync } from "node:child_process";
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 export interface RepoSpec {
@@ -62,4 +67,226 @@ export function loadTasks(file: string): TaskFile {
     if (!parsed.repos[task.repo]) throw new Error(`task ${task.id}: unknown repo ${task.repo}`);
   }
   return parsed;
+}
+
+/**
+ * A warm-up chain, run as one session to put a probe deep into a full context: ordinary
+ * work, one prompt after another. Stored as `<id>.json` without the id.
+ */
+export interface WarmupChain {
+  id: string;
+  repo: string;
+  /** Must be the probes' start: a probe forks from the chain's checkout. */
+  start: string;
+  /** Every source file the chain's prompts lead the agent to read or change. */
+  modules: string[];
+  prompts: string[];
+}
+
+interface ProbeBase {
+  id: string;
+  /** Finding the code it needs, or reading a complicated function correctly. */
+  use: "navigation" | "understanding";
+  /**
+   * Source files no warm-up chain may touch: where the answer lives, callers that lead
+   * straight to it, and what the hidden tests import.
+   */
+  modules: string[];
+  prompt: string;
+}
+
+/**
+ * "What does this function return for these inputs?", answered from reading alone: the
+ * harness must give the agent no shell, or it can run the function instead of reading it.
+ * `probes/<id>/compute.py` prints `expected` by running the function.
+ */
+export interface PredictProbe extends ProbeBase {
+  kind: "predict";
+  /** The text after `ANSWER:` on the final answer's last such line (see `gradePrediction`). */
+  expected: string;
+  /** Patterns for facts a full explanation states; scored beside the prediction, never alone. */
+  rubric?: string[];
+}
+
+/** "Which file and function decides this?", graded like a question task. */
+export interface LocateProbe extends ProbeBase {
+  kind: "locate";
+  answerKey: string[];
+}
+
+/**
+ * An edit graded by hidden tests. Each hidden test is `probes/<id>/<path>`, placed at
+ * `<path>` in the checkout before `testCommand` runs; `probes/<id>/reference.patch` is a
+ * solution against the comments arm (verify-probes.ts derives the stripped arm's).
+ */
+export interface ChangeProbe extends ProbeBase {
+  kind: "change";
+  hiddenTests: string[];
+  /**
+   * Existing test files put back to the arm's committed version before grading, so the
+   * agent's edits to them do not count.
+   */
+  keptTests?: string[];
+  /** A program and its arguments separated by spaces, run from the checkout's root with no shell. */
+  testCommand: string;
+  /** Patterns for facts the final answer states; scored beside the hidden tests, never alone. */
+  rubric?: string[];
+}
+
+export type Probe = PredictProbe | LocateProbe | ChangeProbe;
+
+/** The prepared-commit id the probe set's start is stored under (`prepared/deep/<arm>`). */
+export const DEEP_PREPARED_ID = "deep";
+
+export interface DeepTaskFile {
+  repos: Record<string, RepoSpec>;
+  repo: string;
+  /** Every warm-up and probe starts here, so one deep session serves all the probes. */
+  start: string;
+  warmups: WarmupChain[];
+  probes: Probe[];
+}
+
+/** A file belonging to a probe: `<task file's folder>/probes/<id>/<name>`. */
+export function probeFile(taskFile: string, probeId: string, name: string): string {
+  return path.join(path.dirname(taskFile), "probes", probeId, name);
+}
+
+function filesOf(probe: Probe): string[] {
+  if (probe.kind === "predict") return ["compute.py"];
+  if (probe.kind === "change") return [...probe.hiddenTests, "reference.patch"];
+  return [];
+}
+
+function checkProbes(taskFile: string, probes: Probe[], warmups: WarmupChain[]): void {
+  const ids = new Set<string>();
+  for (const probe of probes) {
+    if (ids.has(probe.id)) throw new Error(`duplicate probe id ${probe.id}`);
+    ids.add(probe.id);
+    for (const module of probe.modules) {
+      const chain = warmups.find((warmup) => warmup.modules.includes(module));
+      if (chain) throw new Error(`probe ${probe.id}: ${module} is also in warm-up chain ${chain.id}`);
+    }
+    for (const name of filesOf(probe)) {
+      const file = probeFile(taskFile, probe.id, name);
+      if (!existsSync(file)) throw new Error(`probe ${probe.id}: no ${file}`);
+    }
+  }
+}
+
+function loadChain(taskFile: string, chainFile: string): WarmupChain {
+  const folder = path.resolve(path.dirname(taskFile));
+  const relative = path.relative(folder, path.resolve(folder, chainFile));
+  if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`warm-up chain ${chainFile} is outside ${folder}`);
+  const text = readFileSync(path.join(folder, relative), "utf8");
+  const chain = JSON.parse(text) as Omit<WarmupChain, "id">;
+  return { id: path.basename(chainFile, ".json"), ...chain };
+}
+
+export function loadDeepTasks(file: string): DeepTaskFile {
+  // The task file is the operator's own --tasks choice on a local benchmark script.
+  const text = readFileSync(file, "utf8"); // NOSONAR
+  const parsed = JSON.parse(text) as Omit<DeepTaskFile, "warmups"> & { warmups: string[] };
+  if (!parsed.repos[parsed.repo]) throw new Error(`unknown repo ${parsed.repo}`);
+  const warmups = parsed.warmups.map((chainFile) => loadChain(file, chainFile));
+  for (const chain of warmups) {
+    if (chain.repo !== parsed.repo || chain.start !== parsed.start) {
+      throw new Error(`warm-up chain ${chain.id} starts at ${chain.repo}@${chain.start}, not ${parsed.repo}@${parsed.start}`);
+    }
+  }
+  checkProbes(file, parsed.probes, warmups);
+  return { ...parsed, warmups };
+}
+
+/** The same limit as runner.ts's edit grading, so a probe that hangs fails here as it would there. */
+const TEST_TIMEOUT_MS = 20 * 60 * 1000;
+export const OUTPUT_LIMIT = 64 * 1024 * 1024;
+
+export interface ChangeGrade {
+  passed: boolean;
+  testExit: number | null;
+  output: string;
+}
+
+/**
+ * Grades a change probe in `checkout`: copies each named hidden test into place (never a
+ * whole folder, so local bytecode stays behind), puts `keptTests` back to `committed`, and
+ * runs `testCommand`. `committed` is the arm's prepared commit when HEAD has moved past it.
+ */
+export function gradeChangeProbe(
+  taskFile: string,
+  probe: ChangeProbe,
+  checkout: string,
+  env: Record<string, string>,
+  committed = "HEAD",
+): ChangeGrade {
+  for (const test of probe.hiddenTests) {
+    const destination = path.join(checkout, test);
+    mkdirSync(path.dirname(destination), { recursive: true });
+    copyFileSync(probeFile(taskFile, probe.id, test), destination);
+  }
+  if (probe.keptTests?.length) {
+    execFileSync("git", ["checkout", committed, "--", ...probe.keptTests], { cwd: checkout, env, stdio: "ignore" }); // NOSONAR: git comes from PATH, as for any tool that drives git
+  }
+  const [program, args] = commandArgs(probe.testCommand, checkout);
+  // No shell, so the timeout stops the test process itself rather than a shell around it.
+  const run = spawnSync(program, args, { cwd: checkout, env, encoding: "utf8", timeout: TEST_TIMEOUT_MS, maxBuffer: OUTPUT_LIMIT });
+  return { passed: run.status === 0, testExit: run.status, output: `${run.stdout}\n${run.stderr}` };
+}
+
+/** The checkout's virtualenv interpreter, as an absolute path. */
+export function venvPython(checkout: string): string {
+  return path.resolve(checkout, expandCommand("{venv-python}"));
+}
+
+/**
+ * A test command split into its program and arguments, with `{venv-python}` expanded and a
+ * relative program path resolved against `cwd`. Words are split on spaces, with no quoting.
+ */
+function commandArgs(command: string, cwd: string): [string, string[]] {
+  const [program = "", ...args] = expandCommand(command).split(" ").filter(Boolean);
+  const isPath = program.includes("/") || program.includes("\\");
+  return [isPath ? path.resolve(cwd, program) : program, args];
+}
+
+/** Markdown a model puts around an answer line: emphasis, code spans, quote markers. */
+const LINE_DECORATION = new Set(["*", "_", "`", ">"]);
+/** ...and around the answer's value; an underscore or sign inside it is part of the answer. */
+const VALUE_DECORATION = new Set(["*", "`"]);
+
+/** `text` without the whitespace and `decoration` characters at either end. */
+function trimDecoration(text: string, decoration: Set<string>): string {
+  const isEdge = (char: string) => decoration.has(char) || char.trim() === "";
+  let start = 0;
+  let end = text.length;
+  while (start < end && isEdge(text.charAt(start))) start += 1;
+  while (end > start && isEdge(text.charAt(end - 1))) end -= 1;
+  return text.slice(start, end);
+}
+
+/** The text after `ANSWER:` on one line, or undefined when the line is not an answer line. */
+function answerOn(line: string): string | undefined {
+  let plain = trimDecoration(line, LINE_DECORATION);
+  if (plain.startsWith("- ")) plain = trimDecoration(plain.slice(2), LINE_DECORATION); // a list item
+  if (!plain.toLowerCase().startsWith("answer:")) return undefined;
+  const value = trimDecoration(plain.slice("answer:".length), VALUE_DECORATION);
+  return trimDecoration(value.endsWith(".") ? value.slice(0, -1) : value, VALUE_DECORATION);
+}
+
+function normalized(text: string): string {
+  return text.trim().replaceAll(/\s+/g, " ").toLowerCase();
+}
+
+/**
+ * Exact match on the last `ANSWER:` line of the final answer, so a run that changes its
+ * mind is graded on where it ended. Spacing, case, markdown decoration and a closing period
+ * do not count.
+ */
+export function gradePrediction(finalText: string, expected: string): { passed: boolean; missing: string[] } {
+  const last = finalText
+    .split("\n")
+    .map((line) => answerOn(line))
+    .findLast((answer) => answer !== undefined);
+  const passed = last !== undefined && normalized(last) === normalized(expected);
+  return { passed, missing: passed ? [] : [`ANSWER: ${expected}`] };
 }

@@ -1,0 +1,49 @@
+diff --git a/npc_brain.py b/npc_brain.py
+index f5ecccde..f75702a3 100644
+--- a/npc_brain.py
++++ b/npc_brain.py
+@@ -808,6 +808,9 @@ def shy_step(
+ GIVE_UP_AWARE = _N.f("give_up_aware")  # awareness at which the hunt ends (full drain = lost you)
+ # Seconds a landed player hit freezes the AI (the battle.py hook sets it).
+ STAGGER_TIME = _N.f("stagger_time")
++# Cells (horizontally, from its post) a hunting enemy follows the player before it breaks off
++# and walks back; it takes up no new hunt until it is home again.
++LEASH_RANGE = 10.0
+ 
+ 
+ def hostile_step(
+@@ -846,10 +849,15 @@ def hostile_step(
+     state["_aware"] = aware
+     if seen:
+         state["_lastseen"] = [int(math.floor(c)) for c in player_feet]
+-    if aware >= 1.0:
++    if aware >= 1.0 and not state.get("_leashed"):
+         state["_hunt"] = True  # latched — see the docstring; only a full drain calls it off
+ 
+-    if state.get("_hunt") and aware > GIVE_UP_AWARE:
++    home = state.get("_home")
++    if state.get("_hunt") and home is not None:
++        if math.hypot(pos[0] - home[0], pos[2] - home[2]) > LEASH_RANGE:
++            state["_leashed"] = True
++
++    if state.get("_hunt") and aware > GIVE_UP_AWARE and not state.get("_leashed"):
+         if "_home" not in state:
+             state["_home"] = [int(math.floor(c)) for c in pos]  # its post before the hunt
+         # Centre-to-centre (the enemy stands at cell-origin + 0.5; the feet are the player
+@@ -913,7 +921,7 @@ def hostile_step(
+     state.pop("_hunt", None)
+     state.pop("_lastseen", None)
+     home = state.get("_home")
+-    if aware <= GIVE_UP_AWARE and home is not None:
++    if (aware <= GIVE_UP_AWARE or state.get("_leashed")) and home is not None:
+         cell = (math.floor(pos[0]), math.floor(pos[1]), math.floor(pos[2]))
+         if tuple(home) != cell:
+             # The walk back is routed ONCE and then followed, not re-A*'d every frame as it used
+@@ -933,6 +941,7 @@ def hostile_step(
+                     state.pop("_homepath", None)
+                 return new_pos, moved, heading, True
+         state.pop("_home", None)  # back on post — stand down
++        state.pop("_leashed", None)
+         state.pop("_homepath", None)
+         return (pos[0], pos[1], pos[2]), 0.0, None, False
+     if aware > STARE_LEVEL and seen:

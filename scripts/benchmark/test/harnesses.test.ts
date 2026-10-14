@@ -2,14 +2,17 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { harnessTotals, launchFor, type LaunchOptions } from "../harnesses.ts";
+import { forkTotals, harnessTotals, launchFor, type LaunchOptions, type SessionStart } from "../harnesses.ts";
 
 const jsonl = (events: object[]) => events.map((e) => JSON.stringify(e)).join("\n") + "\n";
 
-function options(local: boolean): LaunchOptions {
+const NEW: SessionStart = { kind: "new", id: "b1" };
+
+function options(local: boolean, session = NEW): LaunchOptions {
   const dir = mkdtempSync(path.join(tmpdir(), "launch-"));
   return {
     prompt: "fix it",
+    session,
     model: "qwen3.8-flash-next-iq2_xs",
     configDir: path.join(dir, "config"),
     proxyUrl: "http://127.0.0.1:9999",
@@ -47,6 +50,38 @@ describe("launchFor with a local model", () => {
       models: [{ id: "qwen3.8-flash-next-iq2_xs" }],
     });
     expect(launch.args).toContain("local/qwen3.8-flash-next-iq2_xs");
+  });
+});
+
+describe("launchFor's session arguments", () => {
+  const sessionArgs = (harness: "claude" | "pi", session: SessionStart) => {
+    const args = launchFor(harness, options(true, session)).args;
+    const flags = new Set(["--session-id", "--resume", "--fork-session", "--fork"]);
+    return args.flatMap((arg, i) => (flags.has(arg) || flags.has(args[i - 1] ?? "") ? [arg] : []));
+  };
+
+  it("names a new session, resumes it by id, and forks it under a new id in Claude Code", () => {
+    expect(sessionArgs("claude", { kind: "new", id: "b1" })).toEqual(["--session-id", "b1"]);
+    expect(sessionArgs("claude", { kind: "continue", id: "b1" })).toEqual(["--resume", "b1"]);
+    expect(sessionArgs("claude", { kind: "fork", from: "b1", id: "c2" })).toEqual([
+      "--resume",
+      "b1",
+      "--fork-session",
+      "--session-id",
+      "c2",
+    ]);
+  });
+
+  it("opens a session by id, new or not, and forks it under a new id in pi", () => {
+    expect(sessionArgs("pi", { kind: "new", id: "b1" })).toEqual(["--session-id", "b1"]);
+    expect(sessionArgs("pi", { kind: "continue", id: "b1" })).toEqual(["--session-id", "b1"]);
+    expect(sessionArgs("pi", { kind: "fork", from: "b1", id: "c2" })).toEqual(["--fork", "b1", "--session-id", "c2"]);
+  });
+
+  it("keeps pi's prompt after the session arguments, behind the end of options", () => {
+    const args = launchFor("pi", options(true, { kind: "fork", from: "b1", id: "c2" })).args;
+
+    expect(args.slice(-2)).toEqual(["--", "fix it"]);
   });
 });
 
@@ -88,6 +123,49 @@ describe("harnessTotals", () => {
 
     expect(totals?.tokens).toEqual({ input: 7, output: 10, cacheRead: 14, cacheWrite: 2 });
     expect(totals?.costUsd).toBeCloseTo(0.03);
+  });
+
+  it("gives a Claude Code fork its own spend: the session's totals less those at the fork", () => {
+    const result = (input: number, cost: number) =>
+      jsonl([
+        {
+          type: "result",
+          total_cost_usd: cost,
+          modelUsage: { m: { inputTokens: input, outputTokens: input / 1000, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 } },
+        },
+      ]);
+
+    const totals = forkTotals("claude", result(69_000, 0.4), result(52_000, 0.3));
+
+    expect(totals?.tokens).toEqual({ input: 17_000, output: 17, cacheRead: 0, cacheWrite: 0 });
+    expect(totals?.costUsd).toBeCloseTo(0.1);
+  });
+
+  it("matches the proxy's count on Claude Code 2.1.299's own result lines, recorded from the stand-in", () => {
+    // The warm-up's last prompt, then a probe forked from it; the proxy logged 17,420 input
+    // tokens and 5 output tokens for the probe's one call.
+    const parent = jsonl([
+      { type: "result", total_cost_usd: 0.26014, modelUsage: { "stand-in": { inputTokens: 51953, outputTokens: 15, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 } } },
+    ]);
+    const fork = jsonl([
+      { type: "result", total_cost_usd: 0.347365, modelUsage: { "stand-in": { inputTokens: 69373, outputTokens: 20, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 } } },
+    ]);
+
+    expect(forkTotals("claude", fork, parent)?.tokens).toEqual({ input: 17420, output: 5, cacheRead: 0, cacheWrite: 0 });
+  });
+
+  it("knows no Claude Code fork's spend when the session's totals at the fork are missing", () => {
+    const fork = jsonl([{ type: "result", total_cost_usd: 0.4, modelUsage: {} }]);
+
+    expect(forkTotals("claude", fork, "")).toBeUndefined();
+  });
+
+  it("takes a pi fork's totals as they are, since pi counts each process alone", () => {
+    const stdout = jsonl([
+      { type: "message_end", message: { role: "assistant", usage: { input: 3, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } } } },
+    ]);
+
+    expect(forkTotals("pi", stdout, stdout)).toEqual(harnessTotals("pi", stdout));
   });
 
   it("skips lines that are not JSON", () => {

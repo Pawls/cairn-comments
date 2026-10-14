@@ -1,26 +1,21 @@
-/** One benchmark run: a fresh checkout, the harness on one task in one arm, and its grade. */
-import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+/**
+ * One benchmark run: the harness on one task in one arm, and its grade. A `fresh` run
+ * starts an empty session in a new checkout; a `deep` run forks a warm-up chain's session
+ * in the chain's checkout (warmup.ts).
+ */
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { harnessTotals, launchFor, withoutHarnessVariables, type HarnessName, type HarnessTotals } from "./harnesses.ts";
-import { gradeAnswer, providerFailed, runMetrics, type LoggedCall, type RunMetrics } from "./metrics.ts";
+import { outputStem, readLog, refuseFailedSession, runAgent, type AgentOptions } from "./agent.ts";
+import { forkTotals, harnessTotals, type HarnessName, type HarnessTotals } from "./harnesses.ts";
+import { gradeAnswer, probeCalls, runMetrics, type RunMetrics } from "./metrics.ts";
 import type { PreparedTask } from "./prepare.ts";
 import { startRecordingProxy } from "./proxy.ts";
 import { expandCommand, type EditTask, type RepoSpec, type Task } from "./tasks.ts";
-import { checkoutArm, commentBytes, git, isolatedEnv, removeCheckouts, runSetup, type Arm } from "./workspace.ts";
+import { ensureWarmup, refuseUnfinished, restoreWarmup, type WarmupChain } from "./warmup.ts";
+import { ARMS, git, isolatedEnv, neutralName, placedCommentBytes, removeCheckouts, setUpCheckout, type Arm } from "./workspace.ts";
 
-/** What starts an agent, whatever it is asked. */
-export interface AgentOptions {
-  harness: HarnessName;
-  /** The API the proxy forwards to: the Anthropic API, a local model server, or a stand-in. */
-  provider: string;
-  /** `provider` serves `model` under its own name rather than being the Anthropic API. */
-  local: boolean;
-  model: string;
-  apiKey: string;
-  piCli: string;
-  timeoutMs: number;
-}
+export type Depth = "fresh" | "deep";
 
 export interface RunSpec extends AgentOptions {
   task: Task;
@@ -31,14 +26,13 @@ export interface RunSpec extends AgentOptions {
   workDir: string;
   /** Frozen sidecars for the comments arm. */
   comments: string;
-  /** Keep the checkouts after grading, for inspection. */
+  /** Keep the checkouts after grading, for inspection. A deep run always keeps its warm-up's. */
   keep: boolean;
   /** The task's arm commits, for a repository whose arms differ in its own comments. */
   prepared?: PreparedTask;
+  /** For a deep run, the chain the probe forks from, and the chain's arm commits. */
+  warmup?: { chain: WarmupChain; prepared?: PreparedTask };
 }
-
-/** A run lost to the model server rather than to the agent; it is retried, not recorded. */
-export class ProviderError extends Error {}
 
 export interface Grade {
   passed: boolean;
@@ -55,6 +49,10 @@ export interface RunResult {
   kind: Task["kind"];
   arm: Arm;
   rep: number;
+  /** Absent in results written before deep runs existed, which were all fresh. */
+  depth?: Depth;
+  /** The warm-up chain a deep run forked from. */
+  chain?: string;
   model: string;
   startedAt: string;
   wallMs: number;
@@ -70,62 +68,26 @@ export interface RunResult {
   commentBytesRead: number;
 }
 
-export function runDirFor(spec: Pick<RunSpec, "workDir" | "harness" | "task" | "arm" | "rep">): string {
-  return path.join(spec.workDir, "runs", spec.harness, spec.task.id, `${spec.arm}-${spec.rep}`);
+export function depthOf(result: RunResult): Depth {
+  return result.depth ?? "fresh";
 }
 
-export interface Exit {
-  code: number | null;
-  timedOut: boolean;
-}
-
-/** Ends `pid` and every process it started; a harness runs tools as child processes. */
-function killTree(pid: number): void {
-  if (process.platform === "win32") spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"]); // NOSONAR: taskkill is a Windows system tool on PATH
-  else process.kill(-pid, "SIGKILL");
+/** A run's directory; its name hides the arm (`neutralName`), which result.json records. */
+export function runDirFor(spec: { workDir: string; harness: HarnessName; task: Task; arm: Arm; rep: number; chain?: WarmupChain }): string {
+  return path.join(spec.workDir, "runs", spec.harness, spec.task.id, neutralName(spec.arm, spec.chain?.id, spec.rep));
 }
 
 /**
- * Runs the agent on `prompt` in `agentDir` through the proxy at `proxyUrl`, writing its
- * output to `harness.jsonl` and `harness.err` in `runDir`.
+ * Run directories under the `<arm>-<rep>` names used before they were hashed. `run` and
+ * `status` cannot find those results, and `report` would count them beside new ones.
  */
-export async function runAgent(
-  spec: AgentOptions,
-  prompt: string,
-  dirs: { runDir: string; agentDir: string },
-  env: Record<string, string>,
-  proxyUrl: string,
-): Promise<Exit> {
-  const { runDir, agentDir } = dirs;
-  const launch = launchFor(spec.harness, {
-    prompt,
-    model: spec.model,
-    configDir: path.join(runDir, "config"),
-    proxyUrl,
-    sessionDir: path.join(runDir, "sessions"),
-    piCli: spec.piCli,
-    local: spec.local,
-  });
-  const child = spawn(launch.command, launch.args, {
-    cwd: agentDir,
-    env: { ...withoutHarnessVariables(env, spec.apiKey), ...launch.env },
-    stdio: ["pipe", "pipe", "pipe"],
-    detached: process.platform !== "win32",
-  });
-  child.stdout.pipe(createWriteStream(path.join(runDir, "harness.jsonl")));
-  child.stderr.pipe(createWriteStream(path.join(runDir, "harness.err")));
-  child.stdin.end(launch.stdin);
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    if (child.pid !== undefined) killTree(child.pid);
-  }, spec.timeoutMs);
-  const code = await new Promise<number | null>((resolve, reject) => {
-    child.on("error", reject);
-    child.on("close", resolve);
-  });
-  clearTimeout(timer);
-  return { code, timedOut };
+export function legacyRunDirs(workDir: string): string[] {
+  const runs = path.join(workDir, "runs");
+  if (!existsSync(runs)) return [];
+  const legacyName = new RegExp(String.raw`^(${ARMS.join("|")})-\d+$`);
+  return readdirSync(runs, { recursive: true, encoding: "utf8" })
+    .filter((file) => path.basename(file) === "result.json" && legacyName.test(path.basename(path.dirname(file))))
+    .map((file) => path.join(runs, path.dirname(file)));
 }
 
 /** Puts the solution's tests, read from the mirror, over the agent's work. */
@@ -163,44 +125,73 @@ function grade(spec: RunSpec, metrics: RunMetrics, agentDir: string, env: Record
   return gradeEdit(spec.task, spec, agentDir, env, runDir);
 }
 
-/** The proxy's log; empty when the harness made no call. */
-export function readLog(logFile: string): LoggedCall[] {
-  if (!existsSync(logFile)) return [];
-  return readFileSync(logFile, "utf8")
-    .split("\n")
-    .filter((line) => line.trim())
-    .map((line) => JSON.parse(line) as LoggedCall);
+/** Where the probe runs, and the session it forks from, if any. */
+interface Start {
+  agentDir: string;
+  homeDir: string;
+  from?: string;
+  /** The output of the last prompt before the fork, whose totals a Claude Code fork carries. */
+  parentOutput?: string;
+  commentBytes: Record<string, number>;
+}
+
+/** A new checkout in the run's own directory, and a new session. */
+function freshStart(spec: RunSpec, runDir: string, env: Record<string, string>): Start {
+  const checkout = setUpCheckout({ ...spec, dir: runDir, start: spec.task.start, setup: spec.repo.setup, env });
+  return { ...checkout, homeDir: runDir };
+}
+
+/** The warm-up's checkout as the chain left it, and a fork of its session. */
+async function deepStart(
+  spec: RunSpec,
+  warmupSpec: NonNullable<RunSpec["warmup"]>,
+  logFile: string,
+  env: Record<string, string>,
+): Promise<Start> {
+  const { chain, prepared } = warmupSpec;
+  if (chain.repo !== spec.task.repo || chain.start !== spec.task.start) {
+    throw new Error(`task ${spec.task.id} does not start where warm-up ${chain.id} does (${chain.repo} at ${chain.start})`);
+  }
+  const ready = await ensureWarmup({ ...spec, chain, prepared });
+  refuseUnfinished(ready);
+  restoreWarmup(ready, logFile, env);
+  const { dir, warmup } = ready;
+  return {
+    agentDir: path.join(dir, "agent"),
+    homeDir: dir,
+    from: warmup.sessionId,
+    parentOutput: `${outputStem(dir, chain.prompts.length)}.jsonl`,
+    commentBytes: placedCommentBytes(spec.arm, dir, env, prepared),
+  };
+}
+
+/** What the harness reports the probe's prompt spent, without a warm-up's share. */
+function probeTotals(harness: HarnessName, start: Start, runDir: string): HarnessTotals | undefined {
+  const output = readFileSync(`${outputStem(runDir, 1)}.jsonl`, "utf8");
+  if (!start.parentOutput) return harnessTotals(harness, output);
+  return forkTotals(harness, output, readFileSync(start.parentOutput, "utf8"));
 }
 
 export async function runOne(spec: RunSpec): Promise<RunResult> {
-  const runDir = runDirFor(spec);
+  const chain = spec.warmup?.chain.id;
+  const runDir = runDirFor({ ...spec, chain: spec.warmup?.chain });
   mkdirSync(runDir, { recursive: true });
   const env = isolatedEnv(path.join(runDir, "state"), path.join(spec.workDir, "cli-home"));
-  const agentDir = checkoutArm({
-    mirror: spec.mirror,
-    runDir,
-    start: spec.task.start,
-    arm: spec.arm,
-    comments: spec.comments,
-    hooks: spec.harness === "claude" && !spec.prepared ? ["claude-code"] : [],
-    env,
-    prepared: spec.prepared,
-  });
-  runSetup(spec.repo.setup, agentDir, env, path.join(runDir, "setup.log"));
-  const placed = spec.arm === "comments" ? (spec.prepared?.commentBytes ?? commentBytes(runDir, env)) : {};
-
   const logFile = path.join(runDir, "calls.jsonl");
-  const proxy = await startRecordingProxy(spec.provider, logFile);
+  const start = spec.warmup ? await deepStart(spec, spec.warmup, logFile, env) : freshStart(spec, runDir, env);
+
+  const proxy = await startRecordingProxy(spec.provider, logFile, "probe");
   const startedAt = new Date();
-  const exit = await runAgent(spec, spec.task.prompt, { runDir, agentDir }, env, proxy.url).finally(() => proxy.close());
+  const dirs = { agentDir: start.agentDir, homeDir: start.homeDir, outputDir: runDir };
+  const session = await runAgent(spec, [spec.task.prompt], dirs, env, proxy.url, start.from).finally(() => proxy.close());
   const wallMs = Date.now() - startedAt.getTime();
+  const exit = session.exits[0];
+  if (!exit) throw new Error("the probe's prompt never ran");
 
   const log = readLog(logFile);
-  if (providerFailed(log)) {
-    // No result.json, so the next batch runs this one again; the checkouts stay for a look.
-    throw new ProviderError(`the model server failed this run (${log.length} calls); see calls.jsonl and harness.err`);
-  }
-  const metrics = runMetrics(log, { model: spec.model, agentDir });
+  // On a failure there is no result.json, so the next batch runs this one again; the checkouts stay for a look.
+  refuseFailedSession(probeCalls(log), `task ${spec.task.id}`);
+  const metrics = runMetrics(log, { model: spec.model, agentDir: start.agentDir });
   const result: RunResult = {
     harness: spec.harness,
     task: spec.task.id,
@@ -208,18 +199,21 @@ export async function runOne(spec: RunSpec): Promise<RunResult> {
     kind: spec.task.kind,
     arm: spec.arm,
     rep: spec.rep,
+    depth: chain ? "deep" : "fresh",
+    chain,
     model: spec.model,
     startedAt: startedAt.toISOString(),
     wallMs,
     exitCode: exit.code,
     timedOut: exit.timedOut,
-    grade: grade(spec, metrics, agentDir, env, runDir),
+    grade: grade(spec, metrics, start.agentDir, env, runDir),
     metrics,
-    harnessTotals: harnessTotals(spec.harness, readFileSync(path.join(runDir, "harness.jsonl"), "utf8")),
-    commentBytes: placed,
-    commentBytesRead: metrics.filesRead.reduce((sum, file) => sum + (placed[file] ?? 0), 0),
+    harnessTotals: probeTotals(spec.harness, start, runDir),
+    commentBytes: start.commentBytes,
+    commentBytesRead: metrics.filesRead.reduce((sum, file) => sum + (start.commentBytes[file] ?? 0), 0),
   };
   writeFileSync(path.join(runDir, "result.json"), JSON.stringify(result, null, 2));
+  // A deep run's checkouts are its warm-up's, so its own directory has none to remove.
   if (!spec.keep) removeCheckouts(runDir);
   return result;
 }
