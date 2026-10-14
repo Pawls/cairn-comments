@@ -105,7 +105,7 @@ async function runPrompt(
     piCli: spec.piCli,
     local: spec.local,
   });
-  const child = spawn(launch.command, launch.args, {
+  const child = spawn(launch.command, launch.args, { // NOSONAR: the harness under test is claude on PATH, or pi run by this Node
     cwd: dirs.agentDir,
     env: { ...withoutHarnessVariables(env, spec.apiKey), ...launch.env },
     stdio: ["pipe", "pipe", "pipe"],
