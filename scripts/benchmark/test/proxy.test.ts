@@ -91,6 +91,19 @@ describe("startRecordingProxy", () => {
     expect(logged!.ms).toBeGreaterThanOrEqual(0);
   });
 
+  it("logs how many tools a model call declared, which tells the agent's own calls from side calls", async () => {
+    const logFile = path.join(mkdtempSync(path.join(tmpdir(), "proxy-")), "calls.jsonl");
+    const proxy = await startRecordingProxy(upstreamUrl, logFile, "probe");
+    const send = (body: object) =>
+      fetch(`${proxy.url}/v1/messages`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+    await (await send({ model: "m", stream: true, messages: [], tools: [{ name: "Read" }, { name: "Bash" }] })).text();
+    await (await send({ model: "m", stream: true, messages: [] })).text();
+    await proxy.close();
+
+    expect(loggedCalls(logFile).map((call) => call.tools)).toEqual([2, 0]);
+  });
+
   it("logs a call that is not a model response without parsing it", async () => {
     const logFile = path.join(mkdtempSync(path.join(tmpdir(), "proxy-")), "calls.jsonl");
     const proxy = await startRecordingProxy(upstreamUrl, logFile, "probe");

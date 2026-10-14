@@ -37,7 +37,8 @@ history.push({ role: "user", content: positionals.at(-1)! });
 const response = await fetch(`${baseUrl}/v1/messages`, {
   method: "POST",
   headers: { "content-type": "application/json", "x-api-key": "local" },
-  body: JSON.stringify({ model, max_tokens: 1024, messages: history }),
+  // pi declares its tools on every call of the agent's own loop.
+  body: JSON.stringify({ model, max_tokens: 1024, messages: history, tools: [{ name: "read" }, { name: "bash" }] }),
 });
 const message = (await response.json()) as { content: { text: string }[]; usage: { input_tokens: number; output_tokens: number } };
 history.push({ role: "assistant", content: message.content[0]!.text });

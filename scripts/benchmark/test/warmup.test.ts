@@ -3,11 +3,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { readLog } from "../agent.ts";
+import { ProviderError, readLog } from "../agent.ts";
 import { runDirFor, runOne, type RunSpec } from "../runner.ts";
 import { startStandIn, type StandIn } from "../standin.ts";
 import type { QuestionTask } from "../tasks.ts";
-import { warmupDirFor, type WarmupChain } from "../warmup.ts";
+import { loadChains, warmupDirFor, type WarmupChain } from "../warmup.ts";
 import { git, isolatedEnv } from "../workspace.ts";
 
 const FAKE_PI = path.join(path.dirname(fileURLToPath(import.meta.url)), "fake-pi.ts");
@@ -82,6 +82,34 @@ describe("a deep run", () => {
     expect(second.metrics.finalText).toBe("Stand-in reply 4.");
   });
 
+  it("leaves nothing in the warm-up's directory that names the arm", async () => {
+    await runOne(spec);
+
+    const record = readFileSync(path.join(warmupDirFor(spec.workDir, "pi", "w", "none"), "warmup.json"), "utf8");
+    expect(record).not.toMatch(/none|comments/i);
+  });
+
+  it("puts the harness's configuration and sessions back before each probe, so probes share nothing", async () => {
+    await runOne(spec);
+    const dir = warmupDirFor(spec.workDir, "pi", "w", "none");
+    writeFileSync(path.join(dir, "config", "memory-of-the-first-probe.md"), "x");
+    writeFileSync(path.join(dir, "sessions", "left-by-the-first-probe.json"), "[]");
+
+    await runOne({ ...spec, rep: 2 });
+
+    expect(existsSync(path.join(dir, "config", "memory-of-the-first-probe.md"))).toBe(false);
+    expect(existsSync(path.join(dir, "sessions", "left-by-the-first-probe.json"))).toBe(false);
+  });
+
+  it("hands a probe a restored checkout whose git index is current, so its first git command does not rehash it", async () => {
+    await runOne(spec);
+    await runOne({ ...spec, rep: 2 });
+
+    const agentDir = path.join(warmupDirFor(spec.workDir, "pi", "w", "none"), "agent");
+    const env = isolatedEnv(path.join(spec.workDir, "check-state"), path.join(spec.workDir, "cli-home"));
+    expect(git(agentDir, env, "diff-files", "--name-only").trim()).toBe("");
+  });
+
   it("refuses a probe that does not start where the chain does", async () => {
     const elsewhere = { ...spec.task, start: "0000000000000000000000000000000000000000" };
 
@@ -97,5 +125,35 @@ describe("a fresh run", () => {
     expect(result.chain).toBeUndefined();
     expect(result.metrics.finalText).toBe("Stand-in reply 1.");
     expect(existsSync(warmupDirFor(spec.workDir, "pi", "w", "none"))).toBe(false);
+  });
+
+  it("blames the harness, not the model server, when the harness never makes a call", async () => {
+    const silent = path.join(mkdtempSync(path.join(tmpdir(), "silent-")), "silent-pi.mjs");
+    writeFileSync(silent, "process.exit(1);\n");
+
+    const run = runOne({ ...spec, warmup: undefined, piCli: silent });
+
+    await expect(run).rejects.toThrow(/made no model call/);
+    await expect(run).rejects.not.toBeInstanceOf(ProviderError);
+  });
+});
+
+describe("loadChains", () => {
+  const chainsIn = (files: Record<string, string>) => {
+    const dir = mkdtempSync(path.join(tmpdir(), "chains-"));
+    for (const [name, text] of Object.entries(files)) writeFileSync(path.join(dir, name), text);
+    return dir;
+  };
+
+  it("reads each chain under its file name", () => {
+    const dir = chainsIn({ "w1.json": JSON.stringify({ repo: "r", start: "s", prompts: ["go"] }) });
+
+    expect(loadChains(dir).get("w1")).toEqual({ id: "w1", repo: "r", start: "s", prompts: ["go"] });
+  });
+
+  it("refuses a chain file without a repository, a start commit, and at least one prompt, naming the file", () => {
+    expect(() => loadChains(chainsIn({ "w2.json": JSON.stringify({ repo: "r", start: "s", prompts: [] }) }))).toThrow(/w2\.json/);
+    expect(() => loadChains(chainsIn({ "w3.json": JSON.stringify({ repo: "r", prompts: ["go"] }) }))).toThrow(/w3\.json/);
+    expect(() => loadChains(chainsIn({ "w4.json": "{ not json" }))).toThrow(/w4\.json/);
   });
 });

@@ -78,6 +78,20 @@ describe("runMetrics", () => {
     expect(runMetrics([warmup, first, call("m", [])], { model: "m", agentDir }).firstCallContext).toBe(150_307);
   });
 
+  it("takes the first-call context from the agent's own call, not a side call without tools that finished first", () => {
+    const usage = (input: number) => ({ input, output: 1, cacheRead: 0, cacheWrite: 0 });
+    const logged = (input: number, tools: number): LoggedCall => ({
+      path: "/v1/messages",
+      status: 200,
+      ms: 10,
+      phase: "probe",
+      tools,
+      response: { model: "m", usage: usage(input), tools: [], text: "" },
+    });
+
+    expect(runMetrics([logged(300, 0), logged(150_000, 12)], { model: "m", agentDir }).firstCallContext).toBe(150_000);
+  });
+
   it("counts every call of a log written before calls had phases", () => {
     expect(runMetrics([call("m", []), call("m", [])], { model: "m", agentDir }).calls).toBe(2);
   });
