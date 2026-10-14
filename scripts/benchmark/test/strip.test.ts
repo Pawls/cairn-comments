@@ -34,10 +34,18 @@ describe.skipIf(!python)("strip_comments.py", () => {
       "# ruff: noqa: E501",
       "h = run(cmd)  # nosec",
       "z = []  # type: List[int]",
+      "import f  # NOQA: F401",
+      "k = h()  # pyre-ignore[16]",
+      "# yapf: disable",
+      "# autopep8: off",
       "",
     ].join("\n");
 
     expect(strip(source).stdout).toBe(source);
+  });
+
+  it("keeps a byte-order mark and strips the source after it", () => {
+    expect(strip("﻿# c\nx = 1  # d\n").stdout).toBe("﻿x = 1\n");
   });
 
   it("reads a lone carriage return as a line end, as Python does", () => {

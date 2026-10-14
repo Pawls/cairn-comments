@@ -33,6 +33,8 @@ describe.skipIf(!python)("prepareTask", () => {
     mkdirSync(path.join(source, ".claude"), { recursive: true });
     mkdirSync(path.join(source, "docs"));
     writeFileSync(path.join(source, "mod.py"), "# why\nx = 1  # one\n");
+    // git quotes a non-ASCII path unless asked for NUL-separated output.
+    writeFileSync(path.join(source, "ü.py"), "# c\ny = 1\n");
     writeFileSync(path.join(source, "README.md"), "# project\nthe fix is in mod.py\n");
     writeFileSync(path.join(source, "docs", "plan.md"), "plan\n");
     writeFileSync(path.join(source, ".claude", "settings.json"), "{}\n");
@@ -71,7 +73,27 @@ describe.skipIf(!python)("prepareTask", () => {
   });
 
   it("records the bytes the comments add to each file", () => {
-    expect(prepared.commentBytes).toEqual({ "mod.py": "# why\nx = 1  # one\n".length - "x = 1\n".length });
+    expect(prepared.commentBytes).toEqual({
+      "mod.py": "# why\nx = 1  # one\n".length - "x = 1\n".length,
+      "ü.py": "# c\n".length,
+    });
+  });
+
+  it("records the start commit and agent notes the arm commits were built from", () => {
+    expect(prepared.start).toBe(start);
+    expect(prepared.agentNotes).toEqual(AGENT_NOTES);
+  });
+
+  it("gives both arms the same commit message and no branch that names the arm", () => {
+    const messages = new Set<string>();
+    for (const arm of ["none", "comments"] as const) {
+      const agent = checkout(arm);
+
+      messages.add(git(agent, "log", "-1", "--format=%B"));
+      expect(git(agent, "branch", "--all", "--format=%(refname)").trim()).toBe("refs/heads/bench");
+    }
+    expect(messages.size).toBe(1);
+    expect([...messages][0]).not.toMatch(/comment|none|t1/i);
   });
 
   it("leaves no history for the agent to read the original from", () => {
@@ -104,18 +126,38 @@ describe.skipIf(!python)("prepareTask", () => {
 });
 
 describe("readPrepared", () => {
-  it("names a task the prepared file lacks instead of running it without its arm commits", () => {
-    const dir = mkdtempSync(path.join(os.tmpdir(), "prepared-"));
-    const file = path.join(dir, "repo.json");
-    const t1: PreparedTask = { taskId: "t1", commentBytes: { "mod.py": 12 }, unstripped: [] };
-    writeFileSync(file, JSON.stringify({ t1 }));
+  const t1: PreparedTask = { taskId: "t1", start: "abc", agentNotes: ["notes"], commentBytes: { "mod.py": 12 }, unstripped: [] };
+  let dir: string;
+  let file: string;
 
-    try {
-      expect(readPrepared(file, "repo", ["t1"])).toEqual({ t1 });
-      expect(() => readPrepared(file, "repo", ["t1", "t2"])).toThrow("no prepared commits for repo task t2; run prepare --only t2");
-      expect(() => readPrepared(path.join(dir, "missing.json"), "repo", ["t1"])).toThrow("no prepared commits for repo; run prepare first");
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+  beforeAll(() => {
+    dir = mkdtempSync(path.join(os.tmpdir(), "prepared-"));
+    file = path.join(dir, "repo.json");
+    writeFileSync(file, JSON.stringify({ t1 }));
+  });
+
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("returns the prepared tasks when each matches its task's start and the agent notes", () => {
+    expect(readPrepared(file, "repo", [{ id: "t1", start: "abc" }], ["notes"])).toEqual({ t1 });
+  });
+
+  it("names a task the prepared file lacks instead of running it without its arm commits", () => {
+    const tasks = [
+      { id: "t1", start: "abc" },
+      { id: "t2", start: "def" },
+    ];
+
+    expect(() => readPrepared(file, "repo", tasks, ["notes"])).toThrow("no prepared commits for repo task t2; run prepare --only t2");
+    expect(() => readPrepared(path.join(dir, "missing.json"), "repo", tasks, ["notes"])).toThrow(
+      "no prepared commits for repo; run prepare first",
+    );
+  });
+
+  it("refuses arm commits built from another start commit or other agent notes", () => {
+    const stale = "prepared commits for repo task t1 are stale; run prepare --only t1";
+
+    expect(() => readPrepared(file, "repo", [{ id: "t1", start: "abd" }], ["notes"])).toThrow(stale);
+    expect(() => readPrepared(file, "repo", [{ id: "t1", start: "abc" }], ["other notes"])).toThrow(stale);
   });
 });
