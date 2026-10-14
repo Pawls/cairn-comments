@@ -1,0 +1,96 @@
+{
+  "repos": {
+    "boxel": {
+      "url": "https://github.com/Pawls/BoxelBuilder.git",
+      "base": "fcbcc06cb1c5b3fca9988d661552649394748fc8",
+      "setup": [
+        "uv venv .venv --quiet --python 3.13",
+        "uv pip install --quiet --python {venv-python} -e .[dev]"
+      ],
+      "treatment": "own-comments"
+    }
+  },
+  "repo": "boxel",
+  "start": "fcbcc06cb1c5b3fca9988d661552649394748fc8",
+  "warmups": [
+    "warmups/editor-tools.json",
+    "warmups/game-systems.json"
+  ],
+  "probes": [
+    {
+      "id": "drain-into-shaft",
+      "use": "understanding",
+      "kind": "predict",
+      "modules": ["water.py", "window_water.py"],
+      "prompt": "Read `solve_drain` in water.py (it re-levels a pool after the terrain around it is edited) and predict its result for the case below. Work it out from the code; do not run anything.\n\nThe world is solid everywhere except these open (air) cells: the inside of a stone tub, every cell with x 0 to 2, z 0 to 2 and y 1 to 4; and a shaft dug under the middle of the tub, the two cells (1, 0, 1) and (1, -1, 1). The cell under the shaft, (1, -2, 1), is solid. Before the shaft was dug the tub held water in every cell with x 0 to 2, z 0 to 2 and y 1 to 2: two full layers, 18 cells. The call is `solve_drain(is_open, body)`, where `is_open(cell)` is true exactly for the open cells listed above, `body` is the set of those 18 water cells, and `budget` and `sources` are left at their defaults.\n\nWhat are the result's `level`, the number of cells in `keep`, the number in `drained`, the number in `wetted`, and `spilled`? Explain briefly how the function arrives there, then end your answer with one line in exactly this form:\nANSWER: level=<n> kept=<n> drained=<n> wetted=<n> spilled=<n>",
+      "expected": "level=3 kept=18 drained=2 wetted=2 spilled=0",
+      "rubric": ["conserv|volume", "partial|ragged|next layer|bottom-up|remainder|short", "discovery|breadth-first|BFS|flood order"]
+    },
+    {
+      "id": "fell-touching-crowns",
+      "use": "understanding",
+      "kind": "predict",
+      "modules": ["felling.py", "window_felling.py"],
+      "prompt": "Read `gather_tree` in felling.py (it decides which cells come down when a tree is felled) and predict its result for the scene below. Work it out from the code; do not run anything.\n\nThere are four block types, LOG, NEEDLE, SNOW and ROCK. Each is a plain `blocks.BlockDef` with only its name set, so all four are solid, opaque, full-light-blocking and not `self_canopy`. `world.block_at(cell)` returns a cell's type index, or None for air, and `world.block_defs` is the list of the four definitions.\n\n- A ROCK floor fills y = -1 for x -6 to 10 and z -6 to 6.\n- Two trees stand on it. Each has a LOG trunk from y 0 to 5, one at x 0, z 0 and the other at x 4, z 0. Each trunk has a ring of NEEDLE at y 4 and at y 5 on its four sides (one cell along +x, -x, +z and -z from the trunk), and one NEEDLE on top of the trunk at y 6.\n- One more NEEDLE sits at (2, 4, 0), between the two crowns.\n- SNOW lies at (1, 6, 0), on top of the first tree's needle ring.\n- A ROCK block sits at (-2, 3, 0), beside the first tree's crown, with SNOW on top of it at (-2, 4, 0).\n- Every other cell is air.\n\nThe player strikes the first tree's trunk: `felling.gather_tree(world, (0, 1, 0))`. How many cells are in the returned tree's `trunk`, and how many in its `canopy`? Explain briefly which cells are in the canopy and why the others are not, then end your answer with one line in exactly this form (or `ANSWER: none` if it returns None):\nANSWER: trunk=<n> canopy=<n>",
+      "expected": "trunk=6 canopy=11",
+      "rubric": ["tie|same distance|equidistant", "lowest|lower", "rests|resting|held up|holding up|on top of|sits on"]
+    },
+    {
+      "id": "enemy-leash",
+      "use": "understanding",
+      "kind": "change",
+      "modules": ["npc_brain.py", "window_npc_sim.py", "navgrid.py"],
+      "prompt": "Hostile NPCs (the `enemy` behavior, `npc_brain.hostile_step`) chase the player forever once they start hunting. Add a leash. Put a module constant `LEASH_RANGE = 10.0` in npc_brain.py: a distance in cells, measured horizontally from the enemy's post, the cell it stood on when the hunt began. When a hunting enemy gets farther than that from its post it breaks off and walks back to its post, even while it can still see the player, and it starts no new hunt until it is back on its post. Once home it behaves as it does today, so a player who is in sight there is hunted again. Everything else about the hunt (stagger, giving up on a lost player, searching the last known spot) stays as it is, and the existing NPC brain tests must still pass. When you are done, say in a sentence or two what in the function made this more than adding a distance check.",
+      "hiddenTests": ["tests/test_probe_enemy_leash.py"],
+      "keptTests": ["tests/test_npc_brain.py"],
+      "testCommand": "{venv-python} -m pytest -q -n0 -p no:cacheprovider tests/test_probe_enemy_leash.py tests/test_npc_brain.py",
+      "rubric": ["aware", "latch|re-?hunt|_hunt"]
+    },
+    {
+      "id": "navgrid-changed-nodes",
+      "use": "understanding",
+      "kind": "change",
+      "modules": ["navgrid.py"],
+      "prompt": "NPC route caches need to know which nodes of the navigation grid an edit rewired, so that they can drop only the routes through those nodes. Make `NavGrid.update_cells` in navgrid.py return a set of the nodes whose walk edges changed: every node it added or removed, plus every node that is still there but gained or lost a neighbour in `adj`. It must be exact, with no node whose edges did not change and none missed, so that it always equals what you get by comparing full rebuilds of the grid before and after the edit. An edit that adds or removes no node returns an empty set. Climb (ladder) edges do not count. The existing navigation grid tests must still pass. When you are done, say in a sentence or two which nodes besides the added and removed ones an edit can rewire, and why.",
+      "hiddenTests": ["tests/test_probe_changed_nodes.py"],
+      "keptTests": ["tests/test_navgrid.py"],
+      "testCommand": "{venv-python} -m pytest -q -n0 -p no:cacheprovider tests/test_probe_changed_nodes.py tests/test_navgrid.py",
+      "rubric": ["diagonal", "corner|flank"]
+    },
+    {
+      "id": "fog-gate-refused",
+      "use": "navigation",
+      "kind": "locate",
+      "modules": ["gate.py", "window_gate.py"],
+      "prompt": "A map author reports: \"When I drag out a new fog gate across a gap in a wall, it is refused whenever there is nothing under the gap's threshold on either side (a gap over a drop), and also when the gap does not touch any wall on either side. The editor says it needs a surface and adds nothing. A gap with ground under it and wall beside it works fine.\"\n\nFind the function that decides which part of the dragged rectangle counts as a usable opening, where those two refusals come from. Answer from the code and do not change any files. Name the file and the function, and end your answer with one line in this form:\nLOCATION: <file>:<function>",
+      "answerKey": ["gate\\.py", "_crop_wall_layer|column_valid"]
+    },
+    {
+      "id": "portal-one-way",
+      "use": "navigation",
+      "kind": "locate",
+      "modules": ["portal.py", "window_portal.py", "window_playtest.py"],
+      "prompt": "A player reports: \"Walking into a portal from its front teleports me, but if I walk through the same opening from behind I just pass through the frame and nothing happens.\"\n\nFind the function that decides whether a step through the opening should teleport the player, where the back-side walk is turned down. Answer from the code and do not change any files. Name the file and the function, and end your answer with one line in this form:\nLOCATION: <file>:<function>",
+      "answerKey": ["portal\\.py", "crossed_through"]
+    },
+    {
+      "id": "lightning-moderate-rain",
+      "use": "navigation",
+      "kind": "change",
+      "modules": ["weather.py", "window_endless.py"],
+      "prompt": "In the endless world, lightning only strikes once a storm is at full strength. While the rain is still building up there is none, and it stops the moment the storm starts to clear, even though it is still raining hard for a while after. Lightning should be possible whenever the rain or snow is heavier than a drizzle, meaning above 0.3 on its 0-to-1 strength scale, whether the storm is building, at full strength or clearing, and never at or below 0.3. Please make that change; the repository has headless tests for the weather.",
+      "hiddenTests": ["tests/test_probe_lightning.py"],
+      "keptTests": ["tests/test_weather.py"],
+      "testCommand": "{venv-python} -m pytest -q -n0 -p no:cacheprovider tests/test_probe_lightning.py tests/test_weather.py"
+    },
+    {
+      "id": "ai-overwrite-asks",
+      "use": "navigation",
+      "kind": "change",
+      "modules": ["clearguard.py", "window_agent.py", "agent_session.py", "chunks.py"],
+      "prompt": "The in-editor AI assistant stops and asks me before it clears out a large part of what I built, which is good. But today it overwrote most of my castle with stone in one go and never asked. Writing over placed blocks with another block should count the same as clearing them when it decides whether to ask: a fill with a solid block counts every placed block it writes over (a hollow fill only the shell it writes), and filling empty air is still free. Please make that change; the repository has headless tests for the assistant's tools.",
+      "hiddenTests": ["tests/test_probe_overwrite_asks.py"],
+      "testCommand": "{venv-python} -m pytest -q -n0 -p no:cacheprovider tests/test_probe_overwrite_asks.py"
+    }
+  ]
+}

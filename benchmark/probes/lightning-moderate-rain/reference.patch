@@ -1,0 +1,17 @@
+diff --git a/weather.py b/weather.py
+index 0f424961..02834a75 100644
+--- a/weather.py
++++ b/weather.py
+@@ -78,9 +78,10 @@ def update(self, dt: float) -> None:
+         wx, wz = self.wind()
+         self.offset[0] += wx * dt
+         self.offset[1] += wz * dt
+-        # Lightning strikes during a hard rain: an instant spike, a fast decay.
++        # Lightning strikes in any rain past a drizzle, a storm still building or already
++        # clearing included: an instant spike, a fast decay.
+         self.flash = max(0.0, self.flash - dt * 4.0)
+-        if self.state == PRECIP and self.intensity > 0.55:
++        if self.intensity > 0.3:
+             self._flash_timer -= dt
+             if self._flash_timer <= 0.0:
+                 self.flash = 1.0

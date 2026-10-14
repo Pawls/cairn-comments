@@ -1,5 +1,9 @@
-/** The task file: repositories, their base commits, and the tasks run against them. */
-import { readFileSync } from "node:fs";
+/**
+ * The task files: repositories, their base commits, and the tasks run against them.
+ * `loadTasks` reads the one-prompt rounds; `loadDeepTasks` reads the deep-context probe set
+ * (docs/plans/benchmark-deep-context.md), whose probes run fresh or after a warm-up chain.
+ */
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 export interface RepoSpec {
@@ -57,4 +61,143 @@ export function loadTasks(file: string): TaskFile {
     if (!parsed.repos[task.repo]) throw new Error(`task ${task.id}: unknown repo ${task.repo}`);
   }
   return parsed;
+}
+
+/**
+ * A warm-up chain, run as one session to put a probe deep into a full context: ordinary
+ * work, one prompt after another. Stored as `<id>.json` without the id.
+ */
+export interface WarmupChain {
+  id: string;
+  repo: string;
+  /** Must be the probes' start: a probe forks from the chain's checkout. */
+  start: string;
+  /** Every source file the chain's prompts lead the agent to read or change. */
+  modules: string[];
+  prompts: string[];
+}
+
+interface ProbeBase {
+  id: string;
+  /** Finding the code it needs, or reading a complicated function correctly. */
+  use: "navigation" | "understanding";
+  /**
+   * Source files no warm-up chain may touch: where the answer lives, callers that lead
+   * straight to it, and what the hidden tests import.
+   */
+  modules: string[];
+  prompt: string;
+}
+
+/**
+ * "What does this function return for these inputs?", answered from reading alone: the
+ * harness must give the agent no shell, or it can run the function instead of reading it.
+ * `probes/<id>/compute.py` prints `expected` by running the function.
+ */
+export interface PredictProbe extends ProbeBase {
+  kind: "predict";
+  /** The text after `ANSWER:` on the final answer's last such line (see `gradePrediction`). */
+  expected: string;
+  /** Patterns for facts a full explanation states; scored beside the prediction, never alone. */
+  rubric?: string[];
+}
+
+/** "Which file and function decides this?", graded like a question task. */
+export interface LocateProbe extends ProbeBase {
+  kind: "locate";
+  answerKey: string[];
+}
+
+/**
+ * An edit graded by hidden tests. Each hidden test is `probes/<id>/<path>`, placed at
+ * `<path>` in the checkout before `testCommand` runs; `probes/<id>/reference.patch` is a
+ * solution against the comments arm (verify-probes.ts derives the stripped arm's).
+ */
+export interface ChangeProbe extends ProbeBase {
+  kind: "change";
+  hiddenTests: string[];
+  /**
+   * Existing test files put back to the arm's committed version before grading, so the
+   * agent's edits to them do not count.
+   */
+  keptTests?: string[];
+  testCommand: string;
+  /** Patterns for facts the final answer states; scored beside the hidden tests, never alone. */
+  rubric?: string[];
+}
+
+export type Probe = PredictProbe | LocateProbe | ChangeProbe;
+
+/** The prepared-commit id the probe set's start is stored under (`prepared/deep/<arm>`). */
+export const DEEP_PREPARED_ID = "deep";
+
+export interface DeepTaskFile {
+  repos: Record<string, RepoSpec>;
+  repo: string;
+  /** Every warm-up and probe starts here, so one deep session serves all the probes. */
+  start: string;
+  warmups: WarmupChain[];
+  probes: Probe[];
+}
+
+/** A file belonging to a probe: `<task file's folder>/probes/<id>/<name>`. */
+export function probeFile(taskFile: string, probeId: string, name: string): string {
+  return path.join(path.dirname(taskFile), "probes", probeId, name);
+}
+
+function filesOf(probe: Probe): string[] {
+  if (probe.kind === "predict") return ["compute.py"];
+  if (probe.kind === "change") return [...probe.hiddenTests, "reference.patch"];
+  return [];
+}
+
+function checkProbes(taskFile: string, probes: Probe[], warmups: WarmupChain[]): void {
+  const ids = new Set<string>();
+  for (const probe of probes) {
+    if (ids.has(probe.id)) throw new Error(`duplicate probe id ${probe.id}`);
+    ids.add(probe.id);
+    for (const module of probe.modules) {
+      const chain = warmups.find((warmup) => warmup.modules.includes(module));
+      if (chain) throw new Error(`probe ${probe.id}: ${module} is also in warm-up chain ${chain.id}`);
+    }
+    for (const name of filesOf(probe)) {
+      const file = probeFile(taskFile, probe.id, name);
+      if (!existsSync(file)) throw new Error(`probe ${probe.id}: no ${file}`);
+    }
+  }
+}
+
+function loadChain(taskFile: string, chainFile: string): WarmupChain {
+  const text = readFileSync(path.join(path.dirname(taskFile), chainFile), "utf8");
+  const chain = JSON.parse(text) as Omit<WarmupChain, "id">;
+  return { id: path.basename(chainFile, ".json"), ...chain };
+}
+
+export function loadDeepTasks(file: string): DeepTaskFile {
+  const parsed = JSON.parse(readFileSync(file, "utf8")) as Omit<DeepTaskFile, "warmups"> & { warmups: string[] };
+  if (!parsed.repos[parsed.repo]) throw new Error(`unknown repo ${parsed.repo}`);
+  const warmups = parsed.warmups.map((chainFile) => loadChain(file, chainFile));
+  for (const chain of warmups) {
+    if (chain.repo !== parsed.repo || chain.start !== parsed.start) {
+      throw new Error(`warm-up chain ${chain.id} starts at ${chain.repo}@${chain.start}, not ${parsed.repo}@${parsed.start}`);
+    }
+  }
+  checkProbes(file, parsed.probes, warmups);
+  return { ...parsed, warmups };
+}
+
+const ANSWER_LINE = /^\s*ANSWER:(.*)$/gim;
+
+function normalized(text: string): string {
+  return text.trim().replaceAll(/\s+/g, " ").toLowerCase();
+}
+
+/**
+ * Exact match on the last `ANSWER:` line of the final answer, so a run that changes its
+ * mind is graded on where it ended. Spacing and case do not count.
+ */
+export function gradePrediction(finalText: string, expected: string): { passed: boolean; missing: string[] } {
+  const last = [...finalText.matchAll(ANSWER_LINE)].at(-1)?.[1];
+  const passed = last !== undefined && normalized(last) === normalized(expected);
+  return { passed, missing: passed ? [] : [`ANSWER: ${expected}`] };
 }
