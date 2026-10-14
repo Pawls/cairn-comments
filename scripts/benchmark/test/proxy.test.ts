@@ -68,7 +68,7 @@ function loggedCalls(logFile: string): LoggedCall[] {
 describe("startRecordingProxy", () => {
   it("forwards a request unchanged and logs the parsed response once it has ended", async () => {
     const logFile = path.join(mkdtempSync(path.join(tmpdir(), "proxy-")), "calls.jsonl");
-    const proxy = await startRecordingProxy(upstreamUrl, logFile);
+    const proxy = await startRecordingProxy(upstreamUrl, logFile, "probe");
     const request = JSON.stringify({ model: "m", stream: true, messages: [] });
 
     const response = await fetch(`${proxy.url}/v1/messages`, {
@@ -85,14 +85,28 @@ describe("startRecordingProxy", () => {
     expect(logged).toMatchObject({
       path: "/v1/messages",
       status: 200,
+      phase: "probe",
       response: { model: "m", usage: { input: 3, output: 4, cacheRead: 0, cacheWrite: 0 }, tools: [], text: "" },
     });
     expect(logged!.ms).toBeGreaterThanOrEqual(0);
   });
 
+  it("logs how many tools a model call declared, which tells the agent's own calls from side calls", async () => {
+    const logFile = path.join(mkdtempSync(path.join(tmpdir(), "proxy-")), "calls.jsonl");
+    const proxy = await startRecordingProxy(upstreamUrl, logFile, "probe");
+    const send = (body: object) =>
+      fetch(`${proxy.url}/v1/messages`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+    await (await send({ model: "m", stream: true, messages: [], tools: [{ name: "Read" }, { name: "Bash" }] })).text();
+    await (await send({ model: "m", stream: true, messages: [] })).text();
+    await proxy.close();
+
+    expect(loggedCalls(logFile).map((call) => call.tools)).toEqual([2, 0]);
+  });
+
   it("logs a call that is not a model response without parsing it", async () => {
     const logFile = path.join(mkdtempSync(path.join(tmpdir(), "proxy-")), "calls.jsonl");
-    const proxy = await startRecordingProxy(upstreamUrl, logFile);
+    const proxy = await startRecordingProxy(upstreamUrl, logFile, "probe");
 
     const response = await fetch(`${proxy.url}/v1/other`);
     await response.text();

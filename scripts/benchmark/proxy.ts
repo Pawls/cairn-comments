@@ -7,7 +7,7 @@ import { appendFileSync } from "node:fs";
 import { request as httpRequest, createServer, type IncomingHttpHeaders, type IncomingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
 import type { AddressInfo } from "node:net";
-import type { LoggedCall } from "./metrics.ts";
+import type { LoggedCall, Phase } from "./metrics.ts";
 import { parseResponse } from "./responses.ts";
 
 export interface RecordingProxy {
@@ -35,13 +35,37 @@ function isModelCall(pathname: string, status: number): boolean {
   return status === 200 && pathname.endsWith("/v1/messages");
 }
 
-function loggedCall(pathname: string, status: number, started: number, contentType: string, body: Buffer): LoggedCall {
-  const call: LoggedCall = { path: pathname, status, ms: Date.now() - started };
-  if (isModelCall(pathname, status)) call.response = parseResponse(contentType, body.toString("utf8"));
+/** How many tools a Messages API request declares; 0 for a body that is not one. */
+function declaredTools(request: Buffer): number {
+  try {
+    const tools = (JSON.parse(request.toString("utf8")) as { tools?: unknown[] }).tools;
+    return Array.isArray(tools) ? tools.length : 0;
+  } catch {
+    return 0;
+  }
+}
+
+interface Exchange {
+  pathname: string;
+  status: number;
+  started: number;
+  request: Buffer;
+  contentType: string;
+  response: Buffer;
+}
+
+function loggedCall(phase: Phase, exchange: Exchange): LoggedCall {
+  const { pathname, status } = exchange;
+  const call: LoggedCall = { path: pathname, status, ms: Date.now() - exchange.started, phase };
+  if (isModelCall(pathname, status)) {
+    call.tools = declaredTools(exchange.request);
+    call.response = parseResponse(exchange.contentType, exchange.response.toString("utf8"));
+  }
   return call;
 }
 
-export async function startRecordingProxy(upstream: string, logFile: string): Promise<RecordingProxy> {
+/** Appends to `logFile`, so a probe's calls can follow its warm-up's in one log. */
+export async function startRecordingProxy(upstream: string, logFile: string, phase: Phase): Promise<RecordingProxy> {
   const base = new URL(upstream);
   const send = base.protocol === "https:" ? httpsRequest : httpRequest;
   const log = (call: LoggedCall) => appendFileSync(logFile, JSON.stringify(call) + "\n");
@@ -60,11 +84,12 @@ export async function startRecordingProxy(upstream: string, logFile: string): Pr
         chunks.push(chunk as Buffer);
         res.write(chunk);
       }
-      log(loggedCall(target.pathname, status, started, upstreamRes.headers["content-type"] ?? "", Buffer.concat(chunks)));
+      const contentType = upstreamRes.headers["content-type"] ?? "";
+      log(loggedCall(phase, { pathname: target.pathname, status, started, request: body, contentType, response: Buffer.concat(chunks) }));
       res.end();
     });
     forwarded.on("error", (error) => {
-      log({ path: target.pathname, status: 502, ms: Date.now() - started });
+      log({ path: target.pathname, status: 502, ms: Date.now() - started, phase });
       res.writeHead(502, { "content-type": "text/plain" });
       res.end(`recording proxy: ${error.message}`);
     });
