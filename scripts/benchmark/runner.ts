@@ -7,13 +7,13 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { outputStem, ProviderError, readLog, runAgent, type AgentOptions } from "./agent.ts";
-import { harnessTotals, type HarnessName, type HarnessTotals } from "./harnesses.ts";
+import { forkTotals, harnessTotals, type HarnessName, type HarnessTotals } from "./harnesses.ts";
 import { gradeAnswer, providerFailed, runMetrics, type RunMetrics } from "./metrics.ts";
 import type { PreparedTask } from "./prepare.ts";
 import { startRecordingProxy } from "./proxy.ts";
 import { expandCommand, type EditTask, type RepoSpec, type Task } from "./tasks.ts";
 import { ensureWarmup, restoreWarmup, type WarmupChain } from "./warmup.ts";
-import { checkoutArm, commentBytes, isolatedEnv, removeCheckouts, runSetup, type Arm } from "./workspace.ts";
+import { isolatedEnv, removeCheckouts, setUpCheckout, type Arm } from "./workspace.ts";
 
 export type Depth = "fresh" | "deep";
 
@@ -115,24 +115,15 @@ interface Start {
   agentDir: string;
   homeDir: string;
   from?: string;
+  /** The output of the last prompt before the fork, whose totals a Claude Code fork carries. */
+  parentOutput?: string;
   commentBytes: Record<string, number>;
 }
 
 /** A new checkout in the run's own directory, and a new session. */
 function freshStart(spec: RunSpec, runDir: string, env: Record<string, string>): Start {
-  const agentDir = checkoutArm({
-    mirror: spec.mirror,
-    runDir,
-    start: spec.task.start,
-    arm: spec.arm,
-    comments: spec.comments,
-    hooks: spec.harness === "claude" && !spec.prepared ? ["claude-code"] : [],
-    env,
-    prepared: spec.prepared,
-  });
-  runSetup(spec.repo.setup, agentDir, env, path.join(runDir, "setup.log"));
-  const placed = spec.arm === "comments" ? (spec.prepared?.commentBytes ?? commentBytes(runDir, env)) : {};
-  return { agentDir, homeDir: runDir, commentBytes: placed };
+  const checkout = setUpCheckout({ ...spec, dir: runDir, start: spec.task.start, setup: spec.repo.setup, env });
+  return { ...checkout, homeDir: runDir };
 }
 
 /** The warm-up's checkout as the chain left it, and a fork of its session. */
@@ -143,7 +134,20 @@ async function deepStart(spec: RunSpec, warmupSpec: NonNullable<RunSpec["warmup"
   }
   const { dir, warmup } = await ensureWarmup({ ...spec, chain, prepared });
   restoreWarmup(dir, logFile);
-  return { agentDir: path.join(dir, "agent"), homeDir: dir, from: warmup.sessionId, commentBytes: warmup.commentBytes };
+  return {
+    agentDir: path.join(dir, "agent"),
+    homeDir: dir,
+    from: warmup.sessionId,
+    parentOutput: `${outputStem(dir, chain.prompts.length)}.jsonl`,
+    commentBytes: warmup.commentBytes,
+  };
+}
+
+/** What the harness reports the probe's prompt spent, without a warm-up's share. */
+function probeTotals(harness: HarnessName, start: Start, runDir: string): HarnessTotals | undefined {
+  const output = readFileSync(`${outputStem(runDir, 1)}.jsonl`, "utf8");
+  if (!start.parentOutput) return harnessTotals(harness, output);
+  return forkTotals(harness, output, readFileSync(start.parentOutput, "utf8"));
 }
 
 export async function runOne(spec: RunSpec): Promise<RunResult> {
@@ -185,7 +189,7 @@ export async function runOne(spec: RunSpec): Promise<RunResult> {
     timedOut: exit.timedOut,
     grade: grade(spec, metrics, start.agentDir, env, runDir),
     metrics,
-    harnessTotals: harnessTotals(spec.harness, readFileSync(`${outputStem(runDir, 1)}.jsonl`, "utf8")),
+    harnessTotals: probeTotals(spec.harness, start, runDir),
     commentBytes: start.commentBytes,
     commentBytesRead: metrics.filesRead.reduce((sum, file) => sum + (start.commentBytes[file] ?? 0), 0),
   };

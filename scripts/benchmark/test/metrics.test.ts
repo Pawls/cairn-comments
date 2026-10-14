@@ -75,7 +75,7 @@ describe("runMetrics", () => {
     const usage = { input: 7, output: 1, cacheRead: 150_000, cacheWrite: 300 };
     const first: LoggedCall = { path: "/v1/messages", status: 200, ms: 10, phase: "probe", response: { model: "m", usage, tools: [], text: "" } };
 
-    expect(runMetrics([warmup, first, call("m", [])], { model: "m", agentDir }).firstCallInput).toBe(150_307);
+    expect(runMetrics([warmup, first, call("m", [])], { model: "m", agentDir }).firstCallContext).toBe(150_307);
   });
 
   it("counts every call of a log written before calls had phases", () => {

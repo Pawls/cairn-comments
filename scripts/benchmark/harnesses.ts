@@ -245,3 +245,24 @@ export function harnessTotals(harness: HarnessName, stdout: string): HarnessTota
   const events = jsonLines(stdout);
   return harness === "claude" ? claudeTotals(events) : piTotals(events);
 }
+
+/**
+ * What a forked session's own prompt spent, given its output and the output of the last
+ * prompt before the fork. Claude Code's result line counts the whole session, the parent's
+ * calls included; pi counts each process alone.
+ */
+export function forkTotals(harness: HarnessName, forkStdout: string, parentStdout: string): HarnessTotals | undefined {
+  const fork = harnessTotals(harness, forkStdout);
+  if (harness === "pi" || !fork) return fork;
+  const parent = harnessTotals(harness, parentStdout);
+  if (!parent) return undefined;
+  return {
+    costUsd: fork.costUsd - parent.costUsd,
+    tokens: {
+      input: fork.tokens.input - parent.tokens.input,
+      output: fork.tokens.output - parent.tokens.output,
+      cacheRead: fork.tokens.cacheRead - parent.tokens.cacheRead,
+      cacheWrite: fork.tokens.cacheWrite - parent.tokens.cacheWrite,
+    },
+  };
+}

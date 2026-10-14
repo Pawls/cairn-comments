@@ -68,7 +68,7 @@ describe("a warm-up chain and a probe forked from it", () => {
     const metrics = runMetrics(log, { model: "stand-in", agentDir: dirs.agentDir });
     expect(metrics.calls).toBe(1);
     expect(metrics.tokens.input).toBe(inputs[2]);
-    expect(metrics.firstCallInput).toBe(inputs[2]);
+    expect(metrics.firstCallContext).toBe(inputs[2]);
   });
 
   it("starts a second fork from the warm-up's end, not from the first fork", async () => {

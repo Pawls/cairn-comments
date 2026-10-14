@@ -18,7 +18,7 @@ function result(task: string, arm: "none" | "comments", input: number, passed: b
     grade: { passed, testExit: passed ? 0 : 1 },
     metrics: {
       calls: 4,
-      firstCallInput: input / 2,
+      firstCallContext: input / 2,
       turns: 3,
       tokens: { input, output: 100, cacheRead: 0, cacheWrite: 0 },
       toolCalls: { Read: 2 },

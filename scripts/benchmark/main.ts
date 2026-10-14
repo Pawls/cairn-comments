@@ -19,10 +19,10 @@
  *       --stop-at. A run the model server failed is left for the next batch, and two in a
  *       row end the batch.
  *   prepare --work <dir> --repo <name> [--source <path>] [--only <task or chain,...>]
- *       for a repository whose arms differ in its own comments: builds each task's and
- *       each warm-up chain's two arm commits in the mirror (stripped and as committed) and records them in
- *       <work>/prepared/<name>.json. --source seeds the mirror from a local clone, for a
- *       private repository.
+ *       for a repository whose arms differ in its own comments: builds the two arm commits
+ *       of each task and each warm-up chain in the mirror (stripped and as committed) and
+ *       records them in <work>/prepared/<name>.json. --source seeds the mirror from a
+ *       local clone, for a private repository.
  *   status --work <dir> [--harness ...] [--arms ...] [--reps ...] [--depths ...] [--chains ...] [--only ...]
  *       what that run command has finished and what is left
  *   report --work <dir>

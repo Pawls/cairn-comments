@@ -67,7 +67,7 @@ describe("a deep run", () => {
     expect(result.metrics.calls).toBe(1);
     const log = readLog(path.join(runDirFor({ ...spec, chain: "w" }), "calls.jsonl"));
     expect(log.map((call) => call.phase)).toEqual(["warmup", "warmup", "probe"]);
-    expect(result.metrics.firstCallInput).toBe(log[2]?.response?.usage.input);
+    expect(result.metrics.firstCallContext).toBe(log[2]?.response?.usage.input);
   });
 
   it("runs the warm-up once and puts its checkout back before each probe", async () => {

@@ -12,7 +12,7 @@ import { contextOf, providerFailed } from "./metrics.ts";
 import type { PreparedTask } from "./prepare.ts";
 import { startRecordingProxy } from "./proxy.ts";
 import type { RepoSpec } from "./tasks.ts";
-import { checkoutArm, commentBytes, isolatedEnv, runSetup, type Arm } from "./workspace.ts";
+import { isolatedEnv, setUpCheckout, type Arm } from "./workspace.ts";
 
 /** Prompts run in one session before a probe forks from its end. */
 export interface WarmupChain {
@@ -68,9 +68,13 @@ export interface WarmupSpec extends AgentOptions {
   prepared?: PreparedTask;
 }
 
-/** The checkouts a probe changes, and the copy of them as the chain left them. */
+/** The checkouts a probe can change: the agent's worktree and the clone that holds its git data. */
 const CHECKOUTS = ["agent", "repo"];
+
+/** Where a copy of `CHECKOUTS` keeps them as the chain left them. */
 const SNAPSHOT = "snapshot";
+
+/** Written last, so its presence means the warm-up finished. */
 const RECORD = "warmup.json";
 
 /** The warm-up the spec names, run now unless an earlier batch finished it. */
@@ -82,25 +86,13 @@ export async function ensureWarmup(spec: WarmupSpec): Promise<{ dir: string; war
   rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
   mkdirSync(dir, { recursive: true });
   const env = isolatedEnv(path.join(dir, "state"), path.join(spec.workDir, "cli-home"));
-  const agentDir = checkoutArm({
-    mirror: spec.mirror,
-    runDir: dir,
-    start: spec.chain.start,
-    arm: spec.arm,
-    comments: spec.comments,
-    hooks: spec.harness === "claude" && !spec.prepared ? ["claude-code"] : [],
-    env,
-    prepared: spec.prepared,
-  });
-  runSetup(spec.repo.setup, agentDir, env, path.join(dir, "setup.log"));
-  const placed = spec.arm === "comments" ? (spec.prepared?.commentBytes ?? commentBytes(dir, env)) : {};
+  const checkout = setUpCheckout({ ...spec, dir, start: spec.chain.start, setup: spec.repo.setup, env });
 
   const logFile = path.join(dir, "calls.jsonl");
   const proxy = await startRecordingProxy(spec.provider, logFile, "warmup");
   const startedAt = Date.now();
-  const session = await runAgent(spec, spec.chain.prompts, { agentDir, homeDir: dir, outputDir: dir }, env, proxy.url).finally(
-    () => proxy.close(),
-  );
+  const dirs = { agentDir: checkout.agentDir, homeDir: dir, outputDir: dir };
+  const session = await runAgent(spec, spec.chain.prompts, dirs, env, proxy.url).finally(() => proxy.close());
   const log = readLog(logFile);
   if (providerFailed(log)) {
     // No warmup.json, so the next batch runs the chain again.
@@ -115,9 +107,9 @@ export async function ensureWarmup(spec: WarmupSpec): Promise<{ dir: string; war
     exits: session.exits,
     wallMs: Date.now() - startedAt,
     finalContext: last ? contextOf(last) : 0,
-    commentBytes: placed,
+    commentBytes: checkout.commentBytes,
   };
-  for (const checkout of CHECKOUTS) cpSync(path.join(dir, checkout), path.join(dir, SNAPSHOT, checkout), { recursive: true });
+  for (const name of CHECKOUTS) cpSync(path.join(dir, name), path.join(dir, SNAPSHOT, name), { recursive: true });
   writeFileSync(record, JSON.stringify(warmup, null, 2));
   return { dir, warmup };
 }
@@ -127,9 +119,9 @@ export async function ensureWarmup(spec: WarmupSpec): Promise<{ dir: string; war
  * starts `logFile` with the chain's calls so one log holds the whole session.
  */
 export function restoreWarmup(dir: string, logFile: string): void {
-  for (const checkout of CHECKOUTS) {
-    rmSync(path.join(dir, checkout), { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
-    cpSync(path.join(dir, SNAPSHOT, checkout), path.join(dir, checkout), { recursive: true });
+  for (const name of CHECKOUTS) {
+    rmSync(path.join(dir, name), { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+    cpSync(path.join(dir, SNAPSHOT, name), path.join(dir, name), { recursive: true });
   }
   copyFileSync(path.join(dir, "calls.jsonl"), logFile);
 }

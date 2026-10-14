@@ -26,7 +26,8 @@ const WALL: Measure = { label: "Wall time (s)", value: (r) => r.wallMs, format: 
 const MEASURES: Measure[] = [
   INPUT,
   // How deep a run started: at depth `deep` the first call carries the whole warm-up.
-  { label: "First-call context", value: (r) => r.metrics.firstCallInput ?? Number.NaN, format: whole },
+  // Results written before the field existed have none.
+  { label: "First-call context", value: (r) => r.metrics.firstCallContext ?? Number.NaN, format: whole },
   { label: "Uncached input", value: (r) => r.metrics.tokens.input, format: whole },
   { label: "Cache read", value: (r) => r.metrics.tokens.cacheRead, format: whole },
   { label: "Cache write", value: (r) => r.metrics.tokens.cacheWrite, format: whole },

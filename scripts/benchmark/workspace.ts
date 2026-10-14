@@ -6,6 +6,7 @@ import { execFileSync, execSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { HarnessName } from "./harnesses.ts";
 import { preparedBranch, type PreparedTask } from "./prepare.ts";
 import { expandCommand, type RepoSpec } from "./tasks.ts";
 
@@ -146,6 +147,42 @@ export function checkoutArm(options: CheckoutOptions): string {
   if (options.comments) cpSync(options.comments, path.join(repo, PRIVATE_STORE), { recursive: true });
   cairn(repo, options.env, "worktree", "add", "-b", "bench", agent);
   return agent;
+}
+
+export interface SetUpOptions {
+  harness: HarnessName;
+  mirror: string;
+  /** The directory that gets `repo` and `agent`. */
+  dir: string;
+  start: string;
+  arm: Arm;
+  /** Frozen sidecars for the comments arm. */
+  comments: string;
+  prepared?: PreparedTask;
+  setup: string[];
+  env: Record<string, string>;
+}
+
+/**
+ * The agent's checkout of `start` in `dir`, with the repository's setup run, and the
+ * bytes its comments add to each file.
+ */
+export function setUpCheckout(options: SetUpOptions): { agentDir: string; commentBytes: Record<string, number> } {
+  const { dir, env, prepared } = options;
+  const agentDir = checkoutArm({
+    mirror: options.mirror,
+    runDir: dir,
+    start: options.start,
+    arm: options.arm,
+    comments: options.comments,
+    // Cairn's Claude Code hooks matter only where Cairn places the comments.
+    hooks: options.harness === "claude" && !prepared ? ["claude-code"] : [],
+    env,
+    prepared,
+  });
+  runSetup(options.setup, agentDir, env, path.join(dir, "setup.log"));
+  if (options.arm !== "comments") return { agentDir, commentBytes: {} };
+  return { agentDir, commentBytes: prepared?.commentBytes ?? commentBytes(dir, env) };
 }
 
 /** Every file with a sidecar in `store`, as a repository-relative path with `/` separators. */

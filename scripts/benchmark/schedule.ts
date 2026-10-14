@@ -24,11 +24,12 @@ const FRESH_ONLY: Depths = { fresh: true, chains: [] };
  * shuffled by `seed` so neither arm runs in a block of its own.
  */
 export function planRuns(tasks: Task[], arms: Arm[], reps: number, seed: number, depths = FRESH_ONLY): Planned[] {
-  const chains: (string | undefined)[] = depths.fresh ? [undefined, ...depths.chains] : depths.chains;
+  // A start is the chain a deep run forks, or undefined for a fresh run.
+  const starts: (string | undefined)[] = depths.fresh ? [undefined, ...depths.chains] : depths.chains;
   const all: Planned[] = [];
   for (const task of tasks) {
     for (const arm of arms) {
-      for (const chain of chains) all.push(...repetitions(task, arm, chain, reps));
+      for (const chain of starts) all.push(...repetitions(task, arm, chain, reps));
     }
   }
   return shuffled(all, seed);
@@ -36,7 +37,7 @@ export function planRuns(tasks: Task[], arms: Arm[], reps: number, seed: number,
 
 function repetitions(task: Task, arm: Arm, chain: string | undefined, reps: number): Planned[] {
   const planned: Planned[] = [];
-  for (let rep = 1; rep <= reps; rep++) planned.push(chain === undefined ? { task, arm, rep } : { task, arm, rep, chain });
+  for (let rep = 1; rep <= reps; rep++) planned.push({ task, arm, rep, chain });
   return planned;
 }
 

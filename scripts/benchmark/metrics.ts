@@ -2,7 +2,10 @@
 import path from "node:path";
 import type { ModelResponse, Usage } from "./responses.ts";
 
-/** Which part of a deep run made a call: the warm-up chain, or the probe forked from it. */
+/**
+ * Which part of a run made a call: a deep run's warm-up chain, or the probe itself, which
+ * makes every call of a fresh run.
+ */
 export type Phase = "warmup" | "probe";
 
 /** One line of the proxy log: a request and, for a model call, its parsed response. */
@@ -31,7 +34,7 @@ export interface RunMetrics {
   /** Every model call of the probe, side calls (titles, summaries) included. */
   calls: number;
   /** The context the probe's first call carried; at depth `deep` that includes the warm-up. */
-  firstCallInput: number;
+  firstCallContext: number;
   /** Calls to the run's own model. */
   turns: number;
   tokens: Usage;
@@ -73,7 +76,7 @@ export function runMetrics(log: LoggedCall[], options: { model: string; agentDir
   }
   return {
     calls: responses.length,
-    firstCallInput: responses[0] ? contextOf(responses[0]) : 0,
+    firstCallContext: responses[0] ? contextOf(responses[0]) : 0,
     turns: ownModel.length,
     tokens,
     toolCalls,
