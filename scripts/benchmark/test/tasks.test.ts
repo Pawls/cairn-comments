@@ -1,8 +1,16 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { loadChains, loadDeepTasks, loadTaskFile, type DeepTaskFile, type LocateProbe } from "../tasks.ts";
+import {
+  chainsNamedLikeTasks,
+  loadChains,
+  loadDeepTasks,
+  loadTaskFile,
+  type DeepTaskFile,
+  type LocateProbe,
+} from "../tasks.ts";
+import { writeUnder } from "./fixtures.ts";
 
 const REPO = { url: "https://example.com/r.git", base: "b", setup: [] };
 
@@ -14,11 +22,7 @@ beforeEach(() => {
 
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-function write(file: string, content: unknown): void {
-  const full = path.join(dir, file);
-  mkdirSync(path.dirname(full), { recursive: true });
-  writeFileSync(full, typeof content === "string" ? content : JSON.stringify(content));
-}
+const write = (file: string, content: unknown) => writeUnder(dir, file, content);
 
 function taskFile(probes: unknown[], warmupModules = ["editor.py"], chainStart = "s"): string {
   write("warmups/a.json", { repo: "r", start: chainStart, modules: warmupModules, prompts: ["fix it"] });
@@ -58,6 +62,12 @@ describe("loadChains", () => {
     expect(() => loadChains(chainsIn("w3", { repo: "r", prompts: ["go"] }))).toThrow(/w3\.json/);
     expect(() => loadChains(chainsIn("w4", "{ not json"))).toThrow(/w4\.json/);
   });
+
+  it("names the chains whose id is also a task's, which would share the task's prepared commits", () => {
+    const chains = [{ id: "fix-flow", repo: "r", start: "s", prompts: ["go"] }, { id: "w1", repo: "r", start: "s", prompts: ["go"] }];
+
+    expect(chainsNamedLikeTasks(chains, [{ id: "fix-flow" }, { id: "q1" }])).toEqual(["fix-flow"]);
+  });
 });
 
 describe("loadTaskFile", () => {
@@ -66,9 +76,9 @@ describe("loadTaskFile", () => {
 
     const loaded = loadTaskFile(taskFile([change]));
 
-    expect(loaded.tasks).toEqual([{ ...change, repo: "r", start: "s" }]);
-    expect(loaded.chains?.map((chain) => chain.id)).toEqual(["a"]);
-    expect(loaded.sharedStart).toEqual({ id: "deep", repo: "r", start: "s" });
+    const probeDir = path.join(dir, "probes", "leash");
+    expect(loaded.tasks).toEqual([{ ...change, repo: "r", start: "s", preparedId: "deep", dir: probeDir }]);
+    expect(loaded.chains?.map((chain) => [chain.id, chain.preparedId])).toEqual([["a", "deep"]]);
   });
 
   it("reads a round's task file as it is, with no chains of its own", () => {
@@ -91,7 +101,9 @@ describe("loadDeepTasks", () => {
 
     const loaded = loadDeepTasks(taskFile([change]));
 
-    expect(loaded.warmups).toEqual([{ id: "a", repo: "r", start: "s", modules: ["editor.py"], prompts: ["fix it"] }]);
+    expect(loaded.warmups).toEqual([
+      { id: "a", repo: "r", start: "s", modules: ["editor.py"], prompts: ["fix it"], preparedId: "deep" },
+    ]);
   });
 
   it("refuses a chain that starts anywhere but the probes' start, since a probe forks from the chain's checkout", () => {

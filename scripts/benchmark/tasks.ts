@@ -31,6 +31,8 @@ interface TaskBase {
   /** The commit the agent starts from. */
   start: string;
   prompt: string;
+  /** The prepared entry it checks out, when not its own id (`preparedIdOf`). */
+  preparedId?: string;
 }
 
 export interface EditTask extends TaskBase {
@@ -48,8 +50,13 @@ export interface QuestionTask extends TaskBase {
   answerKey: string[];
 }
 
-/** A probe's `repo` and `start` are the probe set's, which `loadDeepTasks` copies onto it. */
+/**
+ * A probe's `repo`, `start` and `preparedId` are the probe set's, which `loadDeepTasks`
+ * copies onto it, as it does the probe's folder.
+ */
 interface ProbeBase extends TaskBase {
+  /** Where the probe's own files are: `probes/<id>/` beside the task file, as an absolute path. */
+  dir: string;
   /** Finding the code it needs, or reading a complicated function correctly. */
   use: "navigation" | "understanding";
   /**
@@ -115,11 +122,14 @@ export interface TaskFile {
   tasks: Task[];
   /** A probe set's own warm-up chains. A round's file has none; its deep runs take `--warmups`. */
   chains?: WarmupChain[];
-  /**
-   * The one prepared entry every task and chain of a probe set uses, since all start at one
-   * commit. A round prepares each task and chain under its own id.
-   */
-  sharedStart?: { id: string; repo: string; start: string };
+}
+
+/**
+ * The prepared entry (prepare.ts) a task or chain checks out. A round prepares each under
+ * its own id; a probe set's probes and chains all start at one commit and share one entry.
+ */
+export function preparedIdOf(starting: { id: string; preparedId?: string }): string {
+  return starting.preparedId ?? starting.id;
 }
 
 /** A setup or test command with `{venv-python}` replaced by the checkout's virtualenv interpreter. */
@@ -152,6 +162,13 @@ export interface WarmupChain {
    */
   modules?: string[];
   prompts: string[];
+  /** The prepared entry it checks out, when not its own id (`preparedIdOf`). */
+  preparedId?: string;
+}
+
+/** The chains whose id is also a task's; they would share its prepared commits (prepare.ts). */
+export function chainsNamedLikeTasks(chains: WarmupChain[], tasks: Array<{ id: string }>): string[] {
+  return chains.filter((chain) => tasks.some((task) => task.id === chain.id)).map((chain) => chain.id);
 }
 
 const isText = (value: unknown): value is string => typeof value === "string" && value !== "";
@@ -191,7 +208,7 @@ export function loadChains(dir: string): Map<string, WarmupChain> {
   return chains;
 }
 
-/** The prepared-commit id the probe set's start is stored under (`prepared/deep/<arm>`). */
+/** The prepared entry a probe set's probes and chains share (`prepared/deep/<arm>`). */
 export const DEEP_PREPARED_ID = "deep";
 
 export interface DeepTaskFile {
@@ -203,9 +220,9 @@ export interface DeepTaskFile {
   probes: Probe[];
 }
 
-/** A file belonging to a probe: `<task file's folder>/probes/<id>/<name>`. */
-export function probeFile(taskFile: string, probeId: string, name: string): string {
-  return path.join(path.dirname(taskFile), "probes", probeId, name);
+/** A file belonging to a probe, in its folder. */
+export function probeFile(probe: Probe, name: string): string {
+  return path.join(probe.dir, name);
 }
 
 function filesOf(probe: Probe): string[] {
@@ -214,7 +231,7 @@ function filesOf(probe: Probe): string[] {
   return [];
 }
 
-function checkProbes(taskFile: string, probes: Probe[], warmups: WarmupChain[]): void {
+function checkProbes(probes: Probe[], warmups: WarmupChain[]): void {
   const ids = new Set<string>();
   for (const probe of probes) {
     if (ids.has(probe.id)) throw new Error(`duplicate probe id ${probe.id}`);
@@ -224,7 +241,7 @@ function checkProbes(taskFile: string, probes: Probe[], warmups: WarmupChain[]):
       if (chain) throw new Error(`probe ${probe.id}: ${module} is also in warm-up chain ${chain.id}`);
     }
     for (const name of filesOf(probe)) {
-      const file = probeFile(taskFile, probe.id, name);
+      const file = probeFile(probe, name);
       if (!existsSync(file)) throw new Error(`probe ${probe.id}: no ${file}`);
     }
   }
@@ -242,45 +259,48 @@ function loadSetChain(taskFile: string, chainFile: string): WarmupChain {
   return chain;
 }
 
-function readTaskJson(file: string): Record<string, unknown> {
-  // The task file is the operator's own --tasks choice on a local benchmark script.
-  return JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>; // NOSONAR
-}
-
+/** A probe set as written: chains named by file, probes without what the set gives them. */
 type DeepTaskJson = Omit<DeepTaskFile, "warmups"> & { warmups: string[] };
+
+/** A round's file, or a probe set, which is the one with `probes`. */
+function readTaskJson(file: string): TaskFile | DeepTaskJson {
+  // The task file is the operator's own --tasks choice on a local benchmark script.
+  return JSON.parse(readFileSync(file, "utf8")) as TaskFile | DeepTaskJson; // NOSONAR
+}
 
 function deepTasksFrom(file: string, parsed: DeepTaskJson): DeepTaskFile {
   if (!parsed.repos[parsed.repo]) throw new Error(`unknown repo ${parsed.repo}`);
-  const warmups = parsed.warmups.map((chainFile) => loadSetChain(file, chainFile));
+  const shared = { repo: parsed.repo, start: parsed.start, preparedId: DEEP_PREPARED_ID };
+  const warmups = parsed.warmups.map((chainFile) => ({
+    ...loadSetChain(file, chainFile),
+    preparedId: DEEP_PREPARED_ID,
+  }));
   for (const chain of warmups) {
     if (chain.repo !== parsed.repo || chain.start !== parsed.start) {
       throw new Error(`warm-up chain ${chain.id} starts at ${chain.repo}@${chain.start}, not ${parsed.repo}@${parsed.start}`);
     }
   }
-  const probes = parsed.probes.map((probe) => ({ ...probe, repo: parsed.repo, start: parsed.start }));
-  checkProbes(file, probes, warmups);
+  const probesFolder = path.resolve(path.dirname(file), "probes");
+  const probes = parsed.probes.map((probe) => ({ ...probe, ...shared, dir: path.join(probesFolder, probe.id) }));
+  checkProbes(probes, warmups);
   return { ...parsed, warmups, probes };
 }
 
 export function loadDeepTasks(file: string): DeepTaskFile {
-  return deepTasksFrom(file, readTaskJson(file) as unknown as DeepTaskJson);
+  const parsed = readTaskJson(file);
+  if (!("probes" in parsed)) throw new Error(`${file} is not a probe set: it has no probes`);
+  return deepTasksFrom(file, parsed);
 }
 
-/** A round's tasks, or a probe set's probes as tasks; a probe set is the file that has `probes`. */
+/** A round's tasks, or a probe set's probes as tasks with the set's own chains. */
 export function loadTaskFile(file: string): TaskFile {
   const parsed = readTaskJson(file);
   if ("probes" in parsed) {
-    const deep = deepTasksFrom(file, parsed as unknown as DeepTaskJson);
-    return {
-      repos: deep.repos,
-      tasks: deep.probes,
-      chains: deep.warmups,
-      sharedStart: { id: DEEP_PREPARED_ID, repo: deep.repo, start: deep.start },
-    };
+    const deep = deepTasksFrom(file, parsed);
+    return { repos: deep.repos, tasks: deep.probes, chains: deep.warmups };
   }
-  const round = parsed as unknown as TaskFile;
-  for (const task of round.tasks) {
-    if (!round.repos[task.repo]) throw new Error(`task ${task.id}: unknown repo ${task.repo}`);
+  for (const task of parsed.tasks) {
+    if (!parsed.repos[task.repo]) throw new Error(`task ${task.id}: unknown repo ${task.repo}`);
   }
-  return round;
+  return parsed;
 }

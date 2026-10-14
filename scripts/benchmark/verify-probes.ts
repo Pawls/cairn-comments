@@ -49,7 +49,6 @@ const { values: args } = parseArgs({
 
 /** What every check reads; fixed for the whole verification. */
 interface Context {
-  taskFile: string;
   checkouts: Record<Arm, string>;
   env: Record<string, string>;
   python: string;
@@ -67,7 +66,7 @@ const COMPUTE_TIMEOUT_MS = 5 * 60 * 1000;
 
 function checkPrediction(context: Context, probe: PredictProbe, arm: Arm): string | undefined {
   const checkout = context.checkouts[arm];
-  const script = path.resolve(probeFile(context.taskFile, probe.id, "compute.py"));
+  const script = probeFile(probe, "compute.py");
   // No shell, so the timeout stops the interpreter itself.
   const run = spawnSync(venvPython(checkout), ["-I", script], {
     cwd: checkout,
@@ -103,7 +102,7 @@ function strippedSource(context: Context, file: string, solved: Buffer): Buffer 
 /** Puts the reference solution into one arm's checkout (see the module comment). */
 function applyReference(context: Context, probe: ChangeProbe, arm: Arm): void {
   const { comments, none } = context.checkouts;
-  const patch = path.resolve(probeFile(context.taskFile, probe.id, "reference.patch"));
+  const patch = probeFile(probe, "reference.patch");
   if (arm === "comments") {
     git(comments, context.env, "apply", patch);
     return;
@@ -128,10 +127,10 @@ function applyReference(context: Context, probe: ChangeProbe, arm: Arm): void {
 
 function checkChange(context: Context, probe: ChangeProbe, arm: Arm): string | undefined {
   const checkout = context.checkouts[arm];
-  const atStart = gradeChangeProbe(context.taskFile, probe, checkout, context.env);
+  const atStart = gradeChangeProbe(probe, checkout, context.env);
   // Applied even when the start already passes, since the stripped arm's reference is built from it.
   applyReference(context, probe, arm);
-  const solved = gradeChangeProbe(context.taskFile, probe, checkout, context.env);
+  const solved = gradeChangeProbe(probe, checkout, context.env);
   const failures: string[] = [];
   if (atStart.passed) failures.push("hidden tests pass at the start");
   if (!solved.passed) failures.push(`hidden tests fail on the reference solution:\n${solved.output.slice(-2000)}`);
@@ -215,7 +214,7 @@ function main(): void {
     return agentDir;
   };
   const checkouts = { comments: checkout("comments"), none: checkout("none") };
-  const context: Context = { taskFile, checkouts, env, python };
+  const context: Context = { checkouts, env, python };
 
   for (const probe of probes) {
     for (const check of checkProbe(context, probe)) {

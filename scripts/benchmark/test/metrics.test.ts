@@ -1,11 +1,10 @@
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { gradeAnswer, gradeChangeProbe, gradePrediction, providerFailed, runMetrics, type LoggedCall } from "../metrics.ts";
 import type { ChangeProbe } from "../tasks.ts";
-import { isolatedEnv } from "../workspace.ts";
+import { CHANGE_CHECK, makeRepo, writeUnder, type Repo } from "./fixtures.ts";
 
 const agentDir = path.resolve("/work/run/agent");
 
@@ -140,12 +139,6 @@ describe("gradeAnswer", () => {
 });
 
 describe("gradeChangeProbe", () => {
-  const CHECK = [
-    'import { existsSync, readFileSync } from "node:fs";',
-    'const ready = existsSync("tests/hidden.txt") && readFileSync("tests/kept.txt", "utf8") === "good";',
-    "process.exit(ready ? 0 : 3);",
-  ].join("\n");
-
   let dir: string;
 
   beforeEach(() => {
@@ -154,17 +147,12 @@ describe("gradeChangeProbe", () => {
 
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  function write(file: string, content: string): void {
-    const full = path.join(dir, file);
-    mkdirSync(path.dirname(full), { recursive: true });
-    writeFileSync(full, content);
-  }
-
   function probe(testCommand: string): ChangeProbe {
     return {
       id: "p",
       repo: "r",
       start: "s",
+      dir: path.join(dir, "probes", "p"),
       use: "understanding",
       kind: "change",
       modules: [],
@@ -175,44 +163,39 @@ describe("gradeChangeProbe", () => {
     };
   }
 
-  function checkout(): { taskFile: string; checkoutDir: string; env: Record<string, string> } {
-    const env = isolatedEnv(path.join(dir, "state"), path.join(dir, "cli-home"));
-    const checkoutDir = path.join(dir, "agent");
-    write("agent/tests/kept.txt", "good");
-    write("agent/check.mjs", CHECK);
-    write("agent/fail.mjs", 'console.log("nope");\nprocess.exit(3);\n');
-    execFileSync("git", ["init", "-q", checkoutDir], { env });
-    execFileSync("git", ["add", "."], { cwd: checkoutDir, env });
-    execFileSync("git", ["commit", "-qm", "start"], { cwd: checkoutDir, env });
-    write("agent/tests/kept.txt", "edited by the agent");
-    write("probes/p/tests/hidden.txt", "hidden");
-    write("probes/p/tests/__pycache__/hidden.cpython-313.pyc", "bytecode");
-    return { taskFile: path.join(dir, "deep.json"), checkoutDir, env };
+  /** A committed checkout whose kept test the agent then edited, and the probe's hidden files. */
+  function checkout(): Repo {
+    const failing = 'console.log("nope");\nprocess.exit(3);\n';
+    const committed = makeRepo(dir, { "tests/kept.txt": "good", "check.mjs": CHANGE_CHECK, "fail.mjs": failing });
+    writeUnder(committed.repo, "tests/kept.txt", "edited by the agent");
+    writeUnder(dir, "probes/p/tests/hidden.txt", "hidden");
+    writeUnder(dir, "probes/p/tests/__pycache__/hidden.cpython-313.pyc", "bytecode");
+    return committed;
   }
 
   it("places the named hidden tests, puts the kept tests back, and passes when the command does", () => {
-    const { taskFile, checkoutDir, env } = checkout();
+    const { repo, env } = checkout();
 
-    const grade = gradeChangeProbe(taskFile, probe("node check.mjs"), checkoutDir, env);
+    const grade = gradeChangeProbe(probe("node check.mjs"), repo, env);
 
     expect(grade.passed).toBe(true);
-    expect(readFileSync(path.join(checkoutDir, "tests", "kept.txt"), "utf8")).toBe("good");
-    expect(existsSync(path.join(checkoutDir, "tests", "__pycache__"))).toBe(false);
+    expect(readFileSync(path.join(repo, "tests", "kept.txt"), "utf8")).toBe("good");
+    expect(existsSync(path.join(repo, "tests", "__pycache__"))).toBe(false);
   });
 
   it("fails with the command's exit code and keeps its output", () => {
-    const { taskFile, checkoutDir, env } = checkout();
+    const { repo, env } = checkout();
 
-    const grade = gradeChangeProbe(taskFile, probe("node fail.mjs"), checkoutDir, env);
+    const grade = gradeChangeProbe(probe("node fail.mjs"), repo, env);
 
     expect(grade).toMatchObject({ passed: false, testExit: 3 });
     expect(grade.output).toContain("nope");
   });
 
   it("runs the command without a shell, so a timeout stops the test process itself", () => {
-    const { taskFile, checkoutDir, env } = checkout();
+    const { repo, env } = checkout();
 
-    const grade = gradeChangeProbe(taskFile, probe("node fail.mjs || node check.mjs"), checkoutDir, env);
+    const grade = gradeChangeProbe(probe("node fail.mjs || node check.mjs"), repo, env);
 
     expect(grade.testExit).toBe(3);
   });

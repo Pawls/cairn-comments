@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,44 +9,28 @@ import { planRuns, type Planned } from "../schedule.ts";
 import { startStandIn, type StandIn } from "../standin.ts";
 import { loadTaskFile } from "../tasks.ts";
 import { warmupDirFor } from "../warmup.ts";
-import { git, isolatedEnv } from "../workspace.ts";
+import { CHANGE_CHECK, makeRepo, writeUnder } from "./fixtures.ts";
 
 const FAKE_PI = path.join(path.dirname(fileURLToPath(import.meta.url)), "fake-pi.ts");
-
-/** A change probe's test: passes once its hidden file is in place and the kept test is as committed. */
-const CHECK = [
-  'import { existsSync, readFileSync } from "node:fs";',
-  'const ready = existsSync("tests/hidden.txt") && readFileSync("tests/kept.txt", "utf8") === "good";',
-  "process.exit(ready ? 0 : 3);",
-].join("\n");
-
-function write(root: string, file: string, content: unknown): void {
-  const full = path.join(root, file);
-  mkdirSync(path.dirname(full), { recursive: true });
-  writeFileSync(full, typeof content === "string" ? content : JSON.stringify(content));
-}
-
-/** A one-commit repository holding the change probe's test, made with an isolated git config. */
-function makeRepo(root: string): { repo: string; start: string } {
-  const repo = path.join(root, "source");
-  write(repo, "check.mjs", CHECK);
-  write(repo, "tests/kept.txt", "good");
-  const env = isolatedEnv(path.join(root, "git-state"), path.join(root, "cli-home"));
-  git(repo, env, "init", "--quiet");
-  git(repo, env, "add", ".");
-  git(repo, env, "commit", "--quiet", "-m", "start");
-  return { repo, start: git(repo, env, "rev-parse", "HEAD").trim() };
-}
 
 /** A probe set with one probe of each kind and one warm-up chain, all at `start`. */
 function makeProbeSet(root: string, repo: string, start: string): string {
   const dir = path.join(root, "probe-set");
-  write(dir, "warmups/w.json", { repo: "r", start, modules: ["warmup.py"], prompts: ["first warm-up prompt", "second warm-up prompt"] });
-  write(dir, "probes/predict-it/compute.py", "print(42)\n");
-  write(dir, "probes/change-it/tests/hidden.txt", "hidden");
-  write(dir, "probes/change-it/reference.patch", "");
+  const prompts = ["first warm-up prompt", "second warm-up prompt"];
+  writeUnder(dir, "warmups/w.json", { repo: "r", start, modules: ["warmup.py"], prompts });
+  writeUnder(dir, "probes/predict-it/compute.py", "print(42)\n");
+  writeUnder(dir, "probes/change-it/tests/hidden.txt", "hidden");
+  writeUnder(dir, "probes/change-it/reference.patch", "");
   const probes = [
-    { id: "predict-it", use: "understanding", kind: "predict", modules: ["a.py"], prompt: "predict", expected: "42", rubric: ["stand-in"] },
+    {
+      id: "predict-it",
+      use: "understanding",
+      kind: "predict",
+      modules: ["a.py"],
+      prompt: "predict",
+      expected: "42",
+      rubric: ["stand-in"],
+    },
     { id: "locate-it", use: "navigation", kind: "locate", modules: ["b.py"], prompt: "locate", answerKey: ["stand-in reply"] },
     {
       id: "change-it",
@@ -60,12 +44,12 @@ function makeProbeSet(root: string, repo: string, start: string): string {
       rubric: ["nothing the stand-in says"],
     },
   ];
-  write(dir, "deep-tasks.json", { repos: { r: { url: repo, base: start, setup: [] } }, repo: "r", start, warmups: ["warmups/w.json"], probes });
+  const repos = { r: { url: repo, base: start, setup: [] } };
+  writeUnder(dir, "deep-tasks.json", { repos, repo: "r", start, warmups: ["warmups/w.json"], probes });
   return path.join(dir, "deep-tasks.json");
 }
 
 let standIn: StandIn;
-let taskFile: string;
 let queue: Planned[];
 let base: Omit<RunSpec, "task" | "arm" | "rep">;
 const results = new Map<string, RunResult>();
@@ -75,9 +59,8 @@ const resultOf = (task: string, depth: "fresh" | "deep") => results.get(`${task}
 beforeAll(async () => {
   standIn = await startStandIn();
   const root = mkdtempSync(path.join(tmpdir(), "probes-"));
-  const { repo, start } = makeRepo(root);
-  taskFile = makeProbeSet(root, repo, start);
-  const loaded = loadTaskFile(taskFile);
+  const { repo, start } = makeRepo(root, { "check.mjs": CHANGE_CHECK, "tests/kept.txt": "good" });
+  const loaded = loadTaskFile(makeProbeSet(root, repo, start));
   queue = planRuns(loaded.tasks, ["none"], 1, 1, { fresh: true, chains: loaded.chains ?? [] });
   base = {
     harness: "pi",
@@ -87,7 +70,6 @@ beforeAll(async () => {
     apiKey: "local",
     piCli: FAKE_PI,
     timeoutMs: 60_000,
-    taskFile,
     repo: loaded.repos.r!,
     mirror: repo,
     workDir: path.join(root, "work"),

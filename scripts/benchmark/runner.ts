@@ -14,7 +14,7 @@ import {
   gradePrediction,
   probeCalls,
   runMetrics,
-  runTestCommand,
+  runShellTest,
   type AnswerGrade,
   type RunMetrics,
 } from "./metrics.ts";
@@ -28,8 +28,6 @@ export type Depth = "fresh" | "deep";
 
 export interface RunSpec extends AgentOptions {
   task: Task;
-  /** The file the task came from; a change probe's hidden tests sit beside it. */
-  taskFile: string;
   repo: RepoSpec;
   mirror: string;
   arm: Arm;
@@ -118,7 +116,7 @@ function gradeEdit(task: EditTask, spec: RunSpec, agentDir: string, env: Record<
   // rounds did; a prepared clone lacks it.
   if (spec.prepared) placeSolutionTests(task, spec.mirror, agentDir, env);
   else git(agentDir, env, "checkout", task.solution, "--", ...task.testFiles);
-  const test = runTestCommand(task.testCommand, "shell", agentDir, env);
+  const test = runShellTest(task.testCommand, agentDir, env);
   writeFileSync(path.join(runDir, "test.log"), test.output);
   return { passed: test.passed, testExit: test.testExit };
 }
@@ -137,7 +135,7 @@ function grade(spec: RunSpec, finalText: string, start: Start, env: Record<strin
     case "predict":
       return { ...gradePrediction(finalText, task.expected), ...rubricOf(task.rubric, finalText) };
     case "change": {
-      const test = gradeChangeProbe(spec.taskFile, task, start.agentDir, env, start.committed);
+      const test = gradeChangeProbe(task, start.agentDir, env, start.committed);
       writeFileSync(path.join(runDir, "test.log"), test.output);
       return { passed: test.passed, testExit: test.testExit, ...rubricOf(task.rubric, finalText) };
     }

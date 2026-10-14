@@ -48,8 +48,16 @@ import { renderReport } from "./report.ts";
 import { depthOf, legacyRunDirs, runDirFor, runOne, type RunResult } from "./runner.ts";
 import { nextOccurrence, planRuns, shard, unforked, warmupOf, type Depths, type Planned } from "./schedule.ts";
 import { spreadOf } from "./stats.ts";
-import { isEditTask, loadChains, loadTaskFile, type Task, type TaskFile, type WarmupChain } from "./tasks.ts";
-import { chainsNamedLikeTasks } from "./warmup.ts";
+import {
+  chainsNamedLikeTasks,
+  isEditTask,
+  loadChains,
+  loadTaskFile,
+  preparedIdOf,
+  type Task,
+  type TaskFile,
+  type WarmupChain,
+} from "./tasks.ts";
 import {
   ARMS,
   cairn,
@@ -191,19 +199,22 @@ interface Starting {
   id: string;
   repo: string;
   start: string;
+  preparedId?: string;
 }
 
-/**
- * The prepared entries `starting` checks out: one per task and chain, each under its own
- * id, or a probe set's one shared entry.
- */
-function preparedEntries(taskFile: TaskFile, starting: Starting[]): Starting[] {
-  return taskFile.sharedStart ? [taskFile.sharedStart] : starting;
+/** The prepared entries `starting` checks out, each once, under its id (`preparedIdOf`). */
+function preparedEntries(starting: Starting[]): Starting[] {
+  const entries = new Map<string, Starting>();
+  for (const each of starting) {
+    const id = preparedIdOf(each);
+    entries.set(id, { id, repo: each.repo, start: each.start });
+  }
+  return [...entries.values()];
 }
 
 function loadPrepared(work: string, taskFile: TaskFile, starting: Starting[]): Map<string, Record<string, PreparedTask>> {
   const loaded = new Map<string, Record<string, PreparedTask>>();
-  const entries = preparedEntries(taskFile, starting);
+  const entries = preparedEntries(starting);
   const repoNames = new Set(entries.map((s) => s.repo));
   for (const name of [...repoNames].filter((n) => taskFile.repos[n]!.treatment === "own-comments")) {
     const repoEntries = entries.filter((s) => s.repo === name);
@@ -227,8 +238,8 @@ function prepare(): void {
   refuseChainsNamedLikeTasks(chains, taskFile.tasks);
   const mirror = mirrors(work, taskFile, [name], chains).get(name)!;
   const env = isolatedEnv(path.join(work, "state"), path.join(work, "cli-home"));
-  // A chain's arm commits are prepared like a task's (`preparedEntries`).
-  const starts = preparedEntries(taskFile, [...taskFile.tasks, ...chains]).filter((s) => s.repo === name);
+  // A chain's arm commits are prepared like a task's.
+  const starts = preparedEntries([...taskFile.tasks, ...chains]).filter((s) => s.repo === name);
   const only = args.only?.split(",");
   const unknown = only?.filter((id) => !starts.some((s) => s.id === id)) ?? [];
   if (unknown.length) throw new Error(`--only names no task or warm-up chain of ${name}: ${unknown.join(", ")}`);
@@ -372,9 +383,9 @@ interface Batch {
   prepared: Map<string, Record<string, PreparedTask>>;
 }
 
-/** The arm commits a task or chain checks out, if its repository has prepared ones (`preparedEntries`). */
+/** The arm commits a task or chain checks out, if its repository has prepared ones. */
 function preparedFor(batch: Batch, starting: Starting): PreparedTask | undefined {
-  return batch.prepared.get(starting.repo)?.[batch.taskFile.sharedStart?.id ?? starting.id];
+  return batch.prepared.get(starting.repo)?.[preparedIdOf(starting)];
 }
 
 /** A deep run's chain and the chain's arm commits. */
@@ -394,7 +405,6 @@ async function attempt(batch: Batch, planned: Planned, runDir: string, label: st
     const result = await runOne({
       ...batch.agent,
       ...planned,
-      taskFile: args.tasks!,
       repo: batch.taskFile.repos[planned.task.repo]!,
       mirror: batch.mirrorPaths.get(planned.task.repo)!,
       workDir: batch.work,

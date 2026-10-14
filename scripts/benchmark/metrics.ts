@@ -1,5 +1,5 @@
 /** Per-run measurements taken from the recording proxy's log, and the graders that score a run. */
-import { execFileSync, spawnSync, type SpawnSyncOptionsWithStringEncoding } from "node:child_process";
+import { execFileSync, spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { copyFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import type { ModelResponse, Usage } from "./responses.ts";
@@ -182,29 +182,26 @@ export interface TestRun {
   output: string;
 }
 
-/**
- * How a test command is written. A round's task gives a shell command line, `&&` and all. A
- * probe gives a program and its arguments, run with no shell so the timeout stops the test
- * process itself rather than a shell around it.
- */
-type TestCommandForm = "shell" | "program";
+function testOptions(cwd: string, env: Record<string, string>) {
+  return { cwd, env, encoding: "utf8", timeout: TEST_TIMEOUT_MS, maxBuffer: OUTPUT_LIMIT } as const;
+}
 
-/** Runs a test command from `cwd` with `{venv-python}` expanded. */
-export function runTestCommand(
-  command: string,
-  form: TestCommandForm,
-  cwd: string,
-  env: Record<string, string>,
-): TestRun {
-  const options = { cwd, env, encoding: "utf8", timeout: TEST_TIMEOUT_MS, maxBuffer: OUTPUT_LIMIT } as const;
-  const run = spawnTest(command, form, options);
+function testRunOf(run: SpawnSyncReturns<string>): TestRun {
   return { passed: run.status === 0, testExit: run.status, output: `${run.stdout}\n${run.stderr}` };
 }
 
-function spawnTest(command: string, form: TestCommandForm, options: SpawnSyncOptionsWithStringEncoding & { cwd: string }) {
-  if (form === "shell") return spawnSync(expandCommand(command), { ...options, shell: true });
-  const [program, args] = programArgs(command, options.cwd);
-  return spawnSync(program, args, options);
+/** Runs a round's test command, a shell command line (`&&` and all), from `cwd`. */
+export function runShellTest(command: string, cwd: string, env: Record<string, string>): TestRun {
+  return testRunOf(spawnSync(expandCommand(command), { ...testOptions(cwd, env), shell: true }));
+}
+
+/**
+ * Runs a probe's test command, a program and its arguments, from `cwd` with no shell, so the
+ * timeout stops the test process itself rather than a shell around it.
+ */
+function runProgramTest(command: string, cwd: string, env: Record<string, string>): TestRun {
+  const [program, args] = programArgs(command, cwd);
+  return testRunOf(spawnSync(program, args, testOptions(cwd, env)));
 }
 
 /**
@@ -223,7 +220,6 @@ function programArgs(command: string, cwd: string): [string, string[]] {
  * runs `testCommand`. `committed` is the arm's prepared commit when HEAD has moved past it.
  */
 export function gradeChangeProbe(
-  taskFile: string,
   probe: ChangeProbe,
   checkout: string,
   env: Record<string, string>,
@@ -232,10 +228,10 @@ export function gradeChangeProbe(
   for (const test of probe.hiddenTests) {
     const destination = path.join(checkout, test);
     mkdirSync(path.dirname(destination), { recursive: true });
-    copyFileSync(probeFile(taskFile, probe.id, test), destination);
+    copyFileSync(probeFile(probe, test), destination);
   }
   if (probe.keptTests?.length) {
     execFileSync("git", ["checkout", committed, "--", ...probe.keptTests], { cwd: checkout, env, stdio: "ignore" }); // NOSONAR: git comes from PATH, as for any tool that drives git
   }
-  return runTestCommand(probe.testCommand, "program", checkout, env);
+  return runProgramTest(probe.testCommand, checkout, env);
 }

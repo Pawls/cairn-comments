@@ -30,11 +30,6 @@ export interface Warmup {
   finalContext: number;
 }
 
-/** The chains whose id is also a task's; they would share its prepared commits (prepare.ts). */
-export function chainsNamedLikeTasks(chains: WarmupChain[], tasks: Array<{ id: string }>): string[] {
-  return chains.filter((chain) => tasks.some((task) => task.id === chain.id)).map((chain) => chain.id);
-}
-
 /**
  * Throws when a prompt of the warm-up failed or timed out: its session stops short of the
  * chain, so a probe forked from it would start shallower than the other arm's. The record
