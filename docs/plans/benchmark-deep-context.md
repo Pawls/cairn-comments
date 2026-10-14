@@ -8,13 +8,14 @@
 > claim, or fail to, and says in advance what would make it invalid.
 > **Diff sign-off:** each slice's tests pass on Windows and on an LF platform (WSL Ubuntu),
 > and nothing runs against the model server until D4's gates pass.
-> **Lanes:** A: D2 · B: D3 · C: D4→D5→D6 (D4 waits on A and B)
-> **Next:** D2 and D3 in parallel (two lanes), then D4. D2: multi-turn sessions in the harness. D3: the probe set.
+> **Lanes:** one lane from here: D4a→D4→D5→D6 (D2 and D3 ran as parallel lanes and have shipped)
+> **Next:** D4a — wire the probe set into deep runs: load `deep-tasks.json`, grade each probe kind, and run predict probes with no shell.
 > **Branch:** `benchmark-deep-context` for this plan; lane branches `bench/<slice>`.
 
 - [~~D1 — The claim, the conditions, and the gates~~ — SHIPPED 2026-10-14](#d1)
-- [D2 — Multi-turn sessions in the harness](#d2)
-- [D3 — The probe set: navigation and understanding](#d3)
+- [~~D2 — Multi-turn sessions in the harness~~ — SHIPPED 2026-10-14](#d2)
+- [~~D3 — The probe set: navigation and understanding~~ — SHIPPED 2026-10-14](#d3)
+- [D4a — Wire the probe set into deep runs](#d4a)
 - [D4 — Warm-up sessions and the calibration gates](#d4)
 - [D5 — Run the matrix and decide](#d5)
 - [D6 — Variants: a Claude model, Cairn-written comments, summaries](#d6)
@@ -58,7 +59,15 @@ matrix ran anyway, which wasted the round.
 ## Traps
 
 - **A warm-up that touches a probe's module** teaches the agent the answer. Warm-up tasks and
-  probes use disjoint modules; D3 lists both sets.
+  probes use disjoint modules, and `loadDeepTasks` refuses an overlap. A warm-up may read a file
+  a probe's module only imports, but never edit it (PR #26, § Isolation).
+- **The arm must not leak into the agent's view.** PR #25 found three leaks: a local-path clone
+  kept the original commits and tags, commit messages named the arm, and run paths named it.
+  All are fixed, and a recorded run never used one. Every checkout goes through `checkoutArm`
+  (it clones `--no-local`), and no directory an agent sees may name its arm; never add a
+  shortcut around either.
+- **Re-prepare a work directory before its next run.** Prepared entries now record `start` and
+  `agentNotes`, and `run` refuses an entry without them (about 3 minutes for BoxelBuilder).
 - **Warm-up and probe calls share one proxy log.** Metrics for a probe count only its own
   calls; the log tags each call with its phase.
 - **Fresh and deep runs differ in start state, so compare within the same arm and probe.**
@@ -75,66 +84,118 @@ matrix ran anyway, which wasted the round.
 - [x] Add the rule to AGENTS.md: a benchmark states the claim and condition it tests, and a
       failed calibration gate stops the run
 
-## D2 — Multi-turn sessions in the harness · Opus 5.5 / high {#d2}
+## ~~D2 — Multi-turn sessions in the harness~~ · Opus 5.5 / high — SHIPPED 2026-10-14 {#d2}
 
-**Status:** Not started. Lane A.
-**Touches:** `scripts/benchmark/{runner,harnesses,proxy,metrics,schedule}.ts`, their tests.
+**Status:** Shipped as PR #27 (lane A). Both harnesses fork natively, so there is no replay
+fallback. Run and warm-up directories are hashes, so no path names the arm. Its plan notes
+are filed under D4a, D4 and D5.
+**Touches:** `scripts/benchmark/{agent,warmup,standin,runner,harnesses,proxy,metrics,schedule,report,main,workspace}.ts`, their tests.
 **After:** none.
 
 Today one run is one prompt. A deep run is a warm-up chain, then probes that fork from the
 warm-up's end state.
 
-- [ ] Read the installed Claude Code and pi docs for session resume and fork (Claude Code:
-      `--resume <id>` and `--fork-session`; pi: `--session-dir`). Record what exists in this
-      slice's note, because the design below depends on it. If forking is not available,
-      fall back to replaying the chain per probe and say what that costs.
-- [ ] Test first: a stand-in API (the existing dry-run provider) drives a three-prompt chain;
-      the run records one proxy log with each call tagged `warmup` or `probe`.
-- [ ] `runAgent` takes a chain of prompts in one session and returns the session id; a
-      second call forks from a session id with one new prompt
-- [ ] Metrics for a run count only `probe` calls, and record the context size (input tokens)
-      of the first probe call, so G1 is checkable from `result.json`
-- [ ] The result has a `depth` field (`fresh` or `deep`) and the report splits by it
-- [ ] Verify: `npm test`; a dry run on the stand-in provider on both harnesses
+- [x] Read the installed Claude Code and pi docs for session resume and fork, and record what
+      exists. Claude Code 2.1.299: `--session-id`, `--resume <id>`, and `--resume <id>
+      --fork-session --session-id <new>`. pi 1.0.2: `--session-id` and `--fork <id>
+      --session-id <new>`. Forks of one session do not see each other. A replay would have cost
+      one whole warm-up per probe run, 24 per chain and arm.
+- [x] Test first: a stand-in API (`node scripts/benchmark/standin.ts --port 8499`) drives a
+      three-prompt chain; the run records one proxy log with each call tagged `warmup` or `probe`
+- [x] `runAgent` (now in `agent.ts`) takes a chain of prompts in one session and returns the
+      session id; a second call forks from a session id with one new prompt
+- [x] Metrics for a run count only `probe` calls, and `metrics.firstCallContext` records the
+      context of the first probe call that declares tools, so G1 is checkable from `result.json`
+- [x] The result has a `depth` field (`fresh` or `deep`) and the report splits by it
+- [x] Verify: Windows `npm test` 649 passed, 1 skipped; WSL 664 passed; stand-in dry run on
+      both harnesses, claude 16/16 and pi 16/16, with a 0.0% proxy-vs-harness token gap
 
-## D3 — The probe set: navigation and understanding · Opus 5.5 / high {#d3}
+## ~~D3 — The probe set: navigation and understanding~~ · Opus 5.5 / high — SHIPPED 2026-10-14 {#d3}
 
-**Status:** Not started. Lane B.
-**Touches:** `benchmark/deep-tasks.json`, `benchmark/warmups/`, `scripts/benchmark/tasks.ts`.
+**Status:** Shipped as PR #26 (lane B). Eight probes and two warm-up chains, all starting at
+BoxelBuilder `fcbcc06cb1c5b3fca9988d661552649394748fc8`. Both G4 readers scored 8/8, and no
+probe was dropped. The PR body holds the full record: the complexity table, the import
+closures, and each probe's invariant check.
+**Touches:** `benchmark/deep-tasks.json`, `benchmark/probes/`, `benchmark/warmups/`,
+`scripts/benchmark/{tasks,verify-probes}.ts`.
 **After:** none.
 
 Eight probes in `benchmark/deep-tasks.json`, none in a module the warm-up chains touch.
 
-- [ ] **Pick the complicated functions by measurement, not by feel:** rank BoxelBuilder
-      functions by cyclomatic complexity (for example `ruff check --select C901` with a low
-      threshold) and by size; take four with branching order that matters. Candidates to
-      check first: the water-flow equalization and breach code, felling, navgrid, regions, the
-      NPC behavior step. Record the numbers.
-- [ ] **Four understanding probes, each with an objective grader:**
-      (a) *predict:* "given these inputs, what does the function return or leave behind?" with
-      the true answer computed by running the function, graded by exact match;
-      (b) *change with an invariant:* edit the function to add a behavior, graded by hidden
-      tests, one of which checks a subtle invariant;
-      (c) *rubric:* an answer key of facts, used only alongside (a) or (b), never alone.
-- [ ] **Four navigation probes**, symptom-only prompts that name no file, function, or
-      message, where the answer is a function reached through at least three modules; graded
-      by a key requiring the file and function, plus an edit variant with a hidden test for two
-      of them.
-- [ ] **G4 check:** two readers (a strong model with no access to comments, and the owner or a
-      second model) answer every probe from the stripped code alone, independently. Drop or
-      rewrite any probe they cannot answer, and any where the stripped code gives no way to
-      get the answer.
-- [ ] Write the warm-up chains in `benchmark/warmups/`: two independent chains of 5 to 6
-      realistic prompts (fixes, a refactor, a feature, and a few questions) in modules
-      disjoint from every probe, long enough to reach the depth target in D4
-- [ ] Verify: each probe's hidden tests fail on the stripped start and pass on its reference
-      solution in both arms (the `verify` procedure of the last round)
+- [x] **Pick the complicated functions by measurement, not by feel.** `ruff --select C901`
+      (threshold 12) at fcbcc06, given as complexity / lines / comment lines:
+      `felling.gather_tree` 30/171/43, `npc_brain.hostile_step` 23/131/26,
+      `navgrid.NavGrid.update_cells` 23/109/33, `water.solve_drain` 19/167/34. Passed over:
+      `npc_fsm._move_step` (35, but only 9 comment lines in 183), `waterindex._stitch`,
+      `occlusion.visible_chunks_box`, and the GL dispatchers.
+- [x] **Four understanding probes, each with an objective grader:** fell-touching-crowns and
+      drain-into-shaft (predict, exact match on the last `ANSWER:` line); enemy-leash and
+      navgrid-changed-nodes (change, hidden tests). A naive edit fails 2 of 4 and 3 of 4 hidden
+      tests respectively. Each also has a rubric, scored only as a secondary.
+- [x] **Four navigation probes**, symptom-only, each answer at least three modules from the user
+      action: fog-gate-refused and portal-one-way (locate), lightning-moderate-rain and
+      ai-overwrite-asks (change)
+- [x] **G4 check:** Opus 5.5 and Sonnet 5.5, each alone on a stripped checkout, scored 8/8. One
+      probe (lightning) was rewritten because the readers showed its premise false. Their
+      checkouts held the leaked original objects, but neither reader touched them, so G4 stands.
+- [x] Write the warm-up chains: editor-tools (6 prompts, 19 files) and game-systems (6 prompts,
+      15 files), in `benchmark/warmups/` as `{ repo, start, modules, prompts }`
+- [x] Verify: `verify-probes` 12/12 in both arms, before and after PR #25's strip rules (the
+      stripped tree stayed byte-identical); Windows `npm test` 634 passed, 1 skipped; WSL 640 passed
+
+## D4a — Wire the probe set into deep runs · Opus 5.5 / high {#d4a}
+
+**Status:** Not started. D2 built the runner and D3 the probes, each on its own lane, so
+nothing yet runs a probe end to end. `run` does not load `deep-tasks.json`, the four probe
+kinds have no grading in the runner, and predict probes still get a shell.
+**Touches:** `scripts/benchmark/{runner,metrics,tasks,warmup,main,harnesses}.ts`, their tests,
+`docs/benchmark.md`.
+**After:** D2, D3.
+
+- **Note (from D3):** the graders exist in `tasks.ts`, kept out of lane A's files:
+  `gradePrediction(finalText, expected)`, `gradeAnswer(finalText, answerKey)` for locate,
+  `gradeChangeProbe(taskFile, probe, checkout, env, committed)`, and the rubric through
+  `gradeAnswer` as a secondary score only. `committed` is the arm's prepared commit, never
+  HEAD, if the runner commits the warm-up's end state. Copy hidden tests by their named
+  paths, never a whole `tests/` folder.
+- **Note (from D2 and D3):** probes carry no chain or depth field. Every probe forks from
+  every chain at its repository and start, and depth is the runner's factor.
+
+- [ ] Test first: `run` with `deep-tasks.json` plans fresh and deep runs for every probe and
+      grades each kind (predict, locate, change, rubric as secondary) into `result.json`
+- [ ] Predict and locate probes run with no shell and no edit tools: Claude Code
+      `--disallowedTools Bash,Edit,Write,NotebookEdit`, and pi's tool allowlist. Test that the
+      harness command line carries the restriction, for fresh runs and forks alike.
+- [ ] One home for each piece: `loadDeepTasks`' chain reading merged into `loadChains`;
+      `gradePrediction` and `gradeChangeProbe` beside `gradeAnswer` in `metrics.ts`; one
+      test-command runner for runner.ts's edit grading and `gradeChangeProbe`
+- [ ] `docs/benchmark.md` gets a deep-runs section: chains, forks, depths, the CLI flags, what
+      `result.json` records, and the arm-blind run layout
+- [ ] Verify: scoped suite and `npm test` on Windows and WSL; a stand-in dry run over
+      `deep-tasks.json` with one chain, both depths, both harnesses, where every probe kind
+      reaches its grader (a stand-in answer fails, but the grade is recorded)
 
 ## D4 — Warm-up sessions and the calibration gates · Opus 5.5 / high {#d4}
 
-**Status:** Not started. Lane C. Blocked on D2 and D3.
+**Status:** Not started. Blocked on D4a.
 **Touches:** the work directory only; edits to D3's warm-ups if depth is short.
-**After:** D2, D3.
+**After:** D4a.
+
+- **Note (from D2):** confirm on Strata that the first probe call counted for G1 is the
+  agent's own. Side calls (titles, summaries) declare no tools, and the proxy now logs each
+  call's tool count; neither harness made one in the dry run.
+- **Note (from D2):** any 5xx in a session's log is a provider failure, so one retried 529 in a
+  long chain throws the whole warm-up away and reruns the chain. Measure how often this
+  happens on Strata before relaxing the rule, for fresh and deep runs alike.
+- **Note (from D2):** a warm-up whose prompt failed or timed out is refused for probes. If the
+  last warm-up prompt times out, deep Claude runs have no harness totals (cost n/a).
+- **Note (from D3):** the comments arm reads 25–35% more bytes for the same work, so the arms
+  of one chain reach different depths. Record each arm's depth. game-systems in the `none`
+  arm may fall short of 120,000 tokens. Spare prompts for that case:
+  `worldio.apply_packed` raises IndexError after `w.clear()` on a bad palette slot, and a
+  forked effect shadows its preset by slug.
+- **Note (from D2):** snapshotting BoxelBuilder takes 9.7 s once per warm-up, and restoring it
+  4.5 s per probe. One warm-up's probes run one after another.
 
 - [ ] Measure the model server first: prefill speed at 150,000 tokens of context on Strata,
       and the context length the warm-ups actually reach. Set the depth target from the
@@ -147,9 +208,14 @@ Eight probes in `benchmark/deep-tasks.json`, none in a module the warm-up chains
 
 ## D5 — Run the matrix and decide · Opus 5.5 / medium {#d5}
 
-**Status:** Not started. Lane C. Blocked on D4.
+**Status:** Not started. Blocked on D4.
 **Touches:** the work directory; `docs/benchmark.md`, this plan, `docs/plans/v2.md`.
 **After:** D4.
+
+- **Note (from D2):** nothing deletes warm-up directories, and each holds two copies of the
+  checkout (about 2.3 GB for BoxelBuilder, so about 9 GB for four warm-ups). Delete them after
+  the last probe. Deep runs spread over at most chains × arms processes (4 here), because one
+  warm-up's probes share its checkout.
 
 - [ ] Two warm-up chains per arm, each forked for every probe: 8 probes × 2 arms × 2 depths × 3 repetitions (about 96 probe runs and 4 warm-ups on Strata)
 - [ ] Report the per-probe change at `deep` against `fresh`, with intervals; split navigation
@@ -159,7 +225,7 @@ Eight probes in `benchmark/deep-tasks.json`, none in a module the warm-up chains
 
 ## D6 — Variants: a Claude model, Cairn-written comments, summaries · Opus 5.5 / medium {#d6}
 
-**Status:** Not started. Lane C. Blocked on D5.
+**Status:** Not started. Blocked on D5.
 **After:** D5.
 
 - [ ] Repeat D5 on a Claude model (Haiku 5.5 through the API; the cost table in
