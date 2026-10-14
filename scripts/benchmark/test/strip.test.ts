@@ -27,10 +27,21 @@ describe.skipIf(!python)("strip_comments.py", () => {
       "# fmt: off",
       "y = [1,2]",
       "# fmt: on",
+      "import c  # pylint: disable=unused-import",
+      "d = g()  # pyright: ignore[reportGeneralTypeIssues]",
+      "# mypy: ignore-errors",
+      "import e  # isort: skip",
+      "# ruff: noqa: E501",
+      "h = run(cmd)  # nosec",
+      "z = []  # type: List[int]",
       "",
     ].join("\n");
 
     expect(strip(source).stdout).toBe(source);
+  });
+
+  it("reads a lone carriage return as a line end, as Python does", () => {
+    expect(strip("x = 1\r# c\ny = 2  # d\n").stdout).toBe("x = 1\ry = 2\n");
   });
 
   it("leaves a # inside strings and docstrings alone", () => {
