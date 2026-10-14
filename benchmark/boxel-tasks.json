@@ -89,7 +89,7 @@
         "begin_edit",
         "commit_edit",
         "apply_block_delta",
-        "\\b200\\b"
+        "limit=200|\\b200\\b\\W{0,4}(undo )?(steps|entries)"
       ],
       "answer": "World.begin_edit arms a journal that add_block/del_block write per-cell [old, new] texture pairs into; commit_edit returns that delta (dropping cells with no net change); apply_block_delta replays it forward (redo) or inverted (undo) through the normal mutators, so only the touched chunks update. The editor's _map_history is an UndoStack(limit=200). Non-block state (npcs, metadata, events, game_state) uses a small entity snapshot instead."
     },
@@ -101,8 +101,9 @@
       "prompt": "On the game-over screen, 'load last save' picks a slot. Where on disk do the save slot files live relative to the worlds folder, and how is the newest slot chosen, including when two slots have the same timestamp and when they tie on everything else? Answer from the code; do not change any files.",
       "answerKey": [
         "saves",
+        "sibling|parent|alongside|next to|beside|\\.\\.[\\\\/]saves",
         "mtime|modification time|modified time|file time",
-        "lower|smallest|lowest"
+        "(lower|smallest|lowest)\\W{0,4}(slot|number|index|-numbered)|slot 1\\b|first slot"
       ],
       "answer": "saveload.latest_slot compares (saved_at, file mtime) per slot; slots live in a saves/ folder next to worlds/ as slot1.json..; the strictly greater key wins so a full tie keeps the lower slot number."
     },
@@ -115,9 +116,10 @@
       "answerKey": [
         "tuning\\.json",
         "phase_of",
-        "\\b5\\b",
-        "\\b18\\b",
-        "\\b21\\b"
+        "dawn\\D{0,40}\\b0?5\\b",
+        "day\\D{0,40}\\b0?6\\b",
+        "dusk\\D{0,40}\\b18\\b",
+        "night\\D{0,40}\\b21\\b"
       ],
       "answer": "data/tuning.json section day_night: dawn_hour 5, day_hour 6, dusk_hour 18, night_hour 21; daynight.phase_of(t) returns dawn/day/dusk/night with night wrapping across midnight."
     },
@@ -142,8 +144,8 @@
       "start": "fcbcc06cb1c5b3fca9988d661552649394748fc8",
       "prompt": "In an authored NPC behavior state machine, what happens when two transitions of the current state both hold on the same frame, and what does a time_between transition do on a map that has no day/night clock? Answer from the code; do not change any files.",
       "answerKey": [
-        "first",
-        "never|does not hold|doesn.t hold|not hold|false"
+        "first\\W{1,4}(one|transition|condition|match|that holds|to hold|in (the )?(list|authored|declared|state)|holding)|(list|authored|declared|written) order",
+        "never (holds|fires|hold|fire)|(does not|doesn.t|cannot|can never|won.t) (hold|fire)|stays false|is false"
       ],
       "answer": "npc_fsm._check_transitions returns the first transition in list order whose condition holds; time_between never holds when the context has no time_of_day."
     }
