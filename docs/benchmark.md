@@ -131,7 +131,8 @@ A run that already wrote `result.json` is skipped, so an interrupted benchmark r
 runs compete for the CPU (`npm ci`, test runs), which adds noise to wall time; the shuffle
 spreads it over both arms. Each run keeps `calls.jsonl` (the proxy log),
 the harness output, `setup.log`, `test.log`, and `result.json` under
-`<work>/runs/<harness>/<task>/<arm>-<rep>/`; `--keep` also keeps the checkouts.
+`<work>/runs/<harness>/<task>/<hash>/`, a name that hides the arm from the agent working
+in it (`result.json` records the arm); `--keep` also keeps the checkouts.
 
 The click setup uses `uv`; the cairn-comments setup runs `npm ci`. `--provider <url>`
 points the proxy at a stand-in for the API, which is how the harness was exercised end to

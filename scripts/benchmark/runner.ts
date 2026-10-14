@@ -13,7 +13,7 @@ import type { PreparedTask } from "./prepare.ts";
 import { startRecordingProxy } from "./proxy.ts";
 import { expandCommand, type EditTask, type RepoSpec, type Task } from "./tasks.ts";
 import { ensureWarmup, restoreWarmup, type WarmupChain } from "./warmup.ts";
-import { git, isolatedEnv, removeCheckouts, setUpCheckout, type Arm } from "./workspace.ts";
+import { git, isolatedEnv, neutralName, removeCheckouts, setUpCheckout, type Arm } from "./workspace.ts";
 
 export type Depth = "fresh" | "deep";
 
@@ -72,10 +72,9 @@ export function depthOf(result: RunResult): Depth {
   return result.depth ?? "fresh";
 }
 
-/** A fresh run's directory is `<arm>-<rep>`, as before deep runs existed; a deep one names its chain. */
+/** A run's directory; its name hides the arm (`neutralName`), which result.json records. */
 export function runDirFor(spec: { workDir: string; harness: HarnessName; task: Task; arm: Arm; rep: number; chain?: string }): string {
-  const name = spec.chain ? `deep-${spec.chain}-${spec.arm}-${spec.rep}` : `${spec.arm}-${spec.rep}`;
-  return path.join(spec.workDir, "runs", spec.harness, spec.task.id, name);
+  return path.join(spec.workDir, "runs", spec.harness, spec.task.id, neutralName(spec.arm, spec.chain, spec.rep));
 }
 
 /** Puts the solution's tests, read from the mirror, over the agent's work. */

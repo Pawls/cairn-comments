@@ -12,7 +12,7 @@ import { contextOf, providerFailed } from "./metrics.ts";
 import type { PreparedTask } from "./prepare.ts";
 import { startRecordingProxy } from "./proxy.ts";
 import type { RepoSpec } from "./tasks.ts";
-import { isolatedEnv, setUpCheckout, type Arm } from "./workspace.ts";
+import { isolatedEnv, neutralName, setUpCheckout, type Arm } from "./workspace.ts";
 
 /** Prompts run in one session before a probe forks from its end. */
 export interface WarmupChain {
@@ -52,8 +52,9 @@ export function loadChains(dir: string): Map<string, WarmupChain> {
   return chains;
 }
 
+/** A warm-up's directory; its name hides the arm (`neutralName`), which warmup.json records. */
 export function warmupDirFor(workDir: string, harness: HarnessName, chain: string, arm: Arm): string {
-  return path.join(workDir, "warmups", harness, `${chain}-${arm}`);
+  return path.join(workDir, "warmups", harness, neutralName(chain, arm));
 }
 
 export interface WarmupSpec extends AgentOptions {

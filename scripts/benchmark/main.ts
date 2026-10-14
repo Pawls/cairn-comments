@@ -296,6 +296,12 @@ function depthsArg(tasks: Task[]): Depths {
   return { fresh: depths.includes("fresh"), chains };
 }
 
+/** A run as the logs name it; its directory's name does not say. */
+function describePlanned(planned: Planned): string {
+  const start = planned.chain === undefined ? "" : ` from ${planned.chain}`;
+  return `${planned.task.id} ${planned.arm}-${planned.rep}${start}`;
+}
+
 /** The selected tasks, arms, and the whole shuffled queue, as `run` and `status` both read them. */
 function plannedQueue(taskFile: TaskFile): { tasks: Task[]; arms: Arm[]; queue: Planned[] } {
   const only = args.only?.split(",");
@@ -381,7 +387,7 @@ async function run(): Promise<void> {
   let providerFailures = 0;
   for (const [i, planned] of queue.entries()) {
     const runDir = runDirFor({ workDir: work, harness: agent.harness, ...planned });
-    const label = `[${i + 1}/${queue.length}] ${agent.harness} ${planned.task.id} ${path.basename(runDir)}`;
+    const label = `[${i + 1}/${queue.length}] ${agent.harness} ${describePlanned(planned)}`;
     if (existsSync(path.join(runDir, "result.json"))) continue;
     if (stopAt && new Date() >= stopAt) {
       log(`stop time reached before ${label}`);
@@ -401,9 +407,9 @@ function status(): void {
   const work = path.resolve(required("work", args.work));
   const harness = harnessArg();
   const { queue } = plannedQueue(loadTasks(args.tasks!));
-  const runDirs = queue.map((planned) => runDirFor({ workDir: work, harness, ...planned }));
-  const finished = runDirs.filter((dir) => existsSync(path.join(dir, "result.json")));
-  const failed = runDirs.filter((dir) => !finished.includes(dir) && existsSync(path.join(dir, "error.txt")));
+  const runs = queue.map((planned) => ({ planned, dir: runDirFor({ workDir: work, harness, ...planned }) }));
+  const finished = runs.filter((run) => existsSync(path.join(run.dir, "result.json"))).map((run) => run.dir);
+  const failed = runs.filter((run) => !finished.includes(run.dir) && existsSync(path.join(run.dir, "error.txt")));
   const results = finished.map((dir) => JSON.parse(readFileSync(path.join(dir, "result.json"), "utf8")) as RunResult);
   const minutes = spreadOf(results.map((r) => r.wallMs / 60_000))?.median;
   const remaining = queue.length - finished.length;
@@ -423,9 +429,9 @@ function status(): void {
     console.log(`  median ${minutes.toFixed(1)} min of agent time per run; about ${((remaining * minutes) / 60).toFixed(1)} h of agent time left`);
   }
   console.log(`  ${failed.length} runs with an error and no result (retried by the next batch):`);
-  for (const dir of failed) {
+  for (const { planned, dir } of failed) {
     const firstLine = readFileSync(path.join(dir, "error.txt"), "utf8").split("\n")[0];
-    console.log(`    ${path.relative(work, dir)}: ${firstLine}`);
+    console.log(`    ${describePlanned(planned)} (${path.relative(work, dir)}): ${firstLine}`);
   }
 }
 

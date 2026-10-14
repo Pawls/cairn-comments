@@ -3,6 +3,7 @@
  * config, ignore file, and CLI home (see `isolatedEnv`), never the machine owner's.
  */
 import { execFileSync, execSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,6 +37,14 @@ export function refuseInheritedInstructions(workDir: string): void {
     if (parent === dir) return;
     dir = parent;
   }
+}
+
+/**
+ * A directory name that tells runs apart without saying which arm each is in. Agents see the
+ * path they work in, and a name like `none-3` would tell them their arm.
+ */
+export function neutralName(...parts: Array<string | number | undefined>): string {
+  return createHash("sha256").update(JSON.stringify(parts)).digest("hex").slice(0, 12);
 }
 
 /** The process environment without git variables, with git and the CLI pointed into `stateDir`. */
