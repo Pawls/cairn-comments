@@ -7,7 +7,7 @@ import { gradeAnswer, providerFailed, runMetrics, type LoggedCall, type RunMetri
 import type { PreparedTask } from "./prepare.ts";
 import { startRecordingProxy } from "./proxy.ts";
 import { expandCommand, type EditTask, type RepoSpec, type Task } from "./tasks.ts";
-import { checkoutArm, commentBytes, isolatedEnv, removeCheckouts, runSetup, type Arm } from "./workspace.ts";
+import { checkoutArm, commentBytes, git, isolatedEnv, removeCheckouts, runSetup, type Arm } from "./workspace.ts";
 
 /** What starts an agent, whatever it is asked. */
 export interface AgentOptions {
@@ -139,7 +139,10 @@ function placeSolutionTests(task: EditTask, mirror: string, agentDir: string, en
 
 /** Puts the solution's tests over the agent's work and runs the task's test command. */
 function gradeEdit(task: EditTask, spec: RunSpec, agentDir: string, env: Record<string, string>, runDir: string): Grade {
-  placeSolutionTests(task, spec.mirror, agentDir, env);
+  // A Cairn checkout has the solution and checks it out through its filters, as the recorded
+  // rounds did; a prepared clone lacks it.
+  if (spec.prepared) placeSolutionTests(task, spec.mirror, agentDir, env);
+  else git(agentDir, env, "checkout", task.solution, "--", ...task.testFiles);
   const test = spawnSync(expandCommand(task.testCommand), {
     cwd: agentDir,
     env,
