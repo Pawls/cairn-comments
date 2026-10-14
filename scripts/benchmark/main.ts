@@ -15,10 +15,10 @@
  *       benchmark/warmups/ for the tasks' repositories, unless --chains names some).
  *       A chain runs once per harness and arm, before the first probe that forks it.
  *       Predictions and locations run with read-only tools. A run that already has a
- *       result.json is skipped, so an interrupted benchmark resumes. n processes given --shard 1/n to n/n share the
- *       queue between them, each warm-up's runs in one process. No run starts after
- *       --stop-at. A run the model server failed is left for the next batch, and two in a
- *       row end the batch.
+ *       result.json is skipped, so an interrupted benchmark resumes. n processes given
+ *       --shard 1/n to n/n share the queue between them, each warm-up's runs in one
+ *       process. No run starts after --stop-at. A run the model server failed is left for
+ *       the next batch, and two in a row end the batch.
  *   prepare --work <dir> --repo <name> [--source <path>] [--only <task or chain,...>]
  *       for a repository whose arms differ in its own comments: builds the two arm commits
  *       of each task and each warm-up chain in the mirror (stripped and as committed), or the

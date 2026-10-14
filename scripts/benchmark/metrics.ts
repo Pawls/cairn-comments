@@ -183,17 +183,23 @@ export interface TestRun {
 }
 
 /**
- * Runs a test command from `cwd` with `{venv-python}` expanded. A round's task gives a shell
- * command line, `&&` and all. A probe gives a program and its arguments, run with no shell
- * so the timeout stops the test process itself rather than a shell around it.
+ * How a test command is written. A round's task gives a shell command line, `&&` and all. A
+ * probe gives a program and its arguments, run with no shell so the timeout stops the test
+ * process itself rather than a shell around it.
  */
-export function runTestCommand(command: string, form: TestCommandForm, cwd: string, env: Record<string, string>): TestRun {
+type TestCommandForm = "shell" | "program";
+
+/** Runs a test command from `cwd` with `{venv-python}` expanded. */
+export function runTestCommand(
+  command: string,
+  form: TestCommandForm,
+  cwd: string,
+  env: Record<string, string>,
+): TestRun {
   const options = { cwd, env, encoding: "utf8", timeout: TEST_TIMEOUT_MS, maxBuffer: OUTPUT_LIMIT } as const;
   const run = spawnTest(command, form, options);
   return { passed: run.status === 0, testExit: run.status, output: `${run.stdout}\n${run.stderr}` };
 }
-
-type TestCommandForm = "shell" | "program";
 
 function spawnTest(command: string, form: TestCommandForm, options: SpawnSyncOptionsWithStringEncoding & { cwd: string }) {
   if (form === "shell") return spawnSync(expandCommand(command), { ...options, shell: true });
