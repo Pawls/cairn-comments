@@ -141,6 +141,19 @@ describe("harnessTotals", () => {
     expect(totals?.costUsd).toBeCloseTo(0.1);
   });
 
+  it("matches the proxy's count on Claude Code 2.1.299's own result lines, recorded from the stand-in", () => {
+    // The warm-up's last prompt, then a probe forked from it; the proxy logged 17,420 input
+    // tokens and 5 output tokens for the probe's one call.
+    const parent = jsonl([
+      { type: "result", total_cost_usd: 0.26014, modelUsage: { "stand-in": { inputTokens: 51953, outputTokens: 15, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 } } },
+    ]);
+    const fork = jsonl([
+      { type: "result", total_cost_usd: 0.347365, modelUsage: { "stand-in": { inputTokens: 69373, outputTokens: 20, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 } } },
+    ]);
+
+    expect(forkTotals("claude", fork, parent)?.tokens).toEqual({ input: 17420, output: 5, cacheRead: 0, cacheWrite: 0 });
+  });
+
   it("knows no Claude Code fork's spend when the session's totals at the fork are missing", () => {
     const fork = jsonl([{ type: "result", total_cost_usd: 0.4, modelUsage: {} }]);
 

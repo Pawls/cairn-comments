@@ -47,3 +47,5 @@ writeFileSync(historyFile(sessionId), JSON.stringify(history));
 const usage = { input: message.usage.input_tokens, output: message.usage.output_tokens, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } };
 console.log(JSON.stringify({ type: "session", id: sessionId }));
 console.log(JSON.stringify({ type: "message_end", message: { role: "assistant", usage } }));
+// A prompt that starts "fail:" stands in for a harness that errors out after its call.
+if (positionals.at(-1)!.startsWith("fail:")) process.exitCode = 1;

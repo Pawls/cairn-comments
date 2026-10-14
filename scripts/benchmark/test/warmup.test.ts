@@ -7,7 +7,7 @@ import { ProviderError, readLog } from "../agent.ts";
 import { runDirFor, runOne, type RunSpec } from "../runner.ts";
 import { startStandIn, type StandIn } from "../standin.ts";
 import type { QuestionTask } from "../tasks.ts";
-import { loadChains, warmupDirFor, type WarmupChain } from "../warmup.ts";
+import { chainsNamedLikeTasks, loadChains, warmupDirFor, type WarmupChain } from "../warmup.ts";
 import { git, isolatedEnv } from "../workspace.ts";
 
 const FAKE_PI = path.join(path.dirname(fileURLToPath(import.meta.url)), "fake-pi.ts");
@@ -110,6 +110,16 @@ describe("a deep run", () => {
     expect(git(agentDir, env, "diff-files", "--name-only").trim()).toBe("");
   });
 
+  it("refuses to fork a warm-up whose prompt failed, without running the chain again", async () => {
+    const failing = { ...spec.warmup!.chain, prompts: ["first warm-up prompt", "fail: second warm-up prompt"] };
+    const failingSpec = { ...spec, warmup: { chain: failing } };
+    const warmupLog = path.join(warmupDirFor(spec.workDir, "pi", "w", "none"), "calls.jsonl");
+
+    await expect(runOne(failingSpec)).rejects.toThrow(/warm-up w did not finish: prompt 2 exited 1/);
+    await expect(runOne({ ...failingSpec, rep: 2 })).rejects.toThrow(/did not finish/);
+    expect(readLog(warmupLog)).toHaveLength(2);
+  });
+
   it("refuses a probe that does not start where the chain does", async () => {
     const elsewhere = { ...spec.task, start: "0000000000000000000000000000000000000000" };
 
@@ -149,6 +159,12 @@ describe("loadChains", () => {
     const dir = chainsIn({ "w1.json": JSON.stringify({ repo: "r", start: "s", prompts: ["go"] }) });
 
     expect(loadChains(dir).get("w1")).toEqual({ id: "w1", repo: "r", start: "s", prompts: ["go"] });
+  });
+
+  it("names the chains whose id is also a task's, which would share the task's prepared commits", () => {
+    const chains = [{ id: "fix-flow", repo: "r", start: "s", prompts: ["go"] }, { id: "w1", repo: "r", start: "s", prompts: ["go"] }];
+
+    expect(chainsNamedLikeTasks(chains, [{ id: "fix-flow" }, { id: "q1" }])).toEqual(["fix-flow"]);
   });
 
   it("refuses a chain file without a repository, a start commit, and at least one prompt, naming the file", () => {

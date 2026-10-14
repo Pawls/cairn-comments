@@ -1,6 +1,8 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { runDirFor } from "../runner.ts";
+import { legacyRunDirs, runDirFor } from "../runner.ts";
 import type { Task } from "../tasks.ts";
 import { warmupDirFor, type WarmupChain } from "../warmup.ts";
 import { ARMS } from "../workspace.ts";
@@ -37,5 +39,27 @@ describe("the directories an agent works in", () => {
 
     expect(runs.size).toBe(2 * 3 * 2);
     expect(warmups.size).toBe(4);
+  });
+});
+
+describe("legacyRunDirs", () => {
+  it("finds results under the old <arm>-<rep> names, which run and status would no longer see", () => {
+    const work = mkdtempSync(path.join(tmpdir(), "legacy-"));
+    const result = (...parts: string[]) => {
+      mkdirSync(path.join(work, "runs", ...parts), { recursive: true });
+      writeFileSync(path.join(work, "runs", ...parts, "result.json"), "{}");
+    };
+    result("claude", "t1", "none-3");
+    result("pi", "t2", "comments-1");
+    result("pi", "t2", "0123456789ab");
+
+    expect(legacyRunDirs(work).map((dir) => path.relative(work, dir).split(path.sep).join("/")).sort()).toEqual([
+      "runs/claude/t1/none-3",
+      "runs/pi/t2/comments-1",
+    ]);
+  });
+
+  it("finds none in a work directory with no runs yet", () => {
+    expect(legacyRunDirs(mkdtempSync(path.join(tmpdir(), "legacy-")))).toEqual([]);
   });
 });
