@@ -175,8 +175,9 @@ checkout of its own. `--depths deep` forks each warm-up chain instead: the chain
 run once per harness and arm, in one session, before the first probe that forks it, and
 every probe then forks that session as the chain left it. `--depths fresh,deep` plans both,
 so each probe runs once fresh and once per chain for every arm and repetition. `--chains
-<chain,...>` narrows the chains. A probe set names its own chains; a round's task file takes
-them from `--warmups` (default `benchmark/warmups/`).
+<chain,...>` narrows the chains. A probe set names its own chains and refuses `--warmups`; a
+round's task file takes them from `--warmups` (default `benchmark/warmups/`). The probe set
+is prepared once, under the id `deep`, which verify-probes builds too.
 
 **Forks.** A fork sees the warm-up's history and nothing of another fork's. Before each
 probe the warm-up's checkout, harness configuration, and sessions are put back from a
@@ -195,6 +196,12 @@ Read-only runs get an allowlist: Claude Code `--tools Read,Grep,Glob`, pi `--too
 read,grep,find,ls`. With a shell, a prediction could be run instead of read. The rubric is
 a secondary score: which of the probe's patterns the final answer states, never part of
 `passed`.
+
+A read-only fork declares a different tool list than the warm-up did, and the tools come
+first in the prompt, so its first call misses the prompt cache and prefills the whole
+warm-up again. Both arms pay this alike, so the per-probe comparison holds, but a deep
+prediction's or location's wall time and cache split are not comparable with a deep
+change's.
 
 **What a result records.** Beside the fields every run has, `depth` (`fresh` or `deep`),
 `chain` for a deep run, and `metrics.firstCallContext`, the context of the probe's first

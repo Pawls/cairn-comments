@@ -259,8 +259,13 @@ function loadSetChain(taskFile: string, chainFile: string): WarmupChain {
   return chain;
 }
 
+/** A probe as written: the set gives it the rest, and a `repo` or `start` it names must be the set's. */
+type ProbeJson<P extends Probe = Probe> = P extends Probe
+  ? Omit<P, "repo" | "start" | "dir" | "preparedId"> & Partial<Pick<P, "repo" | "start">>
+  : never;
+
 /** A probe set as written: chains named by file, probes without what the set gives them. */
-type DeepTaskJson = Omit<DeepTaskFile, "warmups"> & { warmups: string[] };
+type DeepTaskJson = Omit<DeepTaskFile, "warmups" | "probes"> & { warmups: string[]; probes: ProbeJson[] };
 
 /** A round's file, or a probe set, which is the one with `probes`. */
 function readTaskJson(file: string): TaskFile | DeepTaskJson {
@@ -281,7 +286,13 @@ function deepTasksFrom(file: string, parsed: DeepTaskJson): DeepTaskFile {
     }
   }
   const probesFolder = path.resolve(path.dirname(file), "probes");
-  const probes = parsed.probes.map((probe) => ({ ...probe, ...shared, dir: path.join(probesFolder, probe.id) }));
+  const probes = parsed.probes.map((probe): Probe => {
+    const { repo = parsed.repo, start = parsed.start } = probe;
+    if (repo !== parsed.repo || start !== parsed.start) {
+      throw new Error(`probe ${probe.id} starts at ${repo}@${start}, not ${parsed.repo}@${parsed.start}`);
+    }
+    return { ...probe, ...shared, dir: path.join(probesFolder, probe.id) };
+  });
   checkProbes(probes, warmups);
   return { ...parsed, warmups, probes };
 }
@@ -292,15 +303,19 @@ export function loadDeepTasks(file: string): DeepTaskFile {
   return deepTasksFrom(file, parsed);
 }
 
-/** A round's tasks, or a probe set's probes as tasks with the set's own chains. */
+/**
+ * A round's tasks, or a probe set's probes as tasks with the set's own chains. A round's
+ * chains come from `--warmups`, so a `chains` key in its file is not read.
+ */
 export function loadTaskFile(file: string): TaskFile {
   const parsed = readTaskJson(file);
   if ("probes" in parsed) {
     const deep = deepTasksFrom(file, parsed);
     return { repos: deep.repos, tasks: deep.probes, chains: deep.warmups };
   }
+  if (!Array.isArray(parsed.tasks)) throw new Error(`${file} has neither tasks nor probes`);
   for (const task of parsed.tasks) {
     if (!parsed.repos[task.repo]) throw new Error(`task ${task.id}: unknown repo ${task.repo}`);
   }
-  return parsed;
+  return { repos: parsed.repos, tasks: parsed.tasks };
 }

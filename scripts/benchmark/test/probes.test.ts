@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -50,6 +50,7 @@ function makeProbeSet(root: string, repo: string, start: string): string {
 }
 
 let standIn: StandIn;
+let root: string;
 let queue: Planned[];
 let base: Omit<RunSpec, "task" | "arm" | "rep">;
 const results = new Map<string, RunResult>();
@@ -58,7 +59,7 @@ const resultOf = (task: string, depth: "fresh" | "deep") => results.get(`${task}
 
 beforeAll(async () => {
   standIn = await startStandIn();
-  const root = mkdtempSync(path.join(tmpdir(), "probes-"));
+  root = mkdtempSync(path.join(tmpdir(), "probes-"));
   const { repo, start } = makeRepo(root, { "check.mjs": CHANGE_CHECK, "tests/kept.txt": "good" });
   const loaded = loadTaskFile(makeProbeSet(root, repo, start));
   queue = planRuns(loaded.tasks, ["none"], 1, 1, { fresh: true, chains: loaded.chains ?? [] });
@@ -84,6 +85,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await standIn.close();
+  rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 });
 
 /** The tools the fake pi was given for the run's one prompt (see fake-pi.ts). */

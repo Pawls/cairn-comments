@@ -149,8 +149,9 @@ interface Start {
   agentDir: string;
   homeDir: string;
   /**
-   * The arm's commit, read from the `repo` worktree beside the agent's before the probe runs.
-   * A warm-up or the probe may commit on the agent's branch, which moves only the agent's HEAD.
+   * The arm's commit, read before the probe runs from the `repo` clone the agent's worktree
+   * hangs off. A warm-up or the probe may commit on the agent's branch, which moves only the
+   * agent's HEAD.
    */
   committed: string;
   from?: string;

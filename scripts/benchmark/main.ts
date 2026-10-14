@@ -34,7 +34,7 @@
  * `annotate` and `run` need ANTHROPIC_API_KEY; any other provider is a local model server
  * (or a stand-in, for a dry run) serving `--model` under that name. `--tasks` names another
  * task file, such as the probe set benchmark/deep-tasks.json, and `--warmups` another
- * folder of warm-up chains for a round's task file.
+ * folder of warm-up chains for a round's task file (a probe set names its own and refuses it).
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -84,7 +84,8 @@ const { values: args, positionals } = parseArgs({
     reps: { type: "string", default: "5" },
     depths: { type: "string", default: "fresh" },
     chains: { type: "string" },
-    warmups: { type: "string", default: path.join("benchmark", "warmups") },
+    // No parser default, so a probe set can refuse an explicit --warmups (taskFileArg).
+    warmups: { type: "string" },
     only: { type: "string" },
     seed: { type: "string", default: "1" },
     shard: { type: "string" },
@@ -154,14 +155,25 @@ function workDir(): string {
   return dir;
 }
 
-/** The warm-up chains the task file's deep runs may fork: a probe set's own, or else those in --warmups. */
-function chainsFor(taskFile: TaskFile): WarmupChain[] {
-  return taskFile.chains ?? [...loadChains(args.warmups!).values()];
+const DEFAULT_WARMUPS = path.join("benchmark", "warmups");
+
+/** --tasks, loaded. A probe set names its own warm-up chains, so it refuses --warmups. */
+function taskFileArg(): TaskFile {
+  const taskFile = loadTaskFile(args.tasks!);
+  if (taskFile.chains && args.warmups !== undefined) {
+    throw new Error(`${args.tasks} names its own warm-up chains; leave out --warmups`);
+  }
+  return taskFile;
 }
 
-/** Where `chainsFor` read the chains, for an error message. */
-function chainSource(taskFile: TaskFile): string | undefined {
-  return taskFile.chains ? args.tasks : args.warmups;
+/** Where the task file's deep runs take their chains from: the probe set itself, or --warmups. */
+function chainSource(taskFile: TaskFile): string {
+  return taskFile.chains ? args.tasks! : (args.warmups ?? DEFAULT_WARMUPS);
+}
+
+/** The warm-up chains the task file's deep runs may fork. */
+function chainsFor(taskFile: TaskFile): WarmupChain[] {
+  return taskFile.chains ?? [...loadChains(chainSource(taskFile)).values()];
 }
 
 /**
@@ -224,29 +236,39 @@ function loadPrepared(work: string, taskFile: TaskFile, starting: Starting[]): M
   return loaded;
 }
 
+/** The prepared entries `prepare` builds in `repo`: those --only names, or all of them. */
+function entriesToPrepare(taskFile: TaskFile, repo: string, chains: WarmupChain[]): Starting[] {
+  // A chain's arm commits are prepared like a task's.
+  const entries = preparedEntries([...taskFile.tasks, ...chains]).filter((s) => s.repo === repo);
+  const only = args.only?.split(",");
+  if (!only) return entries;
+  const unknown = only.filter((id) => !entries.some((s) => s.id === id));
+  if (unknown.length) {
+    const ids = entries.map((s) => s.id).join(", ");
+    throw new Error(`--only names no prepared entry of ${repo}: ${unknown.join(", ")}; its entries are ${ids}`);
+  }
+  return entries.filter((s) => only.includes(s.id));
+}
+
 function prepare(): void {
-  const work = workDir();
   const name = required("repo", args.repo);
-  const taskFile = loadTaskFile(args.tasks!);
+  const taskFile = taskFileArg();
   const spec = taskFile.repos[name];
   if (spec?.treatment !== "own-comments") throw new Error(`${name} has no own-comments treatment in ${args.tasks}`);
   const agentNotes = spec.agentNotes;
   if (!agentNotes) throw new Error(`${name} has no agentNotes in ${args.tasks}`);
-  const python = findPython();
-  if (!python) throw new Error("prepare needs Python 3 (uv, python3, or python)");
   const chains = chainsFor(taskFile).filter((chain) => chain.repo === name);
   refuseChainsNamedLikeTasks(chains, taskFile.tasks);
+  const starts = entriesToPrepare(taskFile, name, chains);
+  const work = workDir();
+  const python = findPython();
+  if (!python) throw new Error("prepare needs Python 3 (uv, python3, or python)");
   const mirror = mirrors(work, taskFile, [name], chains).get(name)!;
   const env = isolatedEnv(path.join(work, "state"), path.join(work, "cli-home"));
-  // A chain's arm commits are prepared like a task's.
-  const starts = preparedEntries([...taskFile.tasks, ...chains]).filter((s) => s.repo === name);
-  const only = args.only?.split(",");
-  const unknown = only?.filter((id) => !starts.some((s) => s.id === id)) ?? [];
-  if (unknown.length) throw new Error(`--only names no task or warm-up chain of ${name}: ${unknown.join(", ")}`);
   const file = preparedFile(work, name);
   const prepared: Record<string, PreparedTask> = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
   mkdirSync(path.dirname(file), { recursive: true });
-  for (const { id, start } of starts.filter((s) => !only || only.includes(s.id))) {
+  for (const { id, start } of starts) {
     const done = prepareTask({ mirror, taskId: id, start, python, env, agentNotes });
     prepared[id] = done;
     // Written per entry: each one's commits are already in the mirror, so a later failure must not lose them.
@@ -272,7 +294,7 @@ async function annotate(): Promise<void> {
   const agent = agentOptions();
   const work = workDir();
   const name = required("repo", args.repo);
-  const tasks = loadTaskFile(args.tasks!);
+  const tasks = taskFileArg();
   const spec = tasks.repos[name];
   if (!spec) throw new Error(`no repo ${name} in ${args.tasks}`);
   const mirror = mirrors(work, tasks, [name], []).get(name)!;
@@ -426,7 +448,7 @@ async function run(): Promise<void> {
   const agent = agentOptions();
   const work = workDir();
   refuseLegacyRuns(work);
-  const taskFile = loadTaskFile(args.tasks!);
+  const taskFile = taskFileArg();
   const { tasks, arms, queue: whole } = plannedQueue(taskFile);
   const repoNames = [...new Set(tasks.map((t) => t.repo))];
   if (arms.includes("comments")) requireFrozenComments(taskFile, repoNames);
@@ -467,7 +489,7 @@ function status(): void {
   const work = path.resolve(required("work", args.work));
   refuseLegacyRuns(work);
   const harness = harnessArg();
-  const { queue } = plannedQueue(loadTaskFile(args.tasks!));
+  const { queue } = plannedQueue(taskFileArg());
   const runs = queue.map((planned) => ({ planned, dir: runDirFor({ workDir: work, harness, ...planned }) }));
   const finished = runs.filter((run) => existsSync(path.join(run.dir, "result.json"))).map((run) => run.dir);
   const failed = runs.filter((run) => !finished.includes(run.dir) && existsSync(path.join(run.dir, "error.txt")));
