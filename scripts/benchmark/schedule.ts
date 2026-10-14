@@ -28,13 +28,23 @@ export function planRuns(tasks: Task[], arms: Arm[], reps: number, seed: number,
   const all: Planned[] = [];
   for (const task of tasks) {
     // A start is the chain a deep run forks, or undefined for a fresh run.
-    const forked = depths.chains.filter((chain) => chain.repo === task.repo && chain.start === task.start);
+    const forked = depths.chains.filter((chain) => startsWith(chain, task));
     const starts = depths.fresh ? [undefined, ...forked] : forked;
     for (const arm of arms) {
       for (const chain of starts) all.push(...repetitions(task, arm, chain, reps));
     }
   }
   return shuffled(all, seed);
+}
+
+/** A deep run forks the chain in the same checkout, so the task must start where the chain does. */
+function startsWith(chain: WarmupChain, task: Task): boolean {
+  return chain.repo === task.repo && chain.start === task.start;
+}
+
+/** The tasks that fork none of `chains`, and so get no deep run. */
+export function unforked(tasks: Task[], chains: WarmupChain[]): Task[] {
+  return tasks.filter((task) => !chains.some((chain) => startsWith(chain, task)));
 }
 
 function repetitions(task: Task, arm: Arm, chain: WarmupChain | undefined, reps: number): Planned[] {

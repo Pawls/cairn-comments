@@ -43,7 +43,7 @@ import { providerFailed, runMetrics } from "./metrics.ts";
 import { startRecordingProxy } from "./proxy.ts";
 import { renderReport } from "./report.ts";
 import { depthOf, runDirFor, runOne, type RunResult } from "./runner.ts";
-import { nextOccurrence, planRuns, shard, warmupOf, type Depths, type Planned } from "./schedule.ts";
+import { nextOccurrence, planRuns, shard, unforked, warmupOf, type Depths, type Planned } from "./schedule.ts";
 import { spreadOf } from "./stats.ts";
 import { loadTasks, type Task, type TaskFile } from "./tasks.ts";
 import { loadChains, type WarmupChain } from "./warmup.ts";
@@ -297,8 +297,12 @@ function depthsArg(tasks: Task[]): Depths {
   const unknown = ids.filter((id) => !chains.has(id));
   if (unknown.length) throw new Error(`no warm-up chain ${unknown.join(", ")} in ${args.warmups}`);
   const selected = [...chains.values()].filter((chain) => ids.includes(chain.id));
-  if (!tasks.some((task) => selected.some((chain) => chain.repo === task.repo && chain.start === task.start))) {
+  const alone = unforked(tasks, selected);
+  if (alone.length === tasks.length) {
     throw new Error(`depth deep needs a warm-up chain in ${args.warmups} that starts where a selected task does`);
+  }
+  if (alone.length) {
+    log(`no deep runs for ${alone.map((t) => t.id).join(", ")}: no selected warm-up chain starts at the same repository and commit`);
   }
   return { fresh: depths.includes("fresh"), chains: selected };
 }
