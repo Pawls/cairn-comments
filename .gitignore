@@ -8,3 +8,5 @@ bundle/
 *.vsix
 packages/*/LICENSE
 /.vscode/
+__pycache__/
+*.pyc
