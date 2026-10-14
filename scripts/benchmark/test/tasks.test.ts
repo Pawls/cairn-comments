@@ -125,8 +125,11 @@ describe("the deep-context probe set", () => {
 });
 
 describe("gradeChangeProbe", () => {
-  const passesWhenHiddenAndKeptAreRight =
-    "node -e \"const fs=require('fs');process.exit(fs.existsSync('tests/hidden.txt')&&fs.readFileSync('tests/kept.txt','utf8')==='good'?0:3)\"";
+  const CHECK = [
+    'import { existsSync, readFileSync } from "node:fs";',
+    'const ready = existsSync("tests/hidden.txt") && readFileSync("tests/kept.txt", "utf8") === "good";',
+    "process.exit(ready ? 0 : 3);",
+  ].join("\n");
 
   function probe(testCommand: string): ChangeProbe {
     return {
@@ -145,6 +148,8 @@ describe("gradeChangeProbe", () => {
     const env = isolatedEnv(path.join(dir, "state"), path.join(dir, "cli-home"));
     const agentDir = path.join(dir, "agent");
     write("agent/tests/kept.txt", "good");
+    write("agent/check.mjs", CHECK);
+    write("agent/fail.mjs", 'console.log("nope");\nprocess.exit(3);\n');
     execFileSync("git", ["init", "-q", agentDir], { env });
     execFileSync("git", ["add", "."], { cwd: agentDir, env });
     execFileSync("git", ["commit", "-qm", "start"], { cwd: agentDir, env });
@@ -157,7 +162,7 @@ describe("gradeChangeProbe", () => {
   it("places the named hidden tests, puts the kept tests back, and passes when the command does", () => {
     const { taskFile, agentDir, env } = checkout();
 
-    const grade = gradeChangeProbe(taskFile, probe(passesWhenHiddenAndKeptAreRight), agentDir, env);
+    const grade = gradeChangeProbe(taskFile, probe("node check.mjs"), agentDir, env);
 
     expect(grade.passed).toBe(true);
     expect(readFileSync(path.join(agentDir, "tests", "kept.txt"), "utf8")).toBe("good");
@@ -167,10 +172,18 @@ describe("gradeChangeProbe", () => {
   it("fails with the command's exit code and keeps its output", () => {
     const { taskFile, agentDir, env } = checkout();
 
-    const grade = gradeChangeProbe(taskFile, probe("node -e \"console.log('nope');process.exit(3)\""), agentDir, env);
+    const grade = gradeChangeProbe(taskFile, probe("node fail.mjs"), agentDir, env);
 
     expect(grade).toMatchObject({ passed: false, testExit: 3 });
     expect(grade.output).toContain("nope");
+  });
+
+  it("runs the command without a shell, so a timeout stops the test process itself", () => {
+    const { taskFile, agentDir, env } = checkout();
+
+    const grade = gradeChangeProbe(taskFile, probe("node fail.mjs || node check.mjs"), agentDir, env);
+
+    expect(grade.testExit).toBe(3);
   });
 });
 
@@ -185,6 +198,10 @@ describe("gradePrediction", () => {
     for (const line of ["**ANSWER:** keep=6 level=2", "ANSWER: `keep=6 level=2`", "- **ANSWER: keep=6 level=2.**", "> Answer: keep=6 level=2"]) {
       expect(gradePrediction(`Reasoning.\n${line}\n`, "keep=6 level=2").passed, line).toBe(true);
     }
+  });
+
+  it("keeps underscores and comparison signs inside the answer itself", () => {
+    expect(gradePrediction("**ANSWER:** `spilled_cells=0 level>3`.", "spilled_cells=0 level>3").passed).toBe(true);
   });
 
   it("fails on an earlier ANSWER line that a later one replaced", () => {
