@@ -174,13 +174,18 @@ function checkProbes(taskFile: string, probes: Probe[], warmups: WarmupChain[]):
 }
 
 function loadChain(taskFile: string, chainFile: string): WarmupChain {
-  const text = readFileSync(path.join(path.dirname(taskFile), chainFile), "utf8");
+  const folder = path.resolve(path.dirname(taskFile));
+  const relative = path.relative(folder, path.resolve(folder, chainFile));
+  if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`warm-up chain ${chainFile} is outside ${folder}`);
+  const text = readFileSync(path.join(folder, relative), "utf8");
   const chain = JSON.parse(text) as Omit<WarmupChain, "id">;
   return { id: path.basename(chainFile, ".json"), ...chain };
 }
 
 export function loadDeepTasks(file: string): DeepTaskFile {
-  const parsed = JSON.parse(readFileSync(file, "utf8")) as Omit<DeepTaskFile, "warmups"> & { warmups: string[] };
+  // The task file is the operator's own --tasks choice on a local benchmark script.
+  const text = readFileSync(file, "utf8"); // NOSONAR
+  const parsed = JSON.parse(text) as Omit<DeepTaskFile, "warmups"> & { warmups: string[] };
   if (!parsed.repos[parsed.repo]) throw new Error(`unknown repo ${parsed.repo}`);
   const warmups = parsed.warmups.map((chainFile) => loadChain(file, chainFile));
   for (const chain of warmups) {
@@ -194,7 +199,7 @@ export function loadDeepTasks(file: string): DeepTaskFile {
 
 /** The same limit as runner.ts's edit grading, so a probe that hangs fails here as it would there. */
 const TEST_TIMEOUT_MS = 20 * 60 * 1000;
-const OUTPUT_LIMIT = 64 * 1024 * 1024;
+export const OUTPUT_LIMIT = 64 * 1024 * 1024;
 
 export interface ChangeGrade {
   passed: boolean;
@@ -220,7 +225,7 @@ export function gradeChangeProbe(
     copyFileSync(probeFile(taskFile, probe.id, test), destination);
   }
   if (probe.keptTests?.length) {
-    execFileSync("git", ["checkout", committed, "--", ...probe.keptTests], { cwd: checkout, env, stdio: "ignore" });
+    execFileSync("git", ["checkout", committed, "--", ...probe.keptTests], { cwd: checkout, env, stdio: "ignore" }); // NOSONAR: git comes from PATH, as for any tool that drives git
   }
   const run = spawnSync(expandCommand(probe.testCommand), {
     cwd: checkout,
@@ -233,7 +238,16 @@ export function gradeChangeProbe(
   return { passed: run.status === 0, testExit: run.status, output: `${run.stdout}\n${run.stderr}` };
 }
 
-const ANSWER_LINE = /^\s*ANSWER:(.*)$/gim;
+/** Markdown a model wraps an answer line in: emphasis, code spans, quote markers. */
+const DECORATION = /[*_`>]/g;
+
+/** The text after `ANSWER:` on one line, or undefined when the line is not an answer line. */
+function answerOn(line: string): string | undefined {
+  let plain = line.replaceAll(DECORATION, "").trim();
+  if (plain.startsWith("-")) plain = plain.slice(1).trim(); // a list item
+  if (!plain.toLowerCase().startsWith("answer:")) return undefined;
+  return plain.slice("answer:".length).replace(/\.$/, "");
+}
 
 function normalized(text: string): string {
   return text.trim().replaceAll(/\s+/g, " ").toLowerCase();
@@ -241,10 +255,15 @@ function normalized(text: string): string {
 
 /**
  * Exact match on the last `ANSWER:` line of the final answer, so a run that changes its
- * mind is graded on where it ended. Spacing and case do not count.
+ * mind is graded on where it ended. Spacing, case, markdown decoration and a closing period
+ * do not count.
  */
 export function gradePrediction(finalText: string, expected: string): { passed: boolean; missing: string[] } {
-  const last = [...finalText.matchAll(ANSWER_LINE)].at(-1)?.[1];
+  const last = finalText
+    .split("\n")
+    .map((line) => answerOn(line))
+    .filter((answer) => answer !== undefined)
+    .at(-1);
   const passed = last !== undefined && normalized(last) === normalized(expected);
   return { passed, missing: passed ? [] : [`ANSWER: ${expected}`] };
 }

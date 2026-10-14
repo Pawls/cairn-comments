@@ -61,7 +61,7 @@ def run(seconds, rng, on_step, player_at=lure):
 
 
 def test_the_leash_is_a_module_constant_of_ten_cells():
-    assert npc_brain.LEASH_RANGE == 10.0
+    assert math.isclose(npc_brain.LEASH_RANGE, 10.0)
 
 
 def test_a_chase_breaks_off_at_the_leash_and_walks_home_while_the_player_is_still_in_sight():
@@ -105,7 +105,7 @@ def test_a_player_who_stays_inside_the_leash_is_still_chased_down():
 
     def in_reach(_t, pos, moved, player):
         d = math.hypot(player[0] + 0.3 - (pos[0] + 0.5), player[2] + 0.3 - (pos[2] + 0.5))
-        if d <= npc_brain.ATTACK_RANGE and moved == 0.0:
+        if d <= npc_brain.ATTACK_RANGE and not moved:
             reached.append(pos)
         return bool(reached)
 

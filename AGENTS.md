@@ -18,6 +18,7 @@ Finished plans, v1 included, are in `docs/plans/archived/`.
 | `npm run lint` | eslint over the whole workspace. |
 | `npm run bench` | 2,000-file checkout benchmark (design.md § Filter process). Slow; run only when touching the filter path. |
 | `npm run benchmark -- <annotate\|run\|status\|report> --work <dir> ...` | Paired agent runs with and without AI comments ([docs/benchmark.md](docs/benchmark.md)). Takes hours and holds the GPUs (local model) or spends API money; never run it unasked. Overnight batches follow [docs/plans/archived/benchmark-runs.md](docs/plans/archived/benchmark-runs.md). |
+| `node scripts/benchmark/verify-probes.ts --work <dir> [--source <clone>] [--only <probe,...>]` | Checks the deep-context probes ([benchmark/deep-tasks.json](benchmark/deep-tasks.json)) in both arms: each prediction's script prints its expected answer, and each change probe fails at its start and passes on its reference. Prepares the start commit and installs both checkouts' virtualenvs, so it takes a few minutes; it runs no model. Run it after changing a probe. |
 | `npm run replay -- --repo <path>` | Comment placement replayed over a repository's history (design.md § Anchoring, "Measured"). Minutes per repository; run when changing placement. |
 
 A change is signed off on Windows (`autocrlf=true` scenarios included) and on an LF
