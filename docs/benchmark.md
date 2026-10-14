@@ -156,6 +156,58 @@ these as the order of magnitude. Cache reads are about 96% of the input tokens, 
 cache-read price decides the bill. Write the comments with the strongest model whatever runs
 the tasks: they are the treatment, written once.
 
+## Deep runs
+
+The deep-context benchmark ([plans/benchmark-deep-context.md](plans/benchmark-deep-context.md))
+asks whether comments help an agent that is deep into a long session. Its probe set is
+[benchmark/deep-tasks.json](../benchmark/deep-tasks.json): eight probes on BoxelBuilder and
+the warm-up chains they fork, all at one start commit.
+
+```sh
+D="--work /c/cbd --tasks benchmark/deep-tasks.json --model qwen3.8-flash-next-iq2_xs --provider http://127.0.0.1:8411"
+npm run benchmark -- prepare --repo boxel $D --source <local clone>
+npm run benchmark -- run $D --depths fresh,deep --reps 3
+npm run benchmark -- status $D --depths fresh,deep --reps 3
+```
+
+**Depths.** `--depths fresh` (the default) starts each probe in an empty session and a
+checkout of its own. `--depths deep` forks each warm-up chain instead: the chain's prompts
+run once per harness and arm, in one session, before the first probe that forks it, and
+every probe then forks that session as the chain left it. `--depths fresh,deep` plans both,
+so each probe runs once fresh and once per chain for every arm and repetition. `--chains
+<chain,...>` narrows the chains. A probe set names its own chains; a round's task file takes
+them from `--warmups` (default `benchmark/warmups/`).
+
+**Forks.** A fork sees the warm-up's history and nothing of another fork's. Before each
+probe the warm-up's checkout, harness configuration, and sessions are put back from a
+snapshot taken when the chain finished, so probes share nothing but the warm-up. The
+checkout cannot move: the session's tool calls name its files by absolute path.
+
+**Probe kinds.** Each kind has its own grade in `result.json`'s `grade`:
+
+| Kind | Tools | `passed` means | Also recorded |
+| --- | --- | --- | --- |
+| predict | read-only | the final answer's last `ANSWER:` line matches `expected` | `missing`, `rubric` |
+| locate | read-only | the final answer matches every answer-key pattern | `missing` |
+| change | all | the hidden tests pass, with any kept tests put back to the arm's commit | `testExit`, `rubric`, `test.log` |
+
+Read-only runs get an allowlist: Claude Code `--tools Read,Grep,Glob`, pi `--tools
+read,grep,find,ls`. With a shell, a prediction could be run instead of read. The rubric is
+a secondary score: which of the probe's patterns the final answer states, never part of
+`passed`.
+
+**What a result records.** Beside the fields every run has, `depth` (`fresh` or `deep`),
+`chain` for a deep run, and `metrics.firstCallContext`, the context of the probe's first
+agent call, which at depth `deep` holds the whole warm-up. The proxy log tags each call
+`warmup` or `probe`, and a run's metrics count only its probe calls.
+
+**Layout.** Warm-ups live under `<work>/warmups/<harness>/<hash>/` (the checkout, its
+snapshot, `calls.jsonl`, one `harness-<n>.jsonl` per prompt, and `warmup.json` with the
+session id, each prompt's exit, the wall time, and the final context). Runs live under
+`<work>/runs/<harness>/<probe>/<hash>/`; a deep run's directory holds no checkout of its
+own. Every hash hides the arm, and `warmup.json` names no arm, since it sits beside the
+agent's checkout. Only `result.json` records the arm.
+
 ## Results
 
 **On a large repository, the repository's own comments made no measurable difference to
