@@ -51,7 +51,7 @@ export async function startStandIn(port = 0): Promise<StandIn> {
   let served = 0;
   const server: Server = createServer(async (req, res) => {
     const body = await readBody(req);
-    const pathname = new URL(req.url ?? "/", "http://stand-in").pathname;
+    const pathname = (req.url ?? "/").split("?")[0];
     if (req.method === "GET" && pathname === "/v1/models") {
       res.writeHead(200, { "content-type": "application/json" });
       res.end('{"data":[]}');

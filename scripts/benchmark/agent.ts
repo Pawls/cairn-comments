@@ -72,7 +72,7 @@ export async function runAgent(
   const exits: Exit[] = [];
   for (const [index, prompt] of prompts.entries()) {
     const session = sessionStart(sessionId, index, from);
-    exits.push(await runPrompt(spec, { text: prompt, session, number: index + 1 }, dirs, env, proxyUrl));
+    exits.push(await runPrompt(spec, { text: prompt, session, number: index + 1 }, dirs, env, proxyUrl)); // NOSONAR: a session's prompts run one after another
   }
   return { sessionId, exits };
 }
