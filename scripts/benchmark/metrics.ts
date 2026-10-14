@@ -3,7 +3,7 @@ import { execFileSync, spawnSync, type SpawnSyncReturns } from "node:child_proce
 import { copyFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import type { ModelResponse, Usage } from "./responses.ts";
-import { expandCommand, OUTPUT_LIMIT, probeFile, type ChangeProbe } from "./tasks.ts";
+import { expandCommand, probeFile, type ChangeProbe } from "./tasks.ts";
 
 /**
  * Which part of a run made a call: a deep run's warm-up chain, or the probe itself, which
@@ -145,10 +145,14 @@ function trimDecoration(text: string, decoration: Set<string>): string {
   return text.slice(start, end);
 }
 
+/** A list item's marker: `-`, `+`, `1.` or `1)`, then a space. */
+const LIST_MARKER = /^(?:[-+]|\d+[.)])\s+/;
+
 /** The text after `ANSWER:` on one line, or undefined when the line is not an answer line. */
 function answerOn(line: string): string | undefined {
   let plain = trimDecoration(line, LINE_DECORATION);
-  if (plain.startsWith("- ")) plain = trimDecoration(plain.slice(2), LINE_DECORATION); // a list item
+  const marker = LIST_MARKER.exec(plain);
+  if (marker) plain = trimDecoration(plain.slice(marker[0].length), LINE_DECORATION);
   if (!plain.toLowerCase().startsWith("answer:")) return undefined;
   const value = trimDecoration(plain.slice("answer:".length), VALUE_DECORATION);
   return trimDecoration(value.endsWith(".") ? value.slice(0, -1) : value, VALUE_DECORATION);
@@ -174,6 +178,8 @@ export function gradePrediction(finalText: string, expected: string): AnswerGrad
 
 /** Long enough for any task's tests; a test run that hangs fails rather than stalling the batch. */
 const TEST_TIMEOUT_MS = 20 * 60 * 1000;
+/** Room for a test run's or a git command's whole output. */
+export const OUTPUT_LIMIT = 64 * 1024 * 1024;
 
 export interface TestRun {
   passed: boolean;

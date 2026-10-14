@@ -12,6 +12,7 @@ import {
   gradeAnswer,
   gradeChangeProbe,
   gradePrediction,
+  OUTPUT_LIMIT,
   probeCalls,
   runMetrics,
   runShellTest,
@@ -20,7 +21,7 @@ import {
 } from "./metrics.ts";
 import type { PreparedTask } from "./prepare.ts";
 import { startRecordingProxy } from "./proxy.ts";
-import { answersByReading, OUTPUT_LIMIT, type EditTask, type RepoSpec, type Task, type WarmupChain } from "./tasks.ts";
+import { answersByReading, type EditTask, type RepoSpec, type Task, type WarmupChain } from "./tasks.ts";
 import { ensureWarmup, refuseUnfinished, restoreWarmup } from "./warmup.ts";
 import { ARMS, git, isolatedEnv, neutralName, placedCommentBytes, removeCheckouts, setUpCheckout, type Arm } from "./workspace.ts";
 

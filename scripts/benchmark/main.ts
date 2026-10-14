@@ -53,7 +53,9 @@ import {
   isEditTask,
   loadChains,
   loadTaskFile,
+  preparedEntries,
   preparedIdOf,
+  type Starting,
   type Task,
   type TaskFile,
   type WarmupChain,
@@ -204,24 +206,6 @@ function mirrors(work: string, tasks: TaskFile, names: string[], chains: WarmupC
 
 function preparedFile(work: string, repo: string): string {
   return path.join(work, "prepared", `${repo}.json`);
-}
-
-/** What a batch checks out: its tasks, and the warm-up chains its deep runs fork. */
-interface Starting {
-  id: string;
-  repo: string;
-  start: string;
-  preparedId?: string;
-}
-
-/** The prepared entries `starting` checks out, each once, under its id (`preparedIdOf`). */
-function preparedEntries(starting: Starting[]): Starting[] {
-  const entries = new Map<string, Starting>();
-  for (const each of starting) {
-    const id = preparedIdOf(each);
-    entries.set(id, { id, repo: each.repo, start: each.start });
-  }
-  return [...entries.values()];
 }
 
 function loadPrepared(work: string, taskFile: TaskFile, starting: Starting[]): Map<string, Record<string, PreparedTask>> {

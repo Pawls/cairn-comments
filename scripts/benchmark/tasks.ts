@@ -132,6 +132,32 @@ export function preparedIdOf(starting: { id: string; preparedId?: string }): str
   return starting.preparedId ?? starting.id;
 }
 
+/** A task or chain as far as preparing it goes: where it starts, and under which entry. */
+export interface Starting {
+  id: string;
+  repo: string;
+  start: string;
+  preparedId?: string;
+}
+
+/**
+ * The prepared entries `starting` checks out, each once, under its id (`preparedIdOf`).
+ * Everything sharing an entry must start at the entry's commit.
+ */
+export function preparedEntries(starting: Starting[]): Starting[] {
+  const entries = new Map<string, Starting>();
+  for (const each of starting) {
+    const id = preparedIdOf(each);
+    const entry = entries.get(id);
+    if (entry && (entry.repo !== each.repo || entry.start !== each.start)) {
+      const where = `${each.repo}@${each.start}`;
+      throw new Error(`${each.id} starts at ${where}, but prepared entry ${id} is ${entry.repo}@${entry.start}`);
+    }
+    entries.set(id, { id, repo: each.repo, start: each.start });
+  }
+  return [...entries.values()];
+}
+
 /** A setup or test command with `{venv-python}` replaced by the checkout's virtualenv interpreter. */
 export function expandCommand(command: string): string {
   const venvPython = process.platform === "win32" ? path.join(".venv", "Scripts", "python.exe") : ".venv/bin/python";
@@ -142,9 +168,6 @@ export function expandCommand(command: string): string {
 export function venvPython(checkout: string): string {
   return path.resolve(checkout, expandCommand("{venv-python}"));
 }
-
-/** Room for a test run's or a git command's whole output. */
-export const OUTPUT_LIMIT = 64 * 1024 * 1024;
 
 /**
  * A warm-up chain, run as one session to put a probe deep into a full context: ordinary
@@ -316,6 +339,10 @@ export function loadTaskFile(file: string): TaskFile {
   if (!Array.isArray(parsed.tasks)) throw new Error(`${file} has neither tasks nor probes`);
   for (const task of parsed.tasks) {
     if (!parsed.repos[task.repo]) throw new Error(`task ${task.id}: unknown repo ${task.repo}`);
+    // Only a probe set gives a probe the folder and answer its grader reads.
+    if (!isEditTask(task) && task.kind !== "question") {
+      throw new Error(`task ${task.id}: kind ${task.kind} belongs in a probe set`);
+    }
   }
   return { repos: parsed.repos, tasks: parsed.tasks };
 }
