@@ -198,8 +198,13 @@ export function setUpCheckout(options: SetUpOptions): { agentDir: string; commen
     prepared,
   });
   runSetup(options.setup, agentDir, env, path.join(dir, "setup.log"));
-  if (options.arm !== "comments") return { agentDir, commentBytes: {} };
-  return { agentDir, commentBytes: prepared?.commentBytes ?? commentBytes(dir, env) };
+  return { agentDir, commentBytes: placedCommentBytes(options.arm, dir, env, prepared) };
+}
+
+/** The bytes the comments add to each file of the checkout in `dir`; none in the `none` arm. */
+export function placedCommentBytes(arm: Arm, dir: string, env: Record<string, string>, prepared?: PreparedTask): Record<string, number> {
+  if (arm !== "comments") return {};
+  return prepared?.commentBytes ?? commentBytes(dir, env);
 }
 
 /** Every file with a sidecar in `store`, as a repository-relative path with `/` separators. */

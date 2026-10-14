@@ -16,7 +16,23 @@ export interface LoggedCall {
   ms: number;
   /** Absent in logs written before runs had phases; those calls are all the probe's. */
   phase?: Phase;
+  /**
+   * How many tools a model call's request declared. The agent's own loop declares its tools
+   * on every call; side calls (titles, summaries) declare none. Absent in older logs.
+   */
+  tools?: number;
   response?: ModelResponse;
+}
+
+/** A call of the agent's own loop, as far as the log can tell. */
+export function isAgentCall(call: LoggedCall): boolean {
+  return call.tools === undefined || call.tools > 0;
+}
+
+/** The context of the first agent call in `calls` that has a response, or 0 when none does. */
+export function firstAgentContext(calls: LoggedCall[]): number {
+  const first = calls.find((call) => call.response && isAgentCall(call))?.response;
+  return first ? contextOf(first.usage) : 0;
 }
 
 /** Every input token: uncached, read from cache, and written to it. For one call, its context. */
@@ -38,7 +54,7 @@ const READ_TOOLS = new Map([
 export interface RunMetrics {
   /** Every model call of the probe, side calls (titles, summaries) included. */
   calls: number;
-  /** The context the probe's first call carried; at depth `deep` that includes the warm-up. */
+  /** The context of the probe's first agent call (not a side call); at depth `deep` that includes the warm-up. */
   firstCallContext: number;
   /** Calls to the run's own model. */
   turns: number;
@@ -61,7 +77,8 @@ function relativeToAgent(agentDir: string, file: string): string {
  * asked for.
  */
 export function runMetrics(log: LoggedCall[], options: { model: string; agentDir: string }): RunMetrics {
-  const responses = probeCalls(log).flatMap((call) => (call.response ? [call.response] : []));
+  const ownCalls = probeCalls(log);
+  const responses = ownCalls.flatMap((call) => (call.response ? [call.response] : []));
   const ownModel = responses.filter((r) => r.model.startsWith(options.model));
   const tokens: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   const toolCalls: Record<string, number> = {};
@@ -80,7 +97,7 @@ export function runMetrics(log: LoggedCall[], options: { model: string; agentDir
   }
   return {
     calls: responses.length,
-    firstCallContext: responses[0] ? contextOf(responses[0].usage) : 0,
+    firstCallContext: firstAgentContext(ownCalls),
     turns: ownModel.length,
     tokens,
     toolCalls,

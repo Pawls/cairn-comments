@@ -6,14 +6,14 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { outputStem, ProviderError, readLog, runAgent, type AgentOptions } from "./agent.ts";
+import { outputStem, readLog, refuseFailedSession, runAgent, type AgentOptions } from "./agent.ts";
 import { forkTotals, harnessTotals, type HarnessName, type HarnessTotals } from "./harnesses.ts";
-import { gradeAnswer, probeCalls, providerFailed, runMetrics, type RunMetrics } from "./metrics.ts";
+import { gradeAnswer, probeCalls, runMetrics, type RunMetrics } from "./metrics.ts";
 import type { PreparedTask } from "./prepare.ts";
 import { startRecordingProxy } from "./proxy.ts";
 import { expandCommand, type EditTask, type RepoSpec, type Task } from "./tasks.ts";
 import { ensureWarmup, restoreWarmup, type WarmupChain } from "./warmup.ts";
-import { git, isolatedEnv, neutralName, removeCheckouts, setUpCheckout, type Arm } from "./workspace.ts";
+import { git, isolatedEnv, neutralName, placedCommentBytes, removeCheckouts, setUpCheckout, type Arm } from "./workspace.ts";
 
 export type Depth = "fresh" | "deep";
 
@@ -129,20 +129,25 @@ function freshStart(spec: RunSpec, runDir: string, env: Record<string, string>):
 }
 
 /** The warm-up's checkout as the chain left it, and a fork of its session. */
-async function deepStart(spec: RunSpec, warmupSpec: NonNullable<RunSpec["warmup"]>, logFile: string): Promise<Start> {
+async function deepStart(
+  spec: RunSpec,
+  warmupSpec: NonNullable<RunSpec["warmup"]>,
+  logFile: string,
+  env: Record<string, string>,
+): Promise<Start> {
   const { chain, prepared } = warmupSpec;
   if (chain.repo !== spec.task.repo || chain.start !== spec.task.start) {
     throw new Error(`task ${spec.task.id} does not start where warm-up ${chain.id} does (${chain.repo} at ${chain.start})`);
   }
   const ready = await ensureWarmup({ ...spec, chain, prepared });
-  restoreWarmup(ready, logFile);
+  restoreWarmup(ready, logFile, env);
   const { dir, warmup } = ready;
   return {
     agentDir: path.join(dir, "agent"),
     homeDir: dir,
     from: warmup.sessionId,
     parentOutput: `${outputStem(dir, chain.prompts.length)}.jsonl`,
-    commentBytes: warmup.commentBytes,
+    commentBytes: placedCommentBytes(spec.arm, dir, env, prepared),
   };
 }
 
@@ -159,7 +164,7 @@ export async function runOne(spec: RunSpec): Promise<RunResult> {
   mkdirSync(runDir, { recursive: true });
   const env = isolatedEnv(path.join(runDir, "state"), path.join(spec.workDir, "cli-home"));
   const logFile = path.join(runDir, "calls.jsonl");
-  const start = spec.warmup ? await deepStart(spec, spec.warmup, logFile) : freshStart(spec, runDir, env);
+  const start = spec.warmup ? await deepStart(spec, spec.warmup, logFile, env) : freshStart(spec, runDir, env);
 
   const proxy = await startRecordingProxy(spec.provider, logFile, "probe");
   const startedAt = new Date();
@@ -170,11 +175,8 @@ export async function runOne(spec: RunSpec): Promise<RunResult> {
   if (!exit) throw new Error("the probe's prompt never ran");
 
   const log = readLog(logFile);
-  const ownCalls = probeCalls(log);
-  if (providerFailed(ownCalls)) {
-    // No result.json, so the next batch runs this one again; the checkouts stay for a look.
-    throw new ProviderError(`the model server failed this run (${ownCalls.length} calls); see calls.jsonl and harness-1.err`);
-  }
+  // On a failure there is no result.json, so the next batch runs this one again; the checkouts stay for a look.
+  refuseFailedSession(probeCalls(log), `task ${spec.task.id}`);
   const metrics = runMetrics(log, { model: spec.model, agentDir: start.agentDir });
   const result: RunResult = {
     harness: spec.harness,

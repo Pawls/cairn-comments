@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { createWriteStream, existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { launchFor, withoutHarnessVariables, type HarnessName, type SessionStart } from "./harnesses.ts";
-import type { LoggedCall } from "./metrics.ts";
+import { providerFailed, type LoggedCall } from "./metrics.ts";
 
 /** What starts an agent, whatever it is asked. */
 export interface AgentOptions {
@@ -23,10 +23,23 @@ export interface AgentOptions {
 /** A run lost to the model server rather than to the agent; it is retried, not recorded. */
 export class ProviderError extends Error {}
 
+/**
+ * Throws unless `calls`, one session's model calls, say something about the agent. A
+ * harness that never called the model failed on its own (a bad flag, a session it could not
+ * open); any other failure `providerFailed` names is the model server's, and is retried.
+ */
+export function refuseFailedSession(calls: LoggedCall[], what: string): void {
+  if (!calls.length) throw new Error(`${what}: the harness made no model call; see its harness-<n>.err`);
+  if (providerFailed(calls)) throw new ProviderError(`${what}: the model server failed it (${calls.length} calls); see calls.jsonl`);
+}
+
 export interface Exit {
   code: number | null;
   timedOut: boolean;
 }
+
+/** The harness's configuration home and pi's session store, under `AgentDirs.homeDir`. */
+export const HOME_DIRS = { config: "config", sessions: "sessions" };
 
 export interface AgentDirs {
   /** Where the agent works. */
@@ -99,9 +112,9 @@ async function runPrompt(
     prompt: prompt.text,
     session: prompt.session,
     model: spec.model,
-    configDir: path.join(dirs.homeDir, "config"),
+    configDir: path.join(dirs.homeDir, HOME_DIRS.config),
     proxyUrl,
-    sessionDir: path.join(dirs.homeDir, "sessions"),
+    sessionDir: path.join(dirs.homeDir, HOME_DIRS.sessions),
     piCli: spec.piCli,
     local: spec.local,
   });

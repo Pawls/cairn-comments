@@ -143,12 +143,17 @@ function workDir(): string {
   return dir;
 }
 
-/** The warm-up chains in --warmups, by id. */
-const chains = loadChains(args.warmups!);
+let loadedChains: Map<string, WarmupChain> | undefined;
+
+/** The warm-up chains in --warmups, by id, read when a command first needs them. */
+function warmupChains(): Map<string, WarmupChain> {
+  loadedChains ??= loadChains(args.warmups!);
+  return loadedChains;
+}
 
 /** The warm-up chains in --warmups that start in `repo`. */
 function chainsOf(repo: string): WarmupChain[] {
-  return [...chains.values()].filter((chain) => chain.repo === repo);
+  return [...warmupChains().values()].filter((chain) => chain.repo === repo);
 }
 
 /**
@@ -293,6 +298,7 @@ function depthsArg(tasks: Task[]): Depths {
   const depths = args.depths!.split(",");
   for (const depth of depths) if (depth !== "fresh" && depth !== "deep") throw new Error("--depths takes fresh, deep");
   if (!depths.includes("deep")) return { fresh: true, chains: [] };
+  const chains = warmupChains();
   const ids = args.chains?.split(",") ?? [...chains.keys()];
   const unknown = ids.filter((id) => !chains.has(id));
   if (unknown.length) throw new Error(`no warm-up chain ${unknown.join(", ")} in ${args.warmups}`);
