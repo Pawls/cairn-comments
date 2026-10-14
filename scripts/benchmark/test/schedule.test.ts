@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { nextOccurrence, planRuns, shard, warmupOf, type Planned } from "../schedule.ts";
+import { nextOccurrence, planRuns, shard, unforked, warmupOf, type Planned } from "../schedule.ts";
 import type { Task } from "../tasks.ts";
 import type { WarmupChain } from "../warmup.ts";
 
@@ -46,6 +46,15 @@ describe("planRuns", () => {
     const planned = planRuns([task("a"), task("b", "t")], ["none"], 1, 1, { fresh: false, chains: [w1, elsewhere, otherRepo] });
 
     expect(planned.map((p) => `${p.task.id}/${p.chain?.id}`).sort()).toEqual(["a/w1", "b/w3"]);
+  });
+});
+
+describe("unforked", () => {
+  it("names the tasks no chain starts where they do, so a batch can say it planned them no deep run", () => {
+    const tasks = [task("a"), task("b", "t"), { ...task("c"), repo: "q" }];
+
+    expect(unforked(tasks, [w1]).map((t) => t.id)).toEqual(["b", "c"]);
+    expect(unforked(tasks, [])).toEqual(tasks);
   });
 });
 
