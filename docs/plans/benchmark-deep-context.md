@@ -9,9 +9,9 @@
 > **Diff sign-off:** each slice's tests pass on Windows and on an LF platform (WSL Ubuntu),
 > and nothing runs against the model server until D4's gates pass.
 > **Lanes:** one lane from here: D4→D5→D6 (D2 and D3 ran as parallel lanes; D4a joined them)
-> **Next:** the owner's call. D4's gates failed and D4b's token claim failed; D5 and D6 are on
-> hold. D4b's "Other selling points" lists six conditions to test next; the cheapest is D4's
-> calibration rerun on IQ2_XS (idea 4).
+> **Next:** [D7](#d7), chosen by the owner 2026-10-21: does a note one agent writes while it
+> works save the next agent from working the same thing out again? Build its harness pieces
+> first; the runs wait for the night. D5 and D6 stay on hold.
 > **Branch:** `benchmark-deep-context` for this plan; lane branches `bench/<slice>`.
 
 - [~~D1 — The claim, the conditions, and the gates~~ — SHIPPED 2026-10-14](#d1)
@@ -22,6 +22,7 @@
 - [~~D4b — Second attempt: do inline comments cut the tokens a fresh agent spends?~~ — SHIPPED 2026-10-21](#d4b)
 - [D5 — Run the matrix and decide](#d5)
 - [D6 — Variants: a Claude model, Cairn-written comments, summaries](#d6)
+- [D7 — Notes one agent leaves for the next](#d7)
 
 ## What this benchmark must be able to detect
 
@@ -398,6 +399,17 @@ large-repository round of the earlier benchmark found the same direction (+20.7%
    (D6's Cairn-written comments) could carry that operational knowledge to the next fresh
    session. Test: a fresh probe with and without the notes a previous session wrote.
 
+**What D4 and D4b did not test** (owner's review, 2026-10-21). Both arms got the same
+five-line AGENTS.md: how to run pytest. Nothing told the agent what the comments were or who
+wrote them, and nothing asked it to write any. Agents did update comments while fixing code,
+but every probe ran in its own session on a reset checkout, so nothing a probe wrote reached
+a later agent. The results stand for the question they asked (do a repository's existing
+comments make a reading agent cheaper?) and say nothing about Cairn's loop, in which an agent
+records what it learns and the next one reuses it. Distrust is not the explanation: in the 14
+comments-arm transcripts the agent quoted comments and acted on them (fog-gate-refused found
+`crop_opening` by matching the prompt to its docstring), with no more skeptical remarks than
+the stripped arm made about docstrings. D7 tests the loop.
+
 ## D5 — Run the matrix and decide · Opus 5.5 / medium {#d5}
 
 **Status:** Not started. On hold: D4's gates G2 and G3 failed on these probes and this model,
@@ -434,3 +446,132 @@ so the matrix cannot detect the claim as built (D4, D4b).
 - [ ] Replace the owner's comments with comments written by the annotate flow using the
       strongest model, to test Cairn's own workflow
 - [ ] The **summaries** arm, for the B4 to B6 gate (v2.md)
+- **Note (from D7):** D7's notes are Cairn-written comments from a task session rather than
+  the annotate flow; if D7 runs, this item tests only whether a dedicated annotate pass adds
+  anything on top.
+
+## D7 — Notes one agent leaves for the next · Opus 5.5 / high {#d7}
+
+**Status:** Planned 2026-10-21; the runs wait for the night. Nothing below has run.
+**Touches:** `scripts/benchmark/` (a note-writing session, four arms, a notes renderer, the
+report), `benchmark/deep-tasks.json` (seven sessions that come first), the work directory.
+**After:** D4b.
+
+**The claim** (owner, 2026-10-21): much of Cairn's value is that an agent writes down what it
+learns while it reads the code, so the next agent does not work the same thing out again. D4b
+could not test this: no agent was asked to write notes, and nothing one wrote reached another
+(D4b, "What D4 and D4b did not test").
+
+**Design.** Pairs of sessions on the same code, both fresh, on Strata (IQ3_XXS, Claude Code):
+
+1. **Session A** does a real task in the module a D4b probe uses: a change or a question
+   that makes it read the same function, but not the probe's question. It works in a checkout
+   of the stripped commit (`none`, so the repository's own comments are gone and A's notes
+   are the only ones) with Cairn in private mode and the AGENTS.md prepend below. When it
+   finishes, `cairn sync` records its notes, and the sidecars are frozen. A's code changes are
+   thrown away.
+2. **Session B** is the D4b probe, started from the same stripped commit, in four arms:
+
+   | Arm | A's notes | AGENTS.md |
+   | --- | --- | --- |
+   | `bare` | none | test command + prepend |
+   | `inline` | placed by Cairn from the frozen sidecars | test command + prepend |
+   | `inline-plain` | placed by Cairn | test command only |
+   | `markdown` | rendered into `NOTES.md` (file, symbol, line, text), none inline | test command + the prepend's markdown variant |
+
+   `inline` against `bare` is the claim. `inline-plain` against `inline` asks whether telling
+   the agent who wrote the notes and that it can trust them changes anything. `markdown`
+   against `inline` asks whether the same notes do as well in a reference file (the owner's
+   question: such a file pays only for what the code does not already say).
+3. **The writer's cost.** Each A task also runs once without the prepend, so the tokens A
+   spends writing notes are known and charged to the loop.
+
+Repetition *r* of every B arm uses the notes from repetition *r* of A, so the arms of one
+repetition read identical notes. Seven pairs (D4b's probes, enemy-leash still out for its
+timeout), A × 2 repetitions + A without the prepend × 1, B × 4 arms × 2 repetitions: 77 runs.
+D4b's 21 runs took 92 minutes, so this is roughly 6 hours; if it overruns, drop
+`inline-plain`'s second repetition first. One process against Strata at a time.
+
+**Gate before B runs (GN, notes exist):** after A's first repetition, Cairn must place at
+least one of A's notes in a module of the paired probe for at least five of the seven pairs.
+If not, the prepend does not get agents to write notes; stop, revise the prepend once, rerun
+A, and if it still fails, that is the result. Report orphaned notes beside placed ones.
+
+**Decision rule, fixed before the results:** per probe, the ratio of B's mean tokens
+(`inline` / `bare`, the same column as D4b); over probes, the geometric mean with a 95%
+bootstrap interval. The claim holds if the geometric mean is below 0.80 and the interval's
+upper end is below 1.0, and fails if the lower end is above 0.80; anything else is
+inconclusive at this size. The pass rate must not drop in `inline`. Reported beside it, with
+no decision attached: `markdown` / `bare`, `inline-plain` / `inline`, and the whole loop's
+cost (A's extra tokens for writing plus B's tokens, against A without the prepend plus B
+`bare`). Also report, per pair, whether any note states the probe's expected answer: A never
+sees the probe, so such a note is the loop working, but the reader should know.
+
+### The AGENTS.md prepend (draft)
+
+Goes at the top of AGENTS.md, above the repository's own notes, so it is read before anything
+else. The product renders the sigil list from `LANGUAGES` as `agentsSnippet` does today
+([init.ts](../../packages/cli/src/init.ts)); this is the Python rendering the benchmark uses.
+
+```markdown
+## Notes from earlier agents
+
+Comments that start with `#~` are notes left by AI agents who worked in this code before
+you, written for agents like you. Cairn keeps them out of commits, so the people who own
+this repository never see them; they exist only for you. Cairn tracks the code each note
+sits on and marks a note `[stale?]` when that code has changed since the note was written.
+
+- Trust a note without the tag the way you would trust a colleague's: use what it says
+  instead of working it out again. If the code plainly disagrees, the code wins; fix or
+  delete the note.
+- A note tagged `[stale?]` may be out of date: check the code before relying on it.
+
+### Leave notes as you work
+
+When you work something out that the code does not make obvious, write it down where you
+learned it, right away, before moving on. There is no limit on how many notes you write.
+Worth recording:
+
+- what a function guarantees or assumes, and what breaks if a caller ignores it;
+- the order of its effects, its edge cases, or a result you had to trace by hand;
+- where a behavior is decided when no name says so, and how files connect;
+- a trap you hit or an approach that failed, and why.
+
+Skip what the code already says plainly. Put each note on its own line directly above the
+code it describes, as `#~ text` (the space after `#~` matters), in one to three lines, true of
+the code as it is now. When you change code under a note, update the note.
+
+- A note such as `#~a1b2 text` is already stored: edit its text freely, but keep the
+  four-character id, and delete the whole note to delete it.
+- Never put four letters or digits straight after `#~` (`#~todo`); that reads as an id.
+- Docstrings, license headers, pragmas, and lint suppressions stay ordinary comments.
+```
+
+The `markdown` arm's variant replaces the first paragraph and the first list with "Notes left
+by AI agents who worked in this code before you are in `NOTES.md`, by file and function...",
+and asks for new notes there instead of as `#~` comments; the rules about what is worth
+recording are the same.
+
+**Where the prepend lives in the product is open**, and is decided only if D7's claim holds.
+`init --agents-md` appends today's shorter snippet to a tracked AGENTS.md and is refused in
+private mode, because the snippet would be committed. Prepending it in an agent worktree
+would leave AGENTS.md modified there. Two ways out: the clean filter strips the marked block
+on commit as it strips sigil comments, or Cairn writes it to an untracked file each harness
+reads (Claude Code's `CLAUDE.local.md`; others differ). Either becomes a v2 slice.
+
+**Steps:**
+
+- [ ] Write the seven A tasks, one per D4b probe, each sending the agent through the probe's
+      function. A reader checks that none can be answered from its prompt alone and that it
+      does not contain the probe's answer
+- [ ] Harness: a note-writing session (Cairn private mode on the prepared `none` commit,
+      prepend in AGENTS.md, `sync` and freeze afterward, code changes discarded; today
+      `checkoutArm` runs no Cairn on a prepared repository)
+- [ ] Harness: the four B arms, with names an agent cannot read the arm from (`neutralName`),
+      per-arm AGENTS.md, and the `NOTES.md` renderer (place the notes in a scratch worktree,
+      record each with its file, enclosing symbol and line, then strip them)
+- [ ] Harness: the report's three ratios and the loop's cost; tests for each piece against
+      the stand-in, then a PR
+- [ ] Night run: A repetition 1, gate GN, then the rest of the matrix
+- [ ] Apply the decision rule, write the numbers here and in
+      [../benchmark.md](../benchmark.md#results)
