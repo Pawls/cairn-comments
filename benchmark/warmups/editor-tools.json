@@ -20,11 +20,14 @@
     "window_ladder.py",
     "gamekit_shapes.py",
     "biomegen.py",
-    "chopped.py"
+    "chopped.py",
+    "noise.py",
+    "worldgen.py"
   ],
   "prompts": [
     "Can you walk me through what actually happens when I click a block with the Fill tool (N)? Start from window_fill.py. I want to know which cells it picks, what each mode does (Draw, Shift/Erase, Clone), why the build grid disappears while it is selected, what stops it hanging on a huge area, and what World.fill_region keeps in sync when it writes. I don't care about the undo stack for this one.",
     "Twice now a save has gone wrong (once the disk was nearly full, once it threw an exception mid-save) and afterwards the .wld on disk was empty or cut off, so I lost the map I already had. A failed save should leave the old file alone. Please make the normal Save path (worldio.write_to, then write_packed) safe, and add a test. Leave write_payload as it is.",
-    "How does Copy/Paste decide which block to put down when I copy on a map and paste inside a voxel prefab's model canvas, or the other way round? What happens to a block type the other side doesn't have, and to the canvas's custom colours when I paste them into a map? Also, does the 'Pasted N blocks' count ever lie on the canvas?"
+    "How does Copy/Paste decide which block to put down when I copy on a map and paste inside a voxel prefab's model canvas, or the other way round? What happens to a block type the other side doesn't have, and to the canvas's custom colours when I paste them into a map? Also, does the 'Pasted N blocks' count ever lie on the canvas?",
+    "Now explain the mountain generator in biomegen.py. How does mountain_height build the height field, what does thermal_erode do with the talus value, how does stratify make the terraces, and how does snow_cover decide where snow goes? What does the ruggedness setting change along the way? Answer from the code; don't change anything."
   ]
 }
