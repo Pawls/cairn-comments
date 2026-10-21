@@ -236,9 +236,9 @@ owner's word (AGENTS.md: never run the benchmark unasked).
 - **Chains changed:** editor-tools is its first three prompts plus the biomegen question;
   game-systems is its first five. Tonight's runs use editor-tools only (`--chains
   editor-tools`), because game-systems' depth swings past the compaction line.
-- **Trap found:** a warm-up's directory is a hash of (chain, arm) only, so editing a chain's
+- **Trap found (now guarded):** a warm-up's directory is a hash of (chain, arm) only, so editing a chain's
   prompts reuses the old `warmup.json`. Old warm-ups were moved to `C:\cbd4\aside-compacted\`
-  before each rerun. Worth a guard: record the prompts in `warmup.json` and refuse a mismatch.
+  before each rerun. `warmup.json` now records the prompts, and a run refuses a finished warm-up whose chain has changed; records from before the guard (tonight's) carry no prompts and pass.
 - **Read-only forks work on Strata:** a deep locate probe forked a warm-up full of Bash and
   Edit calls and declared only Read, Grep and Glob. As predicted, its first call missed the
   cache: 122,903 uncached input tokens against a 112,761-token first call.
