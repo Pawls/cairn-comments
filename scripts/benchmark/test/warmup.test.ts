@@ -114,8 +114,26 @@ describe("a deep run", () => {
     const shorter = { ...spec.warmup!.chain, prompts: ["first warm-up prompt"] };
 
     await expect(runOne({ ...spec, rep: 2, warmup: { chain: shorter } })).rejects.toThrow(
-      /warm-up w ran with other prompts; delete .* to run it again/,
+      /warm-up w ran with other prompts, start or model; delete .* to run it again/,
     );
+  });
+
+  it("refuses a finished warm-up that ran on another model", async () => {
+    await runOne(spec);
+
+    await expect(runOne({ ...spec, rep: 2, model: "another-model" })).rejects.toThrow(/ran with other prompts, start or model/);
+  });
+
+  it("refuses a finished warm-up whose record predates the prompts it ran with", async () => {
+    await runOne(spec);
+    const record = path.join(warmupDirFor(spec.workDir, "pi", "w", "none"), "warmup.json");
+    const legacy = JSON.parse(readFileSync(record, "utf8"));
+    delete legacy.prompts;
+    delete legacy.start;
+    delete legacy.model;
+    writeFileSync(record, JSON.stringify(legacy));
+
+    await expect(runOne({ ...spec, rep: 2 })).rejects.toThrow(/ran with other prompts, start or model/);
   });
 
   it("refuses a probe that does not start where the chain does", async () => {
