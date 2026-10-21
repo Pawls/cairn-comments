@@ -240,9 +240,10 @@ run. The run log, calibration table and gate verdicts are below.
   editor-tools`), because game-systems' depth swings past the compaction line.
 - **Trap found (now guarded):** a warm-up's directory is a hash of (chain, arm) only, so
   editing a chain's prompts reuses the old `warmup.json`. Old warm-ups were moved to
-  `C:\cbd4\aside-compacted\` before each rerun. `warmup.json` now records the prompts, and a
-  run refuses a finished warm-up whose chain has changed; records written before the guard
-  (tonight's) carry no prompts and pass.
+  `C:\cbd4\aside-compacted\` before each rerun. `warmup.json` now records the prompts, start and
+  model, and a run refuses a finished warm-up whose chain or model has changed. Records written
+  before the guard (tonight's) carry none of them and are refused too, so D5 reruns its warm-ups.
+  A change to how the harness launches is not recorded; rerun in a new work dir after one.
 - **Read-only forks work on Strata:** a deep locate probe forked a warm-up full of Bash and
   Edit calls and declared only Read, Grep and Glob. As predicted, its first call missed the
   cache: 122,903 uncached input tokens against a 112,761-token first call.

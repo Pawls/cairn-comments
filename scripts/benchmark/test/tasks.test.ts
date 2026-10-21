@@ -216,7 +216,8 @@ describe("the deep-context probe set", () => {
     expect(tasks.probes.filter((probe) => probe.use === "understanding")).toHaveLength(4);
   });
 
-  it("has two warm-up chains of four or five prompts, the lengths D4 measured to land near the depth target", () => {
+  // The lengths were cut to fit the depth target: docs/plans/benchmark-deep-context.md § D4.
+  it("has two warm-up chains of four or five prompts", () => {
     expect(tasks.warmups).toHaveLength(2);
     for (const chain of tasks.warmups) {
       expect(chain.prompts.length).toBeGreaterThanOrEqual(4);

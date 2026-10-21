@@ -14,9 +14,7 @@
     "database.py",
     "ui/effects_panel.py",
     "ui/database_panel.py",
-    "particles.py",
-    "daynight.py",
-    "tuning.py"
+    "particles.py"
   ],
   "prompts": [
     "A tester hand-edited saves/slot2.json to reset their progress and wrote \"switches\": [] inside \"state\". Now listing the save slots crashes (saveload's list_slots and latest_slot raise), so the pause menu and the game-over screen fall over instead of showing the slots. A slot we can't use should just show as empty, the way a slot with broken JSON already does. Please fix it in saveload.py without changing how a map's own game state loads, and add a test.",

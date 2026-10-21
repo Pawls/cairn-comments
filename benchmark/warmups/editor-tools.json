@@ -4,7 +4,6 @@
   "modules": [
     "editor.py",
     "window_fill.py",
-    "window_shape.py",
     "poster.py",
     "world.py",
     "grid.py",
@@ -17,8 +16,6 @@
     "window_modelcanvas.py",
     "window_hud.py",
     "shapes.py",
-    "window_ladder.py",
-    "gamekit_shapes.py",
     "biomegen.py",
     "chopped.py",
     "noise.py",
