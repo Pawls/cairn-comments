@@ -23,6 +23,11 @@ export interface Warmup {
   chain: string;
   harness: HarnessName;
   sessionId: string;
+  /**
+   * The chain's prompts as run. The directory is named for the chain and arm only, so this is
+   * what tells a record from before an edit to the chain. Records written before it was kept lack it.
+   */
+  prompts?: string[];
   /** One per prompt. */
   exits: Exit[];
   wallMs: number;
@@ -88,7 +93,13 @@ export interface ReadyWarmup {
 export async function ensureWarmup(spec: WarmupSpec): Promise<ReadyWarmup> {
   const dir = warmupDirFor(spec.workDir, spec.harness, spec.chain.id, spec.arm);
   const record = path.join(dir, RECORD);
-  if (existsSync(record)) return { dir, warmup: JSON.parse(readFileSync(record, "utf8")) as Warmup, ranNow: false };
+  if (existsSync(record)) {
+    const warmup = JSON.parse(readFileSync(record, "utf8")) as Warmup;
+    if (warmup.prompts && JSON.stringify(warmup.prompts) !== JSON.stringify(spec.chain.prompts)) {
+      throw new Error(`warm-up ${spec.chain.id} ran with other prompts; delete ${dir} to run it again`);
+    }
+    return { dir, warmup, ranNow: false };
+  }
 
   rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
   mkdirSync(dir, { recursive: true });
@@ -108,6 +119,7 @@ export async function ensureWarmup(spec: WarmupSpec): Promise<ReadyWarmup> {
     chain: spec.chain.id,
     harness: spec.harness,
     sessionId: session.sessionId,
+    prompts: spec.chain.prompts,
     exits: session.exits,
     wallMs: Date.now() - startedAt,
     finalContext: last ? contextOf(last.usage) : 0,
