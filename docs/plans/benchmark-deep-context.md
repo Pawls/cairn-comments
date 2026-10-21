@@ -9,7 +9,7 @@
 > **Diff sign-off:** each slice's tests pass on Windows and on an LF platform (WSL Ubuntu),
 > and nothing runs against the model server until D4's gates pass.
 > **Lanes:** one lane from here: D4→D5→D6 (D2 and D3 ran as parallel lanes; D4a joined them)
-> **Next:** D4 — measure Strata, run the warm-ups, calibrate, and check gates G1 to G4; starts on the owner's word.
+> **Next:** D4b — the token comparison at fresh depth (D4's gates G2 and G3 failed; D5 does not run on these probes).
 > **Branch:** `benchmark-deep-context` for this plan; lane branches `bench/<slice>`.
 
 - [~~D1 — The claim, the conditions, and the gates~~ — SHIPPED 2026-10-14](#d1)
@@ -17,6 +17,7 @@
 - [~~D3 — The probe set: navigation and understanding~~ — SHIPPED 2026-10-14](#d3)
 - [~~D4a — Wire the probe set into deep runs~~ — SHIPPED 2026-10-14](#d4a)
 - [D4 — Warm-up sessions and the calibration gates](#d4)
+- [D4b — Second attempt: do inline comments cut the tokens a fresh agent spends?](#d4b)
 - [D5 — Run the matrix and decide](#d5)
 - [D6 — Variants: a Claude model, Cairn-written comments, summaries](#d6)
 
@@ -241,15 +242,87 @@ owner's word (AGENTS.md: never run the benchmark unasked).
 - **Read-only forks work on Strata:** a deep locate probe forked a warm-up full of Bash and
   Edit calls and declared only Read, Grep and Glob. As predicted, its first call missed the
   cache: 122,903 uncached input tokens against a 112,761-token first call.
+- **Running two processes against Strata at once thrashes its prompt cache.** Strata keeps one
+  cached prefix, so two sessions that take turns re-prefill their whole context on every call:
+  80 to 100 s per call at 108,000 to 148,000 tokens, with zero cache reads. The comments-arm
+  process started beside the calibration was stopped after 30 minutes and its partial run set
+  aside. One process at a time, always; `--shard` is for API runs only.
+- **No 5xx** in any warm-up or run log (0 of 951 calls, the set-aside runs included), and the editor-tools warm-up
+  edited no change probe's kept test (it wrote `test_save_atomic.py` and touched `test_world.py`
+  and `test_spritecanvas.py`). `agentNotes` were left as they were.
 
-- [ ] Measure the model server first: prefill speed at 150,000 tokens of context on Strata,
+**Calibration (one repetition, `none`, editor-tools chain at 118,118 tokens):** every one of
+16 runs passed. Columns are the probe's own tokens: context it added plus output, which leaves
+out the carried warm-up.
+
+| Probe | Kind | Fresh: tokens / calls / wall | Deep: first call / tokens / calls / wall |
+| --- | --- | --- | --- |
+| drain-into-shaft | predict | 20,379 / 5 / 68 s | 112,984 / 14,174 / 7 / 94 s |
+| fell-touching-crowns | predict | 44,960 / 4 / 105 s | 113,107 / 35,360 / 2 / 143 s |
+| enemy-leash | change | 145,655 / 54 / 1,800 s (timed out, tests passed) | 124,311 / 112,244 / 20 / 470 s |
+| navgrid-changed-nodes | change | 118,847 / 24 / 389 s | 124,285 / 75,336 / 19 / 274 s |
+| fog-gate-refused | locate | 17,572 / 7 / 45 s | 112,806 / 12,171 / 6 / 78 s |
+| portal-one-way | locate | 20,641 / 6 / 34 s | 112,761 / 11,776 / 7 / 71 s |
+| lightning-moderate-rain | change | 28,818 / 11 / 125 s | 124,229 / 34,922 / 15 / 1,294 s (slowed by the cache thrash) |
+| ai-overwrite-asks | change | 81,131 / 28 / 342 s | 124,223 / 52,681 / 20 / 251 s |
+
+**Gates:**
+
+| Gate | Verdict | Numbers |
+| --- | --- | --- |
+| G1 depth | Pass for change probes, short by 7,000 for read-only ones | change 124,223–124,311; predict and locate 112,761–113,107, because they declare three tools instead of 22. The history under both is the same 118,118 tokens. |
+| G2 deep hurts | **Fail** | Success 8/8 at both depths. Deep runs used fewer tokens, not more: 7 of 8 probes cheaper deep, mean 43,583 against 59,750 fresh. The warm-up had already taught the agent the layout and how to run the tests: fresh runs spent Glob calls finding their way (deep ones almost none) and more Bash calls (enemy-leash 28 against 8, ai-overwrite-asks 17 against 9). Depth helped. |
+| G3 headroom | **Fail** | `none` at deep scored 8/8 (100%, above the 80% ceiling); `none` at fresh 8/8 |
+| G4 not an answer key | Pass (from D3) | both readers 8/8 on stripped code |
+
+**Verdict:** the condition the claim needs did not appear. At 118,000 tokens of real work,
+IQ3_XXS on Claude Code was not lost: it solved every probe, faster and cheaper than fresh.
+G2 and G3 failing means the D5 matrix cannot detect the claim with these probes and this
+model, so it was not run. Recalibrating would need a condition that actually loses the agent
+(see the second attempt below and the ideas at the end of it), not a retune of these probes.
+
+- [x] Measure the model server first: prefill speed at 150,000 tokens of context on Strata,
       and the context length the warm-ups actually reach. Set the depth target from the
       measurement, between 120,000 tokens and about 70% of the window.
-- [ ] Run each warm-up chain once per arm and record its depth (G1) and its wall time
-- [ ] Calibrate: three runs of each probe in `none` at `fresh` and in `none` at `deep`
-- [ ] Check G1 to G4 and write the numbers in this slice. If a gate fails, adjust the probes
-      or warm-ups and recalibrate, up to two times; after that stop and report to the owner
-      rather than run the matrix.
+- [ ] Run each warm-up chain once per arm and record its depth (G1) and its wall time. Only
+      the `none` arm ran (editor-tools 118,118 tokens in 7.3 min; game-systems 202,379 in
+      15.4 min, set aside); the comments arm's warm-ups belong to the matrix, which the gates stopped.
+- [x] Calibrate: one run of each probe in `none` at `fresh` and at `deep` (editor-tools), not
+      three. One was enough: 16 of 16 passed, so no number of repetitions moves G2 or G3.
+- [x] Check G1 to G4 and write the numbers in this slice. G2 and G3 failed; the matrix was not run.
+
+## D4b — Second attempt: do inline comments cut the tokens a fresh agent spends? · Opus 5.5 / high {#d4b}
+
+**Status:** Running (2026-10-21, from 04:00). The owner allowed one second attempt with a
+different plan if the first failed. Written before any comments-arm result was read.
+**Touches:** the work directory only.
+**After:** D4.
+
+**The claim** (owner, 2026-10-21): an agent uses fewer tokens to understand code when it
+reads the comments. The comments are inline in the agent's checkout (the `comments` arm), so
+it sees them without any pointer or lookup.
+
+**Why this can work where D4 could not:** the D4 gates failed on score and depth, and neither
+matters here. Success is at its ceiling, so this attempt measures cost instead: the tokens a
+probe adds (context it reads plus output, the same column as the calibration table), on the
+same seven probes, fresh, in both arms, two repetitions each. enemy-leash is left out because
+it hits the 30-minute timeout fresh, which cuts its count off.
+
+**Against it:** the comments arm pays for the comments it reads. BoxelBuilder's comments add
+2,380,956 bytes, and D3 measured 25–35% more bytes read for the same work. Comments must save
+more exploration than they cost to read.
+
+**Decision rule, fixed before the results:** per probe, the ratio of mean tokens
+(comments / none); over probes, the geometric mean with a 95% bootstrap interval. The claim
+holds if the geometric mean is below 0.80 and the interval's upper end is below 1.0. It fails
+if the interval's lower end is above 0.80. Anything else is inconclusive at this size. Pass
+rate is reported beside it and must not drop in the comments arm. Understanding and navigation
+are reported apart; the decision is on all seven.
+
+- [ ] Run `--arms none,comments --depths fresh --reps 2` on the seven probes (the `none` arm's
+      first repetition is the calibration's)
+- [ ] Apply the decision rule and write the numbers here
+- [ ] If the claim fails, write what went wrong and a report with other selling points
 
 ## D5 — Run the matrix and decide · Opus 5.5 / medium {#d5}
 
