@@ -212,6 +212,36 @@ owner's word (AGENTS.md: never run the benchmark unasked).
 - **Note (from D2):** snapshotting BoxelBuilder takes 9.7 s once per warm-up, and restoring it
   4.5 s per probe. One warm-up's probes run one after another.
 
+**Run log (2026-10-21, owner asleep, work dir `C:\cbd4`, Claude Code 2.1.303 only):**
+
+- **Model:** Strata now serves `qwen3.8-flash-next-iq3_xxs` (the owner offered IQ3_XXS or
+  IQ2_XS). IQ3_XXS was fast enough, so every D4 number is on it, not on the IQ2 of earlier
+  rounds. Prefill: 145,793 tokens cold in 43.8 s (3,329 tokens/s); a 300-token answer on top of
+  that cached prefix took 3.1 s (98 tokens/s with the cache hit).
+- **Claude Code compacted at 167,000 tokens.** It does not know the local model, assumes a
+  200,000-token window, and compacts about 33,000 short of it: the first editor-tools warm-up
+  fell from 166,901 to 40,549 tokens in its fifth prompt. Fixed by setting
+  `CLAUDE_CODE_MAX_CONTEXT_TOKENS=262144` for a local model (`harnesses.ts`). With it, the
+  compaction moved to about 230,000 (a game-systems probe went from 230,473 to 33,026).
+  `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` can only lower that threshold.
+- **Warm-up depth varies a lot from run to run with the same prompts**, because the agent
+  reads a different amount each time. Stripped arm, wall time in parentheses:
+  editor-tools' first four prompts reached 175,000 (prompts 5 and 6 not finished); its first
+  three reached 115,917 (7.4 min). With a fourth, read-only prompt (biomegen's mountain
+  generator) they reached 118,118 (7.3 min). game-systems' six prompts reached 160,726 (12.9 min);
+  its first five reached 202,379 (15.4 min) on the next run. The comments arm reads 25–35%
+  more, so a chain that ends near 200,000 stripped leaves the comments arm under the
+  compaction line by less than one probe's work.
+- **Chains changed:** editor-tools is its first three prompts plus the biomegen question;
+  game-systems is its first five. Tonight's runs use editor-tools only (`--chains
+  editor-tools`), because game-systems' depth swings past the compaction line.
+- **Trap found:** a warm-up's directory is a hash of (chain, arm) only, so editing a chain's
+  prompts reuses the old `warmup.json`. Old warm-ups were moved to `C:\cbd4\aside-compacted\`
+  before each rerun. Worth a guard: record the prompts in `warmup.json` and refuse a mismatch.
+- **Read-only forks work on Strata:** a deep locate probe forked a warm-up full of Bash and
+  Edit calls and declared only Read, Grep and Glob. As predicted, its first call missed the
+  cache: 122,903 uncached input tokens against a 112,761-token first call.
+
 - [ ] Measure the model server first: prefill speed at 150,000 tokens of context on Strata,
       and the context length the warm-ups actually reach. Set the depth target from the
       measurement, between 120,000 tokens and about 70% of the window.
