@@ -109,6 +109,15 @@ describe("a deep run", () => {
     expect(readLog(warmupLog)).toHaveLength(2);
   });
 
+  it("refuses a finished warm-up whose chain has since changed its prompts", async () => {
+    await runOne(spec);
+    const shorter = { ...spec.warmup!.chain, prompts: ["first warm-up prompt"] };
+
+    await expect(runOne({ ...spec, rep: 2, warmup: { chain: shorter } })).rejects.toThrow(
+      /warm-up w ran with other prompts; delete .* to run it again/,
+    );
+  });
+
   it("refuses a probe that does not start where the chain does", async () => {
     const elsewhere = { ...spec.task, start: "0000000000000000000000000000000000000000" };
 
