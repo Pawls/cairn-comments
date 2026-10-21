@@ -24,10 +24,12 @@ export interface Warmup {
   harness: HarnessName;
   sessionId: string;
   /**
-   * The chain's prompts as run. The directory is named for the chain and arm only, so this is
-   * what tells a record from before an edit to the chain. Records written before it was kept lack it.
+   * What the chain ran with. The directory is named for the harness, chain and arm only, so these
+   * tell a record from before an edit to the chain or a change of model (`sameRun`).
    */
-  prompts?: string[];
+  prompts: string[];
+  start: string;
+  model: string;
   /** One per prompt. */
   exits: Exit[];
   wallMs: number;
@@ -89,14 +91,27 @@ export interface ReadyWarmup {
   ranNow: boolean;
 }
 
+/**
+ * Whether a finished warm-up ran the chain the spec names, on its model. A record written before
+ * these fields were kept has none of them and fails, since nothing shows what it ran.
+ * Changes to how the harness is launched are not recorded; a rerun after one starts from a new work dir.
+ */
+function sameRun(warmup: Warmup, spec: WarmupSpec): boolean {
+  return (
+    JSON.stringify(warmup.prompts) === JSON.stringify(spec.chain.prompts) &&
+    warmup.start === spec.chain.start &&
+    warmup.model === spec.model
+  );
+}
+
 /** The warm-up the spec names, run now unless an earlier batch finished it. */
 export async function ensureWarmup(spec: WarmupSpec): Promise<ReadyWarmup> {
   const dir = warmupDirFor(spec.workDir, spec.harness, spec.chain.id, spec.arm);
   const record = path.join(dir, RECORD);
   if (existsSync(record)) {
     const warmup = JSON.parse(readFileSync(record, "utf8")) as Warmup;
-    if (warmup.prompts && JSON.stringify(warmup.prompts) !== JSON.stringify(spec.chain.prompts)) {
-      throw new Error(`warm-up ${spec.chain.id} ran with other prompts; delete ${dir} to run it again`);
+    if (!sameRun(warmup, spec)) {
+      throw new Error(`warm-up ${spec.chain.id} ran with other prompts, start or model; delete ${dir} to run it again`);
     }
     return { dir, warmup, ranNow: false };
   }
@@ -120,6 +135,8 @@ export async function ensureWarmup(spec: WarmupSpec): Promise<ReadyWarmup> {
     harness: spec.harness,
     sessionId: session.sessionId,
     prompts: spec.chain.prompts,
+    start: spec.chain.start,
+    model: spec.model,
     exits: session.exits,
     wallMs: Date.now() - startedAt,
     finalContext: last ? contextOf(last.usage) : 0,
