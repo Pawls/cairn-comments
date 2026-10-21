@@ -38,8 +38,14 @@ describe("launchFor with a local model", () => {
     });
   });
 
-  it("leaves Claude Code's side calls alone against the Anthropic API", () => {
-    expect(launchFor("claude", options(false)).env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBeUndefined();
+  it("tells Claude Code the local model's real window, so it does not compact at 200,000 tokens", () => {
+    expect(launchFor("claude", options(true)).env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe("262144");
+  });
+
+  it("leaves Claude Code's side calls and window alone against the Anthropic API", () => {
+    const env = launchFor("claude", options(false)).env;
+    expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBeUndefined();
+    expect(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBeUndefined();
   });
 
   it("declares the model to pi as a provider speaking the Messages API through the proxy", () => {
