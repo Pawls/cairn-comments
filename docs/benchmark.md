@@ -217,6 +217,15 @@ agent's checkout. Only `result.json` records the arm.
 
 ## Results
 
+**Deep context (2026-10-21, IQ3_XXS on Claude Code): the agent was not lost, and comments
+cost tokens.** After a 118,000-token warm-up of real work the stripped arm still solved all
+eight probes, more cheaply than fresh, so the deep-context gates failed and the matrix did not
+run. On seven of the probes at fresh depth, the repository's own comments, inline in the agent's
+checkout, cost 18% more tokens (geometric mean ratio 1.18, 95% interval 1.04 to 1.36) with
+every run passing. Numbers, causes and the next conditions to test are in
+[plans/benchmark-deep-context.md § D4](plans/benchmark-deep-context.md#d4) and
+[§ D4b](plans/benchmark-deep-context.md#d4b).
+
 **On a large repository, the repository's own comments made no measurable difference to
 success or to input tokens** ([§ Large repository](#large-repository-boxelbuilder)):
 every run passed in both arms, and the comments arm's median per-task change in input tokens was

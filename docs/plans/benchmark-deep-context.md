@@ -8,15 +8,18 @@
 > claim, or fail to, and says in advance what would make it invalid.
 > **Diff sign-off:** each slice's tests pass on Windows and on an LF platform (WSL Ubuntu),
 > and nothing runs against the model server until D4's gates pass.
-> **Lanes:** one lane from here: D4a→D4→D5→D6 (D2 and D3 ran as parallel lanes and have shipped)
-> **Next:** D4a — wire the probe set into deep runs: load `deep-tasks.json`, grade each probe kind, and run predict probes with no shell.
+> **Lanes:** one lane from here: D4→D5→D6 (D2 and D3 ran as parallel lanes; D4a joined them)
+> **Next:** the owner's call. D4's gates failed and D4b's token claim failed; D5 and D6 are on
+> hold. D4b's "Other selling points" lists six conditions to test next; the cheapest is D4's
+> calibration rerun on IQ2_XS (idea 4).
 > **Branch:** `benchmark-deep-context` for this plan; lane branches `bench/<slice>`.
 
 - [~~D1 — The claim, the conditions, and the gates~~ — SHIPPED 2026-10-14](#d1)
 - [~~D2 — Multi-turn sessions in the harness~~ — SHIPPED 2026-10-14](#d2)
 - [~~D3 — The probe set: navigation and understanding~~ — SHIPPED 2026-10-14](#d3)
-- [D4a — Wire the probe set into deep runs](#d4a)
-- [D4 — Warm-up sessions and the calibration gates](#d4)
+- [~~D4a — Wire the probe set into deep runs~~ — SHIPPED 2026-10-14](#d4a)
+- [~~D4 — Warm-up sessions and the calibration gates~~ — SHIPPED 2026-10-21](#d4)
+- [~~D4b — Second attempt: do inline comments cut the tokens a fresh agent spends?~~ — SHIPPED 2026-10-21](#d4b)
 - [D5 — Run the matrix and decide](#d5)
 - [D6 — Variants: a Claude model, Cairn-written comments, summaries](#d6)
 
@@ -143,43 +146,58 @@ Eight probes in `benchmark/deep-tasks.json`, none in a module the warm-up chains
 - [x] Verify: `verify-probes` 12/12 in both arms, before and after PR #25's strip rules (the
       stripped tree stayed byte-identical); Windows `npm test` 634 passed, 1 skipped; WSL 640 passed
 
-## D4a — Wire the probe set into deep runs · Opus 5.5 / high {#d4a}
+## ~~D4a — Wire the probe set into deep runs~~ · Opus 5.5 / high — SHIPPED 2026-10-14 {#d4a}
 
-**Status:** Not started. D2 built the runner and D3 the probes, each on its own lane, so
-nothing yet runs a probe end to end. `run` does not load `deep-tasks.json`, the four probe
-kinds have no grading in the runner, and predict probes still get a shell.
-**Touches:** `scripts/benchmark/{runner,metrics,tasks,warmup,main,harnesses}.ts`, their tests,
-`docs/benchmark.md`.
+**Status:** Shipped as PR #28. `run` plans and grades the probe set, predict and locate probes
+get read-only tools, and the graders live in `metrics.ts`. Its plan notes are filed under D4
+and D5.
+**Touches:** `scripts/benchmark/{runner,metrics,tasks,warmup,main,harnesses,agent,schedule,verify-probes}.ts`,
+their tests and fixtures, `docs/benchmark.md`.
 **After:** D2, D3.
 
-- **Note (from D3):** the graders exist in `tasks.ts`, kept out of lane A's files:
-  `gradePrediction(finalText, expected)`, `gradeAnswer(finalText, answerKey)` for locate,
-  `gradeChangeProbe(taskFile, probe, checkout, env, committed)`, and the rubric through
-  `gradeAnswer` as a secondary score only. `committed` is the arm's prepared commit, never
-  HEAD, if the runner commits the warm-up's end state. Copy hidden tests by their named
-  paths, never a whole `tests/` folder.
-- **Note (from D2 and D3):** probes carry no chain or depth field. Every probe forks from
-  every chain at its repository and start, and depth is the runner's factor.
+- [x] Test first: `run` with `deep-tasks.json` plans fresh and deep runs for every probe and
+      grades each kind (predict, locate, change, and rubric as a secondary) into `result.json`.
+      A grader that throws leaves `error.txt` and is retried, never recorded as a failed grade.
+- [x] Predict and locate probes run read-only through an allowlist rather than the planned
+      denylist, because Claude Code on Windows also offers PowerShell and Task: `--tools
+      Read,Grep,Glob` for Claude and `read,grep,find,ls` for pi, in fresh runs and forks alike
+- [x] One home for each piece: chains load through `loadChains`; `gradePrediction` and
+      `gradeChangeProbe(probe, checkout, env, committed)` sit beside `gradeAnswer` in
+      `metrics.ts`; one test-command runner
+- [x] `docs/benchmark.md` has a deep-runs section: depths, forks, probe grades, read-only
+      tools, and the run layout
+- [x] Verify: Windows `npm test` 708 passed, 1 skipped; WSL 709 passed; stand-in dry runs over
+      `deep-tasks.json` (game-systems, both depths and arms), pi 32/32 and Claude Code 32/32
+      graded, with every probe kind reaching its grader
 
-- [ ] Test first: `run` with `deep-tasks.json` plans fresh and deep runs for every probe and
-      grades each kind (predict, locate, change, rubric as secondary) into `result.json`
-- [ ] Predict and locate probes run with no shell and no edit tools: Claude Code
-      `--disallowedTools Bash,Edit,Write,NotebookEdit`, and pi's tool allowlist. Test that the
-      harness command line carries the restriction, for fresh runs and forks alike.
-- [ ] One home for each piece: `loadDeepTasks`' chain reading merged into `loadChains`;
-      `gradePrediction` and `gradeChangeProbe` beside `gradeAnswer` in `metrics.ts`; one
-      test-command runner for runner.ts's edit grading and `gradeChangeProbe`
-- [ ] `docs/benchmark.md` gets a deep-runs section: chains, forks, depths, the CLI flags, what
-      `result.json` records, and the arm-blind run layout
-- [ ] Verify: scoped suite and `npm test` on Windows and WSL; a stand-in dry run over
-      `deep-tasks.json` with one chain, both depths, both harnesses, where every probe kind
-      reaches its grader (a stand-in answer fails, but the grade is recorded)
+## ~~D4 — Warm-up sessions and the calibration gates~~ · Opus 5.5 / high — SHIPPED 2026-10-21 {#d4}
 
-## D4 — Warm-up sessions and the calibration gates · Opus 5.5 / high {#d4}
-
-**Status:** Not started. Blocked on D4a.
-**Touches:** the work directory only; edits to D3's warm-ups if depth is short.
+**Status:** Done 2026-10-21 on the owner's word: gates G2 and G3 failed, so the matrix was not
+run. The run log, calibration table and gate verdicts are below.
+**Touches:** the work directory; edits to D3's warm-ups if depth is short; `deep-tasks.json`'s
+`agentNotes` and the loader's overlap check if the notes below call for them.
 **After:** D4a.
+
+- **Note (from D4a):** prepare once per probe set: `prepare --repo boxel --tasks
+  benchmark/deep-tasks.json` builds the shared `deep` entry (26 s with the mirror seeded from
+  the local clone).
+- **Note (from D4a):** G1 differs by probe kind. Read-only probes declare fewer tools, so their
+  first-call context is smaller at the same depth: on the stand-in, Claude Code read 7,057
+  tokens deep and 4,109 fresh for predict and locate, against 18,282 and 17,458 for change.
+  Check G1 per kind, or against the warm-up's `finalContext`, never one threshold across kinds.
+- **Note (from D4a):** confirm on Strata that a read-only fork whose warm-up history holds Bash
+  and Edit calls is accepted (the stand-in accepts anything), and that it declares only Read,
+  Grep and Glob there.
+- **Note (from D4a):** a read-only fork misses the warm-up's prompt cache: its tool list differs
+  and the tools come first, so its first call prefills the whole warm-up again. Both arms pay
+  alike. Measure the re-prefill with the prefill measurement, and compare wall time only within
+  a probe kind.
+- **Note (from D4a):** `agentNotes` tell every run how to use pytest, which a read-only run
+  cannot. Both arms see it. Decide whether to reword them before calibrating. They are baked
+  into the prepared commits, so a change means re-preparing and re-running `verify-probes`.
+- **Note (from D4a):** a warm-up that edits a change probe's kept test gets it put back at
+  grading, but the loader's overlap check covers `modules` only. Read the warm-up transcripts
+  for kept-test edits, and add `keptTests` to the check if a chain makes one.
 
 - **Note (from D2):** confirm on Strata that the first probe call counted for G1 is the
   agent's own. Side calls (titles, summaries) declare no tools, and the proxy now logs each
@@ -197,18 +215,193 @@ kinds have no grading in the runner, and predict probes still get a shell.
 - **Note (from D2):** snapshotting BoxelBuilder takes 9.7 s once per warm-up, and restoring it
   4.5 s per probe. One warm-up's probes run one after another.
 
-- [ ] Measure the model server first: prefill speed at 150,000 tokens of context on Strata,
+**Run log (2026-10-21, owner asleep, work dir `C:\cbd4`, Claude Code 2.1.303 only):**
+
+- **Model:** Strata now serves `qwen3.8-flash-next-iq3_xxs` (the owner offered IQ3_XXS or
+  IQ2_XS). IQ3_XXS was fast enough, so every D4 number is on it, not on the IQ2 of earlier
+  rounds. Prefill: 145,793 tokens cold in 43.8 s (3,329 tokens/s); a 300-token answer on top of
+  that cached prefix took 3.1 s (98 tokens/s with the cache hit).
+- **Claude Code compacted at 167,000 tokens.** It does not know the local model, assumes a
+  200,000-token window, and compacts about 33,000 short of it: the first editor-tools warm-up
+  fell from 166,901 to 40,549 tokens in its fifth prompt. Fixed by setting
+  `CLAUDE_CODE_MAX_CONTEXT_TOKENS=262144` for a local model (`harnesses.ts`). With it, the
+  compaction moved to about 230,000 (a game-systems probe went from 230,473 to 33,026).
+  `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` can only lower that threshold.
+- **Warm-up depth varies a lot from run to run with the same prompts**, because the agent
+  reads a different amount each time. Stripped arm, wall time in parentheses:
+  editor-tools' first four prompts reached 175,000 (prompts 5 and 6 not finished); its first
+  three reached 115,917 (7.4 min). With a fourth, read-only prompt (biomegen's mountain
+  generator) they reached 118,118 (7.3 min). game-systems' six prompts reached 160,726 (12.9 min);
+  its first five reached 202,379 (15.4 min) on the next run. The comments arm reads 25–35%
+  more, so a chain that ends near 200,000 stripped leaves the comments arm under the
+  compaction line by less than one probe's work.
+- **Chains changed:** editor-tools is its first three prompts plus the biomegen question;
+  game-systems is its first five. Tonight's runs use editor-tools only (`--chains
+  editor-tools`), because game-systems' depth swings past the compaction line.
+- **Trap found (now guarded):** a warm-up's directory is a hash of (chain, arm) only, so
+  editing a chain's prompts reuses the old `warmup.json`. Old warm-ups were moved to
+  `C:\cbd4\aside-compacted\` before each rerun. `warmup.json` now records the prompts, start and
+  model, and a run refuses a finished warm-up whose chain or model has changed. Records written
+  before the guard (tonight's) carry none of them and are refused too, so D5 reruns its warm-ups.
+  A change to how the harness launches is not recorded; rerun in a new work dir after one.
+- **Read-only forks work on Strata:** a deep locate probe forked a warm-up full of Bash and
+  Edit calls and declared only Read, Grep and Glob. As predicted, its first call missed the
+  cache: 122,903 uncached input tokens against a 112,761-token first call.
+- **Running two processes against Strata at once thrashes its prompt cache.** Strata keeps one
+  cached prefix, so two sessions that take turns re-prefill their whole context on every call:
+  80 to 100 s per call at 108,000 to 148,000 tokens, with zero cache reads. The comments-arm
+  process started beside the calibration was stopped after 30 minutes and its partial run set
+  aside. One process at a time, always; `--shard` is for API runs only.
+- **No 5xx** in any warm-up or run log (0 of 951 calls, the set-aside runs included), and the editor-tools warm-up
+  edited no change probe's kept test (it wrote `test_save_atomic.py` and touched `test_world.py`
+  and `test_spritecanvas.py`). `agentNotes` were left as they were.
+
+**Calibration (one repetition, `none`, editor-tools chain at 118,118 tokens):** every one of
+16 runs passed. Columns are the probe's own tokens: context it added plus output, which leaves
+out the carried warm-up.
+
+| Probe | Kind | Fresh: tokens / calls / wall | Deep: first call / tokens / calls / wall |
+| --- | --- | --- | --- |
+| drain-into-shaft | predict | 20,379 / 5 / 68 s | 112,984 / 14,174 / 7 / 94 s |
+| fell-touching-crowns | predict | 44,960 / 4 / 105 s | 113,107 / 35,360 / 2 / 143 s |
+| enemy-leash | change | 145,655 / 54 / 1,800 s (timed out, tests passed) | 124,311 / 112,244 / 20 / 470 s |
+| navgrid-changed-nodes | change | 118,847 / 24 / 389 s | 124,285 / 75,336 / 19 / 274 s |
+| fog-gate-refused | locate | 17,572 / 7 / 45 s | 112,806 / 12,171 / 6 / 78 s |
+| portal-one-way | locate | 20,641 / 6 / 34 s | 112,761 / 11,776 / 7 / 71 s |
+| lightning-moderate-rain | change | 28,818 / 11 / 125 s | 124,229 / 34,922 / 15 / 1,294 s (slowed by the cache thrash) |
+| ai-overwrite-asks | change | 81,131 / 28 / 342 s | 124,223 / 52,681 / 20 / 251 s |
+
+**Gates:**
+
+| Gate | Verdict | Numbers |
+| --- | --- | --- |
+| G1 depth | Pass for change probes, short by 7,000 for read-only ones | change 124,223–124,311; predict and locate 112,761–113,107, because they declare three tools instead of 22. The history under both is the same 118,118 tokens. |
+| G2 deep hurts | **Fail** | Success 8/8 at both depths. Deep runs used fewer tokens, not more: 7 of 8 probes cheaper deep, mean 43,583 against 59,750 fresh. The warm-up had already taught the agent the layout and how to run the tests: fresh runs spent Glob calls finding their way (deep ones almost none) and more Bash calls (enemy-leash 28 against 8, ai-overwrite-asks 17 against 9). Depth helped. |
+| G3 headroom | **Fail** | `none` at deep scored 8/8 (100%, above the 80% ceiling); `none` at fresh 8/8 |
+| G4 not an answer key | Pass (from D3) | both readers 8/8 on stripped code |
+
+**Verdict:** the condition the claim needs did not appear. At 118,000 tokens of real work,
+IQ3_XXS on Claude Code was not lost: it solved every probe, faster and cheaper than fresh.
+G2 and G3 failing means the D5 matrix cannot detect the claim with these probes and this
+model, so it was not run. Recalibrating would need a condition that actually loses the agent
+(see the second attempt below and the ideas at the end of it), not a retune of these probes.
+
+- [x] Measure the model server first: prefill speed at 150,000 tokens of context on Strata,
       and the context length the warm-ups actually reach. Set the depth target from the
       measurement, between 120,000 tokens and about 70% of the window.
-- [ ] Run each warm-up chain once per arm and record its depth (G1) and its wall time
-- [ ] Calibrate: three runs of each probe in `none` at `fresh` and in `none` at `deep`
-- [ ] Check G1 to G4 and write the numbers in this slice. If a gate fails, adjust the probes
-      or warm-ups and recalibrate, up to two times; after that stop and report to the owner
-      rather than run the matrix.
+- [ ] Run each warm-up chain once per arm and record its depth (G1) and its wall time. Only
+      the `none` arm ran (editor-tools 118,118 tokens in 7.3 min; game-systems 202,379 in
+      15.4 min, set aside); the comments arm's warm-ups belong to the matrix, which the gates stopped.
+- [x] Calibrate: one run of each probe in `none` at `fresh` and at `deep` (editor-tools), not
+      three. One was enough: 16 of 16 passed, so no number of repetitions moves G2 or G3.
+- [x] Check G1 to G4 and write the numbers in this slice. G2 and G3 failed; the matrix was not run.
+
+## ~~D4b — Second attempt: do inline comments cut the tokens a fresh agent spends?~~ · Opus 5.5 / high — SHIPPED 2026-10-21 {#d4b}
+
+**Status:** Done 2026-10-21: the claim failed (comments cost 18% more). The owner allowed one second attempt with a
+different plan if the first failed. Written before any comments-arm result was read.
+**Touches:** the work directory only.
+**After:** D4.
+
+**The claim** (owner, 2026-10-21): an agent uses fewer tokens to understand code when it
+reads the comments. The comments are inline in the agent's checkout (the `comments` arm), so
+it sees them without any pointer or lookup.
+
+**Why this can work where D4 could not:** the D4 gates failed on score and depth, and neither
+matters here. Success is at its ceiling, so this attempt measures cost instead: the tokens a
+probe adds (context it reads plus output, the same column as the calibration table), on the
+same seven probes, fresh, in both arms, two repetitions each. enemy-leash is left out because
+it hits the 30-minute timeout fresh, which cuts its count off.
+
+**Against it:** the comments arm pays for the comments it reads. BoxelBuilder's comments add
+2,380,956 bytes, and D3 measured 25–35% more bytes read for the same work. Comments must save
+more exploration than they cost to read.
+
+**Decision rule, fixed before the results:** per probe, the ratio of mean tokens
+(comments / none); over probes, the geometric mean with a 95% bootstrap interval. The claim
+holds if the geometric mean is below 0.80 and the interval's upper end is below 1.0. It fails
+if the interval's lower end is above 0.80. Anything else is inconclusive at this size. Pass
+rate is reported beside it and must not drop in the comments arm. Understanding and navigation
+are reported apart; the decision is on all seven.
+
+- [x] Run `--arms none,comments --depths fresh --reps 2` on the seven probes (the `none` arm's
+      first repetition is the calibration's): 21 new runs, 04:00 to 05:32, no 5xx, no timeout
+- [x] Apply the decision rule and write the numbers here
+- [x] If the claim fails, write what went wrong and a report with other selling points
+
+**Result: the claim fails.** All 28 runs passed. The comments arm spent more tokens, not
+fewer: geometric mean ratio **1.18** (comments / none), 95% bootstrap interval **1.04 to
+1.36**, whose lower end is above 0.80. Understanding probes 1.14, navigation probes 1.20. The
+large-repository round of the earlier benchmark found the same direction (+20.7% input tokens,
+[../benchmark.md](../benchmark.md#results)).
+
+| Probe | Use | Tokens, none (2 runs) | Tokens, comments | Ratio | Calls none / comments | Comment bytes read |
+| --- | --- | --- | --- | --- | --- | --- |
+| drain-into-shaft | understanding | 20,379 / 20,655 | 18,548 / 20,958 | 0.96 | 5 / 5 | 6,872 |
+| fell-touching-crowns | understanding | 44,960 / 34,558 | 56,837 / 55,741 | 1.42 | 3.5 / 3.5 | 41,741 |
+| navgrid-changed-nodes | understanding | 118,847 / 92,001 | 112,483 / 117,894 | 1.09 | 23.5 / 21.5 | 33,487 |
+| fog-gate-refused | navigation | 17,572 / 17,557 | 16,121 / 25,372 | 1.18 | 6.5 / 6.5 | 5,264–6,491 |
+| portal-one-way | navigation | 20,641 / 7,483 | 21,662 / 25,813 | 1.69 | 6 / 6 | 28,468 |
+| lightning-moderate-rain | navigation | 28,818 / 43,613 | 35,693 / 33,962 | 0.96 | 12.5 / 13 | 4,804–7,742 |
+| ai-overwrite-asks | navigation | 81,131 / 146,825 | 138,266 / 112,737 | 1.10 | 46 / 48 | 42,310–52,172 |
+
+**What went wrong:**
+
+1. **The agent was never lost, so there was no search for comments to shorten.** The model
+   reached every answer in 3 to 7 calls on the read-only probes: grep for the name, read the
+   file, answer. The comments arm made the same number of calls on every probe within two.
+   A comment saves tokens only by replacing reads, and these probes left almost no reads to
+   replace.
+2. **Comments are paid for whether or not they are needed.** The Read tool returns the whole
+   file, comments included, so the extra cost tracks the comment bytes read: fell-touching-crowns
+   read 41,741 bytes of comments (roughly 11,000 tokens) and cost 16,500 more tokens;
+   portal-one-way read 28,468 and cost 9,700 more. BoxelBuilder's own comments are dense
+   (2,380,956 bytes in all), which is about the worst case for this cost.
+3. **The answers were in the code, by design.** G4 requires each probe to be solvable from the
+   stripped code, so a capable reader gains nothing a comment says that the code does not.
+   That gate protects the benchmark from answer keys, and also rules out the cases where
+   comments carry what code cannot.
+4. **One sign that comments help reasoning, which reading cost hides:** on drain-into-shaft
+   the comments arm wrote about half the output (4,461 and 4,975 tokens against 8,106 and
+   8,533) and finished in 51 s against 72 s, for the same answer. Two runs, one probe; a
+   hint, not a result.
+
+**Other selling points, and how each could be tested:**
+
+1. **Recovery after compaction.** The only time tonight's agent lost its picture of the code
+   was when Claude Code compacted: 166,901 to 40,549 tokens, and 230,473 to 33,026. The summary
+   keeps the plan and drops details, and the details come back only by re-reading, at which
+   point inline comments restate the invariants. Test: run a warm-up past the compaction line,
+   then probe code the session worked on before it compacted, against code it never saw.
+2. **Knowledge the code does not hold.** Why an approach was rejected, a contract with
+   another module, a runtime or platform quirk. BoxelBuilder has one in plain sight:
+   `World.set_spawn`'s docstring says the spawns dict is replaced, never mutated in place,
+   because the undo snapshot is a shallow copy. Test: change tasks where the obvious edit
+   breaks such a rule, with hidden tests for the rule, scored on regressions introduced. This
+   inverts G4 on purpose and needs its own gate: the rule must be one a careful reader of the
+   stripped code can miss.
+3. **Comments for the code being touched, not the whole file.** The cost above is reading
+   every comment in every opened file. Cairn already keeps comments in a sidecar and decides
+   what to write into a worktree, so it could inline only the comments of the functions an
+   agent is changing, or one short note per function. Test: the D4b probes again with
+   targeted comments; the bar is a ratio below 1.0 with no other change.
+4. **Weaker or cheaper models.** IQ3_XXS was at the ceiling on success. IQ2_XS, or Haiku 5.5
+   through the API, may fail some probes in the `none` arm, which is the headroom G3 needs.
+   Test: rerun D4's calibration on IQ2_XS first; if `none` fresh drops below 100%, run the arms.
+5. **Clean commits as the product, not a performance claim.** Cairn's filter keeps
+   AI-written comments out of commits and pull-request diffs while the agent keeps them in its
+   worktree. That value is to the human reviewer and holds even if agents perform the same.
+   Test: diff size and review comments on the same change with and without the filter.
+6. **Session history beats comments, so capture what the history knew.** Deep runs were
+   cheaper than fresh ones because the warm-up had already taught the layout and the test
+   commands (Glob and Bash calls dropped). Agent-written notes that persist across sessions
+   (D6's Cairn-written comments) could carry that operational knowledge to the next fresh
+   session. Test: a fresh probe with and without the notes a previous session wrote.
 
 ## D5 — Run the matrix and decide · Opus 5.5 / medium {#d5}
 
-**Status:** Not started. Blocked on D4.
+**Status:** Not started. On hold: D4's gates G2 and G3 failed on these probes and this model,
+so the matrix cannot detect the claim as built (D4, D4b).
 **Touches:** the work directory; `docs/benchmark.md`, this plan, `docs/plans/v2.md`.
 **After:** D4.
 
@@ -216,8 +409,15 @@ kinds have no grading in the runner, and predict probes still get a shell.
   checkout (about 2.3 GB for BoxelBuilder, so about 9 GB for four warm-ups). Delete them after
   the last probe. Deep runs spread over at most chains × arms processes (4 here), because one
   warm-up's probes share its checkout.
+- **Note (from D4a):** every probe forks from both chains, so a run has three starts (fresh and
+  one per chain): 8 probes × 2 arms × 3 starts × 3 repetitions is 144 probe runs per harness,
+  plus 4 warm-ups. Each fresh run clones and installs the virtualenv, so setup alone is
+  roughly an hour per harness (a 32-run stand-in batch took about 15 minutes). Budget for it
+  or shard.
+- **Note (from D4a):** `result.json` records `grade.rubric`, but `report.ts` does not show it.
+  Add it as a secondary column if the decision uses it.
 
-- [ ] Two warm-up chains per arm, each forked for every probe: 8 probes × 2 arms × 2 depths × 3 repetitions (about 96 probe runs and 4 warm-ups on Strata)
+- [ ] Two warm-up chains per arm, each forked for every probe: 8 probes × 2 arms × 3 starts × 3 repetitions (144 probe runs and 4 warm-ups on Strata)
 - [ ] Report the per-probe change at `deep` against `fresh`, with intervals; split navigation
       from understanding
 - [ ] Record the result and the go/no-go in `docs/benchmark.md` and v2's B3, stating what the

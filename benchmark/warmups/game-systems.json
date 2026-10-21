@@ -14,16 +14,13 @@
     "database.py",
     "ui/effects_panel.py",
     "ui/database_panel.py",
-    "particles.py",
-    "daynight.py",
-    "tuning.py"
+    "particles.py"
   ],
   "prompts": [
     "A tester hand-edited saves/slot2.json to reset their progress and wrote \"switches\": [] inside \"state\". Now listing the save slots crashes (saveload's list_slots and latest_slot raise), so the pause menu and the game-over screen fall over instead of showing the slots. A slot we can't use should just show as empty, the way a slot with broken JSON already does. Please fix it in saveload.py without changing how a map's own game state loads, and add a test.",
     "How do 'Run once' event pages work, outside the live playtest? Where is it recorded that a page has run, how does the headless story simulator (sim.py) decide a page has run and when it marks it, what happens if I rename the event, and how does the linter (gamelint.py) treat these pages and their guards? Answer from the code; don't trace the playtest window.",
     "In the effect designer I forked the built-in Slash into my project and recoloured it. Now only every other melee swing shows my version; the swings in between still play the old built-in one. Editing a forked swing effect should apply to every swing. Please fix it and add a test.",
     "Saving the project database writes database.json in place, so a crash or a full disk in the middle of a save leaves a half-written file, and the next load falls back to an empty database. Make Database.save write the new file safely (a temporary file in the same folder, then replace), keep the previous version beside it as database.json.bak, and leave the existing refusal to save a database whose load fell back alone. Please add tests.",
-    "fx._place is hard to follow. The cone-direction sampling is written out twice (the beam/trail branch and the cone branch), and the a*f + b*r + c*u basis sums are spelled out per component everywhere. Pull them into small helpers. A seeded random.Random must give bit-identical spawn() output before and after, so add a golden test first.",
-    "Explain daynight.py to me. How does a time of day map onto sky brightness, sky colour and the key light (sun or moon)? What does sample() return at the moment dusk starts? How does step_time decide which way round the clock to go when a tween crosses midnight? And what does cycle_step do when the day cycle is 0 minutes, or when the game-time scale is 0.25? Answer from the code."
+    "fx._place is hard to follow. The cone-direction sampling is written out twice (the beam/trail branch and the cone branch), and the a*f + b*r + c*u basis sums are spelled out per component everywhere. Pull them into small helpers. A seeded random.Random must give bit-identical spawn() output before and after, so add a golden test first."
   ]
 }
