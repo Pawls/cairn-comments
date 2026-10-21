@@ -50,7 +50,7 @@ function toolArgs(harness: HarnessName, options: LaunchOptions): string[] {
   return options.readOnly ? ["--tools", READ_ONLY_TOOLS[harness]] : [];
 }
 
-/** Context and output limits declared to pi for a local model; Strata serves 262,144 tokens. */
+/** Context and output limits declared for a local model; Strata serves 262,144 tokens. */
 const LOCAL_CONTEXT_WINDOW = 262_144;
 const LOCAL_MAX_TOKENS = 65_536;
 
@@ -104,8 +104,12 @@ function claudeLaunch(options: LaunchOptions): Launch {
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
     DISABLE_AUTOUPDATER: "1",
   };
-  // A local server has only the run's model, so a side call to a Claude model would fail.
-  if (options.local) for (const name of CLAUDE_SIDE_MODELS) env[name] = options.model;
+  if (options.local) {
+    // A local server has only the run's model, so a side call to a Claude model would fail.
+    for (const name of CLAUDE_SIDE_MODELS) env[name] = options.model;
+    // Claude Code assumes 200,000 tokens for a model it does not know and compacts near 167,000.
+    env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(LOCAL_CONTEXT_WINDOW);
+  }
   return {
     command: "claude",
     // The prompt goes on stdin: an argument would pass through Windows' command-line quoting.
