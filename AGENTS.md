@@ -54,10 +54,13 @@ platform (WSL Ubuntu so far). The integration suites already run each scenario u
   too (design.md § Packaging).
 - **Detector changes move measured numbers.** `scan.corpus.test.ts` pins each detector's
   score and enabled flag; update the table in design.md § Scan detectors with them.
-- **A benchmark tests the product's claim, and a failed gate stops it.** Before building
-  tasks, write the claim and the condition that produces it (Cairn's: an agent lost deep in a
-  long session, needing to find code or to understand a complicated function) and show the
-  tasks reproduce that condition. A fresh agent on a small fix does not. Calibration must
+- **A benchmark tests the product's claim, and a failed gate stops it.** Cairn's claim is a
+  loop: an agent writes notes as it works out the code, Cairn keeps them, and later agents
+  (including one lost deep in a long session) read them instead of working the same thing out
+  again. Before building tasks, say which steps of that loop the benchmark exercises and which
+  it leaves out, write the condition that produces the claim, and show the tasks reproduce it.
+  A benchmark where no agent writes notes, or where no note reaches a later agent, tests only
+  pre-existing comments (docs/plans/benchmark-deep-context.md § D7). A fresh agent on a small fix does not. Calibration must
   show the control arm can fail; if it passes at ceiling, redesign the tasks and do not run
   the matrix (docs/plans/benchmark-deep-context.md § What this benchmark must be able to detect).
 
