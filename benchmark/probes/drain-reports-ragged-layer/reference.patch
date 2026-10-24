@@ -1,0 +1,82 @@
+diff --git a/water.py b/water.py
+index fed954cb..fcfb03b6 100644
+--- a/water.py
++++ b/water.py
+@@ -32,7 +32,7 @@
+ 
+ from collections import deque
+ from collections.abc import Callable, Iterable
+-from dataclasses import dataclass
++from dataclasses import dataclass, replace
+ 
+ import tuning
+ 
+@@ -371,6 +371,21 @@ class Drain:
+     # each basin below fills to its OWN equilibrium rather than sharing a fixed volume.
+     spilled: int | None
+     bounded: bool
++    # The wet cells of the top layer when the solve left it only partly filled, in the order
++    # the solve chose them; empty when the top layer is whole.
++    ragged: tuple[Cell, ...] = ()
++
++
++def _ragged(chosen: list[Cell], candidates: list[Cell], keep: set[Cell]) -> tuple[Cell, ...]:
++    """The cells of a partial fill (``chosen``, in fill order, out of ``candidates``) that
++    stand in the top wet layer of ``keep``, when some candidate in that layer stays dry."""
++    if not chosen:
++        return ()
++    top = max(c[1] for c in keep)
++    taken = set(chosen)
++    if not any(c[1] == top and c not in taken for c in candidates):
++        return ()
++    return tuple(c for c in chosen if c[1] == top)
+ 
+ 
+ def solve_drain(
+@@ -466,6 +481,7 @@ def open_b(c: Cell) -> bool:
+ 
+     assert fit is not None  # both branches above either set it or returned
+     spilled: int | None
++    ragged: tuple[Cell, ...] = ()
+     if fed:
+         # The supply, not the volume, sets the level: keep the whole fitting flood, and
+         # anything leaving through a leak keeps leaving.
+@@ -493,7 +509,9 @@ def open_b(c: Cell) -> bool:
+             # discovery order (deterministic), the way a spill fills a layer.
+             cells, _fits = _flood_ordered(open_b, seed, seed[1] + 1, budget)
+             ranked = sorted(range(len(cells)), key=lambda i: (cells[i][1], i))
+-            keep = {cells[i] for i in ranked[:volume]}
++            chosen = [cells[i] for i in ranked[:volume]]
++            keep = set(chosen)
++            ragged = _ragged(chosen, cells, keep)
+             level = seed[1] + 1
+         else:
+             keep, level = best, best_level
+@@ -509,7 +527,9 @@ def open_b(c: Cell) -> bool:
+                 cells, _fits = _flood_ordered(open_b, seed, best_level + 1, budget)
+                 extra = [c for c in cells if c not in keep]
+                 ranked = sorted(range(len(extra)), key=lambda i: (extra[i][1], i))
+-                keep = keep | {extra[i] for i in ranked[:short]}
++                chosen = [extra[i] for i in ranked[:short]]
++                keep = keep | set(chosen)
++                ragged = _ragged(chosen, extra, keep)
+                 level = best_level + 1  # the topmost wet cell rose into the next layer
+         spilled = 0  # the volume ran out below any leak
+         escape = None
+@@ -529,7 +549,7 @@ def open_b(c: Cell) -> bool:
+         # Nothing moved. A FED body can still be pouring out of a leak it already had, so
+         # only a body with nothing leaving is truly at rest.
+         if spilled == 0:
+-            return at_rest
++            return replace(at_rest, ragged=ragged)
+         return Drain(tuple(sorted(keep)), level, (), (), escape, spilled, True)
+     return Drain(
+         tuple(sorted(keep)),
+@@ -539,6 +559,7 @@ def open_b(c: Cell) -> bool:
+         escape,
+         spilled,
+         True,
++        ragged,
+     )
+ 
+ 

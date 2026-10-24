@@ -38,6 +38,12 @@ export function firstAgentContext(calls: LoggedCall[]): number {
   return first ? contextOf(first.usage) : 0;
 }
 
+/** The context of the last agent call in `calls` that has a response, or 0 when none does. */
+export function lastAgentContext(calls: LoggedCall[]): number {
+  const last = calls.findLast((call) => call.response && isAgentCall(call))?.response;
+  return last ? contextOf(last.usage) : 0;
+}
+
 /** Every input token: uncached, read from cache, and written to it. For one call, its context. */
 export function contextOf(usage: Usage): number {
   return usage.input + usage.cacheRead + usage.cacheWrite;
@@ -59,6 +65,8 @@ export interface RunMetrics {
   calls: number;
   /** The context of the probe's first agent call (not a side call); at depth `deep` that includes the warm-up. */
   firstCallContext: number;
+  /** The context of the probe's last agent call; less the first call's, it is the context the run added. */
+  finalContext: number;
   /** Calls to the run's own model. */
   turns: number;
   tokens: Usage;
@@ -101,6 +109,7 @@ export function runMetrics(log: LoggedCall[], options: { model: string; agentDir
   return {
     calls: responses.length,
     firstCallContext: firstAgentContext(ownCalls),
+    finalContext: lastAgentContext(ownCalls),
     turns: ownModel.length,
     tokens,
     toolCalls,

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { LoggedCall } from "../metrics.ts";
-import { startRecordingProxy } from "../proxy.ts";
+import { startRecordingProxy, systemMessagesAsUser } from "../proxy.ts";
 
 const STREAM = [
   'event: message_start\ndata: {"type":"message_start","message":{"model":"m","usage":{"input_tokens":3,"output_tokens":1}}}\n\n',
@@ -116,5 +116,39 @@ describe("startRecordingProxy", () => {
     const [logged] = loggedCalls(logFile);
     expect(logged).toMatchObject({ path: "/v1/other", status: 404 });
     expect(logged!.response).toBeUndefined();
+  });
+});
+
+describe("systemMessagesAsUser", () => {
+  const body = (messages: unknown[]) => Buffer.from(JSON.stringify({ model: "m", system: [{ type: "text", text: "s" }], messages }));
+  const messagesOf = (buffer: Buffer) => (JSON.parse(buffer.toString("utf8")) as { messages: unknown[] }).messages;
+
+  it("folds a system message after the first into the user turn before it, as a system reminder", () => {
+    const rewritten = systemMessagesAsUser(
+      body([
+        { role: "user", content: [{ type: "text", text: "do it" }] },
+        { role: "system", content: [{ type: "text", text: "# Environment" }] },
+        { role: "assistant", content: "done" },
+        { role: "system", content: "late note" },
+      ]),
+    );
+
+    expect(messagesOf(rewritten)).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "do it" },
+          { type: "text", text: "<system-reminder>\n# Environment\n</system-reminder>" },
+        ],
+      },
+      { role: "assistant", content: "done" },
+      { role: "user", content: [{ type: "text", text: "<system-reminder>\nlate note\n</system-reminder>" }] },
+    ]);
+  });
+
+  it("leaves a request without system messages byte for byte as it was", () => {
+    const original = Buffer.from('{"model":"m",  "messages":[{"role":"user","content":"hi"}]}');
+    expect(systemMessagesAsUser(original)).toBe(original);
+    expect(systemMessagesAsUser(Buffer.from("not json")).toString()).toBe("not json");
   });
 });

@@ -96,6 +96,20 @@ describe("runMetrics", () => {
     expect(runMetrics([logged(300, 0), logged(150_000, 12)], { model: "m", agentDir }).firstCallContext).toBe(150_000);
   });
 
+  it("gives the context of the probe's last agent call, so the tokens a run added can be read off", () => {
+    const usage = (input: number) => ({ input, output: 1, cacheRead: 0, cacheWrite: 0 });
+    const logged = (input: number, tools: number): LoggedCall => ({
+      path: "/v1/messages",
+      status: 200,
+      ms: 10,
+      phase: "probe",
+      tools,
+      response: { model: "m", usage: usage(input), tools: [], text: "" },
+    });
+
+    expect(runMetrics([logged(4_000, 12), logged(9_000, 12), logged(50, 0)], { model: "m", agentDir }).finalContext).toBe(9_000);
+  });
+
   it("counts every call of a log written before calls had phases", () => {
     expect(runMetrics([call("m", []), call("m", [])], { model: "m", agentDir }).calls).toBe(2);
   });

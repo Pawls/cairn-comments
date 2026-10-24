@@ -17,7 +17,7 @@ export const STRIP_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url
 const AGENT_PATHS = [".claude", ".agents", ".serena", ".pawl", ".mcp.json", ".coderabbit.yaml"];
 
 /** The one message of both arm commits, so the commit does not say which arm it is. */
-const COMMIT_MESSAGE = "Initial commit";
+export const COMMIT_MESSAGE = "Initial commit";
 
 export interface PreparedTask {
   taskId: string;
@@ -122,6 +122,11 @@ export interface PrepareOptions {
   agentNotes: string[];
 }
 
+/** The AGENTS.md both arm commits get: one line per agent note. */
+export function agentsMdText(agentNotes: string[]): string {
+  return agentNotes.map((line) => `${line}\n`).join("");
+}
+
 /** Builds the task's two arm commits in the mirror, replacing any earlier ones. */
 export function prepareTask(options: PrepareOptions): PreparedTask {
   const { mirror, taskId, start, python } = options;
@@ -136,7 +141,7 @@ export function prepareTask(options: PrepareOptions): PreparedTask {
     removeAgentFiles(tree, env);
     // A packaging file may name the README as the project's long description.
     if (hadReadme) writeFileSync(path.join(tree, "README.md"), "# Project\n");
-    writeFileSync(path.join(tree, "AGENTS.md"), options.agentNotes.map((line) => `${line}\n`).join(""));
+    writeFileSync(path.join(tree, "AGENTS.md"), agentsMdText(options.agentNotes));
     writeFileSync(path.join(tree, "CLAUDE.md"), "@AGENTS.md\n");
 
     const commitAs = (branch: string): string => {

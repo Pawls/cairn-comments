@@ -1,0 +1,289 @@
+{
+  "repos": {
+    "boxel": {
+      "url": "https://github.com/Pawls/BoxelBuilder.git",
+      "base": "fcbcc06cb1c5b3fca9988d661552649394748fc8",
+      "setup": [
+        "uv venv .venv --quiet --python 3.13",
+        "uv pip install --quiet --python {venv-python} -e .[dev]"
+      ],
+      "treatment": "own-comments",
+      "agentNotes": [
+        "# Agent notes",
+        "",
+        "Run a test file with the project's virtualenv, which is already set up:",
+        "`.venv/Scripts/python.exe -m pytest tests/<file>.py -q -n0` on Windows,",
+        "`.venv/bin/python -m pytest tests/<file>.py -q -n0` elsewhere."
+      ]
+    }
+  },
+  "repo": "boxel",
+  "start": "fcbcc06cb1c5b3fca9988d661552649394748fc8",
+  "warmups": [],
+  "prepend": "notes-prepend.md",
+  "pairs": [
+    {
+      "writer": "water-bucket-scoop",
+      "readers": [
+        "drain-into-shaft",
+        "drain-reports-ragged-layer"
+      ]
+    },
+    {
+      "writer": "tree-holding-foliage",
+      "readers": [
+        "fell-touching-crowns",
+        "canopy-reach-grows-with-height"
+      ]
+    },
+    {
+      "writer": "navgrid-reachable-regions",
+      "readers": [
+        "navgrid-changed-nodes",
+        "navgrid-opened-closed-edges"
+      ]
+    },
+    {
+      "writer": "portal-arrival-preload",
+      "readers": [
+        "portal-one-way",
+        "portal-first-reached-crossing"
+      ]
+    }
+  ],
+  "variants": {
+    "probes": [
+      "drain-into-shaft",
+      "fell-touching-crowns",
+      "navgrid-changed-nodes",
+      "portal-one-way"
+    ],
+    "hard": [
+      "drain-reports-ragged-layer",
+      "canopy-reach-grows-with-height",
+      "navgrid-opened-closed-edges",
+      "portal-first-reached-crossing"
+    ]
+  },
+  "probes": [
+    {
+      "id": "water-bucket-scoop",
+      "use": "understanding",
+      "kind": "change",
+      "modules": [
+        "water.py",
+        "window_water.py"
+      ],
+      "prompt": "Add a bucket to the water tools. In water.py, add `scoop(is_open, body, count, budget=None, sources=frozenset())`, which takes `count` cells of water out of `body` (a body at rest, as `body_of` returns it; `is_open` is the plain \"is this cell air\" test that `solve_drain` takes) and returns a `Drain` for what is left: `keep` the cells still wet, `drained` the cells that went dry, `level` as `solve_drain` reports it, nothing in `wetted`, no `escape`, and `spilled` 0. The water left must stand exactly as `solve_drain` would leave a body of that many cells in the same basin, cell for cell, so the bucket and a drain never disagree about where water sits. Scooping all of it or more empties the body. A body with spring cells (`sources`) refills as fast as it is scooped and comes back unchanged, and a basin too large for the budget is refused unchanged with `bounded` False.\n\nThen add `WaterPourMixin.water_scoop(cell, count)` in window_water.py. It scoops from the body holding `cell`, writes the change as one undo entry the way a pour does, sets a status line that says how many cells it took, and returns that number. It takes nothing (returns 0 and sets a status line) when `cell` is not water, when the body is too large to solve, or when the body holds a spring or drain mouth. The repository has headless tests for the water code (tests/test_water.py), and they must still pass.",
+      "hiddenTests": [
+        "tests/test_probe_scoop.py"
+      ],
+      "keptTests": [
+        "tests/test_water.py"
+      ],
+      "testCommand": "{venv-python} -m pytest -q -n0 -p no:cacheprovider tests/test_probe_scoop.py tests/test_water.py"
+    },
+    {
+      "id": "drain-into-shaft",
+      "use": "understanding",
+      "kind": "predict",
+      "modules": [
+        "water.py",
+        "window_water.py"
+      ],
+      "prompt": "Read `solve_drain` in water.py (it re-levels a pool after the terrain around it is edited) and predict its result for the case below. Work it out from the code; do not run anything.\n\nThe world is solid everywhere except these open (air) cells: the inside of a stone tub, every cell with x 0 to 2, z 0 to 2 and y 1 to 4; and a shaft dug under the middle of the tub, the two cells (1, 0, 1) and (1, -1, 1). The cell under the shaft, (1, -2, 1), is solid. Before the shaft was dug the tub held water in every cell with x 0 to 2, z 0 to 2 and y 1 to 2: two full layers, 18 cells. The call is `solve_drain(is_open, body)`, where `is_open(cell)` is true exactly for the open cells listed above, `body` is the set of those 18 water cells, and `budget` and `sources` are left at their defaults.\n\nWhat are the result's `level`, the number of cells in `keep`, the number in `drained`, the number in `wetted`, and `spilled`? Explain briefly how the function arrives there, then end your answer with one line in exactly this form:\nANSWER: level=<n> kept=<n> drained=<n> wetted=<n> spilled=<n>",
+      "expected": "level=3 kept=18 drained=2 wetted=2 spilled=0",
+      "rubric": [
+        "conserv\\w*\\W{1,30}(volume|cell)|(volume|water)\\W{1,30}(is )?conserv",
+        "partial(ly)?[- ]fill|ragged|next layer|remainder|\\bshort\\b",
+        "discover|breadth-first|\\bBFS\\b|flood order"
+      ]
+    },
+    {
+      "id": "drain-reports-ragged-layer",
+      "use": "understanding",
+      "kind": "change",
+      "modules": [
+        "water.py"
+      ],
+      "prompt": "When `water.solve_drain` (water.py) re-levels a pool and the water left does not fill its top layer, that layer is left only partly wet. The water plane renderer needs those cells to draw the partial surface. Add a field `ragged` to `Drain`, a tuple of cells that defaults to `()` so existing constructions keep working: the wet cells of the top layer when the solve leaves that layer only partly filled, in the order the solve chose them to stay wet. Only that one height counts; water the same solve placed lower down is not part of it. It is reported whenever the result's top layer is partly filled, including for a body that was already ragged and does not move. It is empty when the top layer is whole, when water leaves through a leak, when the budget refuses the solve, when the whole body drains away, and for a spring-fed body. Every other field of the result stays exactly as it is today. The repository has headless tests for the water solver (tests/test_water.py), and they must still pass. When you are done, say in a sentence or two which cells the solve keeps wet in a partly filled layer, and in what order it picks them.",
+      "hiddenTests": [
+        "tests/test_probe_ragged.py"
+      ],
+      "keptTests": [
+        "tests/test_water.py"
+      ],
+      "testCommand": "{venv-python} -m pytest -q -n0 -p no:cacheprovider tests/test_probe_ragged.py tests/test_water.py",
+      "rubric": [
+        "discover\\w*|breadth-first|\\bBFS\\b|flood order",
+        "lowest (body )?cell|\\bseed\\b"
+      ]
+    },
+    {
+      "id": "tree-holding-foliage",
+      "use": "understanding",
+      "kind": "change",
+      "modules": [
+        "felling.py",
+        "window_felling.py"
+      ],
+      "prompt": "The editor's select tool needs to pick out a whole tree from any block of it. Add `tree_at(world, cell)` to felling.py: the tree whose fell would bring `cell` down, returned exactly as `felling.gather_tree` returns it for a strike at the lowest cell of that tree's trunk (lowest y, then lowest x, then lowest z), or None when `cell` is air or no tree's fell would take it. It must agree with `gather_tree` for every cell a fell takes, wherever on the tree it is, trunk cells included, and for every cell no fell takes. `Crusher` in felling.py already answers this question for itself when a falling tree meets a standing one (`Crusher._find`); make it use `tree_at`, so the two cannot disagree. The repository has headless tests for felling (tests/test_felling.py), and they must still pass.",
+      "hiddenTests": [
+        "tests/test_probe_tree_at.py"
+      ],
+      "keptTests": [
+        "tests/test_felling.py"
+      ],
+      "testCommand": "{venv-python} -m pytest -q -n0 -p no:cacheprovider tests/test_probe_tree_at.py tests/test_felling.py"
+    },
+    {
+      "id": "fell-touching-crowns",
+      "use": "understanding",
+      "kind": "predict",
+      "modules": [
+        "felling.py",
+        "window_felling.py"
+      ],
+      "prompt": "Read `gather_tree` in felling.py (it decides which cells come down when a tree is felled) and predict its result for the scene below. Work it out from the code; do not run anything.\n\nThere are four block types, LOG, NEEDLE, SNOW and ROCK. Each is a plain `blocks.BlockDef` with only its name set, so all four are solid, opaque, full-light-blocking and not `self_canopy`. `world.block_at(cell)` returns a cell's type index, or None for air, and `world.block_defs` is the list of the four definitions.\n\n- A ROCK floor fills y = -1 for x -6 to 10 and z -6 to 6.\n- Two trees stand on it. Each has a LOG trunk from y 0 to 5, one at x 0, z 0 and the other at x 4, z 0. Each trunk has a ring of NEEDLE at y 4 and at y 5 on its four sides (one cell along +x, -x, +z and -z from the trunk), and one NEEDLE on top of the trunk at y 6.\n- One more NEEDLE sits at (2, 4, 0), between the two crowns.\n- SNOW lies at (1, 6, 0), on top of the first tree's needle ring.\n- A ROCK block sits at (-2, 3, 0), beside the first tree's crown, with SNOW on top of it at (-2, 4, 0).\n- Every other cell is air.\n\nThe player strikes the first tree's trunk: `felling.gather_tree(world, (0, 1, 0))`. How many cells are in the returned tree's `trunk`, and how many in its `canopy`? Explain briefly which cells are in the canopy and why the others are not, then end your answer with one line in exactly this form (or `ANSWER: none` if it returns None):\nANSWER: trunk=<n> canopy=<n>",
+      "expected": "trunk=6 canopy=11",
+      "rubric": [
+        "\\bties?\\b|same distance|equidistant",
+        "(lowest|lower)\\W{1,10}(trunk|cell|key)|\\(0, ?0, ?0\\) ?<",
+        "rests on|resting on|held up|holding up|on top of|sits on"
+      ]
+    },
+    {
+      "id": "canopy-reach-grows-with-height",
+      "use": "understanding",
+      "kind": "change",
+      "modules": [
+        "felling.py"
+      ],
+      "prompt": "In felling.py a tree's crown may spread at most `CANOPY_REACH` (6) canopy steps from its trunk, which is too little for the tallest trees: a felled giant leaves the outer part of its crown standing in the sky. Make the reach grow with height. A tree's reach is `CANOPY_REACH`, or a third of its trunk's height (lowest trunk cell to highest, inclusive, rounded down) when that is more, so a tree 24 cells tall reaches 8 steps and one 12 tall still reaches 6. Each tree has its own reach, and where crowns meet, every crown cell must still go to exactly one tree, as it does today, whichever of the trees is felled. The repository has headless tests for felling (tests/test_felling.py), and they must still pass. When you are done, say in a sentence or two what besides the bound on the tree's own canopy flood had to change, and why.",
+      "hiddenTests": [
+        "tests/test_probe_canopy_reach.py"
+      ],
+      "keptTests": [
+        "tests/test_felling.py"
+      ],
+      "testCommand": "{venv-python} -m pytest -q -n0 -p no:cacheprovider tests/test_probe_canopy_reach.py tests/test_felling.py",
+      "rubric": [
+        "\\bscout\\w*|twice the reach|2 ?\\* ?reach",
+        "_claim_canopy|\\bclaim\\w*"
+      ]
+    },
+    {
+      "id": "navgrid-reachable-regions",
+      "use": "understanding",
+      "kind": "change",
+      "modules": [
+        "navgrid.py",
+        "window_logic_world.py"
+      ],
+      "prompt": "NPCs pick wander and flee targets at random from the navigation grid, and a target in a part of the map they cannot walk to costs a capped A* search before it fails. Give `NavGrid` in navgrid.py connected regions: `region_of(cell)` returns an integer id for a node, or None for a cell that is not a node, and two nodes get the same id exactly when a walk route over `adj` joins them (climb edges do not count); `reachable(a, b)` is true exactly when both are nodes in the same region. Label lazily, on first use. Then add `NavGrid.edit(is_solid, changed_cells)`, which patches the grid exactly as `update_cells` does and then brings the regions up to date by relabelling only the regions the edit touched, never the whole grid, so a region the edit did not touch keeps its id. Switch the editor's nav patches in window_logic_world.py (after a stroke, and on undo and redo) to call it. Leave `update_cells` itself unchanged. The regions must be right after every kind of edit the grid already handles, tag-only edits included, and still right if something patches the grid with `update_cells` directly (one full relabel is fine then). The repository has headless tests for the navigation grid, and they must still pass. When you are done, say in a sentence or two which regions an edit can split or join, and why relabelling those is enough.",
+      "hiddenTests": [
+        "tests/test_probe_reachable_regions.py"
+      ],
+      "keptTests": [
+        "tests/test_navgrid.py"
+      ],
+      "testCommand": "{venv-python} -m pytest -q -n0 -p no:cacheprovider tests/test_probe_reachable_regions.py tests/test_navgrid.py"
+    },
+    {
+      "id": "navgrid-changed-nodes",
+      "use": "understanding",
+      "kind": "change",
+      "modules": [
+        "navgrid.py"
+      ],
+      "prompt": "NPC route caches need to know which nodes of the navigation grid an edit rewired, so that they can drop only the routes through those nodes. Make `NavGrid.update_cells` in navgrid.py return a set of the nodes whose walk edges changed: every node it added or removed, plus every node that is still there but gained or lost a neighbour in `adj`. It must be exact, with no node whose edges did not change and none missed, so that it always equals what you get by comparing full rebuilds of the grid before and after the edit. An edit that adds or removes no node returns an empty set. Climb (ladder) edges do not count. The existing navigation grid tests must still pass. When you are done, say in a sentence or two which nodes besides the added and removed ones an edit can rewire, and why.",
+      "hiddenTests": [
+        "tests/test_probe_changed_nodes.py"
+      ],
+      "keptTests": [
+        "tests/test_navgrid.py"
+      ],
+      "testCommand": "{venv-python} -m pytest -q -n0 -p no:cacheprovider tests/test_probe_changed_nodes.py tests/test_navgrid.py",
+      "rubric": [
+        "\\bdiagonal",
+        "\\bflank|_corner_open|corner"
+      ]
+    },
+    {
+      "id": "navgrid-opened-closed-edges",
+      "use": "understanding",
+      "kind": "change",
+      "modules": [
+        "navgrid.py"
+      ],
+      "prompt": "The nav-grid debug overlay draws every walk edge and every ladder (climb) edge, and NPC route caches drop any route that uses an edge that has gone, so after each edit both need exactly the edges that changed. Make `NavGrid.update_cells` in navgrid.py return a dict with four keys, `\"walk_opened\"`, `\"walk_closed\"`, `\"climb_opened\"` and `\"climb_closed\"`, each a set of edges written as `frozenset({a, b})` node pairs: the walk edges (`adj`) and the climb edges (`ladders`) the edit created and removed. It must be exact, always equal to what you get by comparing full rebuilds of the grid before and after the edit, both for block edits and for the tag-only edits the grid already handles (an empty `changed_cells`). An edit that changes nothing returns four empty sets. `update_cells` runs on every stroke, so keep the walk-edge part proportional to the edit, with no pass over the whole grid. The repository has headless tests for the navigation grid, and they must still pass. When you are done, say in a sentence or two which edges an edit can change, and why.",
+      "hiddenTests": [
+        "tests/test_probe_opened_closed_edges.py"
+      ],
+      "keptTests": [
+        "tests/test_navgrid.py"
+      ],
+      "testCommand": "{venv-python} -m pytest -q -n0 -p no:cacheprovider tests/test_probe_opened_closed_edges.py tests/test_navgrid.py",
+      "rubric": [
+        "\\bdiagonal",
+        "\\bflank|_corner_open|corner",
+        "(ladder|climb)[^.]{0,80}(empty|no node|tag|early)"
+      ]
+    },
+    {
+      "id": "portal-arrival-preload",
+      "use": "understanding",
+      "kind": "change",
+      "modules": [
+        "portal.py",
+        "window_portal.py"
+      ],
+      "prompt": "When a portal leads to another map, that map is preloaded harder the closer the camera is to the portal (`_preload_portal_worlds` in window_portal.py). So walking past or away from a nearby portal spends the big budget on a map I'm not about to enter, while sprinting or falling toward a distant one only trickles. While I'm walking, the tier should follow how soon I would actually go through. Add `portal.frames_to_cross(p, eye, step, eps=0.0, margin=0.0, horizon=600)` in portal.py: for an eye that starts at `eye` and moves by `step` every frame, the number of frames until the walk-through would transfer the player through `p` (1 if it would on the very next frame), or None if it never would within `horizon` frames. It must agree exactly, frame for frame, with the check the walk-through really makes, with `eps` and `margin` meaning what they mean there. It runs for every portal every frame, so work it out directly; do not step through the frames. In window_portal.py, have `update_portals` record the eye's move over the frame it just ran in `self._portal_last_move` (a 3-tuple, or None when it is not walking or has no previous eye), and add `PortalMixin._portal_frames_to_arrival(p)`: the frames until the walk-through would fire on `p` if the eye keeps that move, using the same margin the walk-through uses for that portal, or None when no move is recorded or `p` can never transfer the player. In the preload, while a move is recorded, pick the tier by frames to arrival: at most 60 frames gets 4x the base budget, at most 240 gets 2x, anything else (never included) the base; with no move recorded, keep today's distance rule. The repository has headless tests for portals, and they must still pass. When you are done, say in a sentence or two what made this more than dividing the distance to the portal by the speed.",
+      "hiddenTests": [
+        "tests/test_probe_arrival_preload.py"
+      ],
+      "keptTests": [
+        "tests/test_portal.py",
+        "tests/test_window_portal_preload.py"
+      ],
+      "testCommand": "{venv-python} -m pytest -q -n0 -p no:cacheprovider tests/test_probe_arrival_preload.py tests/test_portal.py tests/test_window_portal_preload.py"
+    },
+    {
+      "id": "portal-one-way",
+      "use": "navigation",
+      "kind": "locate",
+      "modules": [
+        "portal.py",
+        "window_portal.py",
+        "window_playtest.py"
+      ],
+      "prompt": "A player reports: \"Walking into a portal from its front teleports me, but if I walk through the same opening from behind I just pass through the frame and nothing happens.\"\n\nFind the function that decides whether a step through the opening should teleport the player, where the back-side walk is turned down. Answer from the code and do not change any files. Name the file and the function, and end your answer with one line in this form:\nLOCATION: <file>:<function>",
+      "answerKey": [
+        "portal\\.py",
+        "crossed_through"
+      ]
+    },
+    {
+      "id": "portal-first-reached-crossing",
+      "use": "understanding",
+      "kind": "change",
+      "modules": [
+        "portal.py",
+        "window_portal.py"
+      ],
+      "prompt": "Two portals can sit close enough that one frame's movement goes through both: a hole in the floor just in front of a doorway, say, or two doorways a fraction of a cell apart. When that happens the portal listed first in the map always wins, even when my eye reached the other one first, so I sometimes come out at the wrong destination. Make the walk-through (`update_portals` in window_portal.py) try the portals this frame's move goes through in the order the eye reaches them along the move, with map order breaking an exact tie. As today, a portal that does not transfer (one with no target, for example) passes on to the next one in that order, a view-only window never transfers, and there is at most one transfer per frame; the reverse back-out and the cooldown stay as they are. The repository has headless tests for portals, and they must still pass. When you are done, say in a sentence or two where along the move each portal counts as reached.",
+      "hiddenTests": [
+        "tests/test_probe_first_reached_crossing.py"
+      ],
+      "keptTests": [
+        "tests/test_portal.py",
+        "tests/test_portal_view_only.py"
+      ],
+      "testCommand": "{venv-python} -m pytest -q -n0 -p no:cacheprovider tests/test_probe_first_reached_crossing.py tests/test_portal.py tests/test_portal_view_only.py",
+      "rubric": [
+        "trigger plane|margin",
+        "EYE_HEIGHT|feet|floor"
+      ]
+    }
+  ]
+}

@@ -29,6 +29,12 @@
  *       what that run command has finished and what is left
  *   report --work <dir>
  *       Markdown tables from every result, printed and written to <work>/report.md
+ *   loop --work <dir> --tasks <notes set> --model <m> [--reps 2] [--bare-writers 1]
+ *       [--writers-only] [--writer-timeout <minutes>] [--carry] [--only <writer,...>] [--stop-at HH:MM]
+ *       the notes loop (notes.ts): each pair's writer, then its readers in both arms, per
+ *       repetition; finished runs are skipped, as in `run`
+ *   loop-report --work <dir> --tasks <notes set>
+ *       the loop's tables, printed and written to <work>/loop-report.md
  *
  * `--provider` names the API the proxy forwards to. Against the Anthropic API (the default)
  * `annotate` and `run` need ANTHROPIC_API_KEY; any other provider is a local model server
@@ -40,14 +46,28 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { globalPiCli, HARNESSES, type HarnessName } from "./harnesses.ts";
-import { findPython, prepareTask, readPrepared, type PreparedTask } from "./prepare.ts";
+import { findPython, preparedBranch, prepareTask, readPrepared, type PreparedTask } from "./prepare.ts";
 import { ProviderError, readLog, runAgent, type AgentOptions } from "./agent.ts";
 import { providerFailed, runMetrics } from "./metrics.ts";
 import { startRecordingProxy } from "./proxy.ts";
+import {
+  agentsMdFor,
+  loadNotesSet,
+  loopLabel,
+  loopRunDir,
+  notesDir,
+  planLoop,
+  renderLoopReport,
+  taskOf,
+  type LoopRun,
+  type LoopSpec,
+  type NotesSet,
+  type Role,
+} from "./notes.ts";
 import { renderReport } from "./report.ts";
 import { depthOf, legacyRunDirs, runDirFor, runOne, type RunResult } from "./runner.ts";
 import { nextOccurrence, planRuns, shard, unforked, warmupOf, type Depths, type Planned } from "./schedule.ts";
-import { spreadOf } from "./stats.ts";
+import { spreadOf, sum } from "./stats.ts";
 import {
   chainsNamedLikeTasks,
   isEditTask,
@@ -63,6 +83,7 @@ import {
 import {
   ARMS,
   cairn,
+  entriesBySource,
   checkoutArm,
   ensureMirror,
   freezeComments,
@@ -98,6 +119,10 @@ const { values: args, positionals } = parseArgs({
     "pi-cli": { type: "string" },
     provider: { type: "string", default: ANTHROPIC_API },
     "stop-at": { type: "string" },
+    "bare-writers": { type: "string", default: "1" },
+    "writers-only": { type: "boolean", default: false },
+    "writer-timeout": { type: "string" },
+    carry: { type: "boolean", default: false },
   },
 });
 
@@ -262,16 +287,10 @@ function prepare(): void {
   }
 }
 
-/** Total entries over the sidecars under `dir`: each entry is one `## <id>` heading. */
+/** Total entries over the sidecars under `dir`. */
 function countEntries(dir: string): { sidecars: number; entries: number } {
-  let sidecars = 0;
-  let entries = 0;
-  for (const entry of readdirSync(dir, { withFileTypes: true, recursive: true })) {
-    if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
-    sidecars++;
-    entries += readFileSync(path.join(entry.parentPath, entry.name), "utf8").match(/^## /gm)?.length ?? 0;
-  }
-  return { sidecars, entries };
+  const counts = Object.values(entriesBySource(dir));
+  return { sidecars: counts.length, entries: sum(counts) };
 }
 
 async function annotate(): Promise<void> {
@@ -292,7 +311,7 @@ async function annotate(): Promise<void> {
   const prompt = readFileSync(path.join("benchmark", "annotate-prompt.md"), "utf8");
   const logFile = path.join(runDir, "calls.jsonl");
   await checkProvider(agent);
-  const proxy = await startRecordingProxy(agent.provider, logFile, "probe");
+  const proxy = await startRecordingProxy(agent.provider, logFile, "probe", agent.local);
   const dirs = { agentDir, homeDir: runDir, outputDir: runDir };
   const session = await runAgent(agent, [prompt], dirs, env, proxy.url).finally(() => proxy.close());
   const calls = readLog(logFile);
@@ -405,7 +424,7 @@ function warmupFor(batch: Batch, planned: Planned): { chain: WarmupChain; prepar
  * Runs one planned run from nothing and logs its outcome. Returns whether the model server
  * failed it; any other error is the run's own and leaves only `error.txt`.
  */
-async function attempt(batch: Batch, planned: Planned, runDir: string, label: string): Promise<boolean> {
+async function attempt(batch: Batch, planned: Planned, runDir: string, label: string, loop?: LoopSpec): Promise<boolean> {
   rmSync(runDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
   try {
     const result = await runOne({
@@ -415,9 +434,10 @@ async function attempt(batch: Batch, planned: Planned, runDir: string, label: st
       mirror: batch.mirrorPaths.get(planned.task.repo)!,
       workDir: batch.work,
       comments: path.join(FROZEN_COMMENTS, planned.task.repo),
-      prepared: preparedFor(batch, planned.task),
+      prepared: loop?.prepared ?? preparedFor(batch, planned.task),
       warmup: warmupFor(batch, planned),
       keep: args.keep!,
+      loop,
     });
     log(`${label}: ${describeResult(result)}`);
     return false;
@@ -515,12 +535,111 @@ function report(): void {
   console.log(markdown);
 }
 
+/** The pairs --only names by writer, all of them when it is absent. */
+function selectedPairs(set: NotesSet): NotesSet {
+  const only = args.only?.split(",");
+  if (!only) return set;
+  const unknown = only.filter((id) => !set.pairs.some((pair) => pair.writer === id));
+  if (unknown.length) throw new Error(`--only names no pair's writer: ${unknown.join(", ")}`);
+  return { ...set, pairs: set.pairs.filter((pair) => only.includes(pair.writer)) };
+}
+
+/**
+ * A loop run's checkout, and for a writer in the notes arm where its notes are frozen. With
+ * --carry, that writer's work is committed for its readers, and every reader of the repetition
+ * starts from that commit in both arms.
+ */
+function loopSpecFor(batch: Batch, set: NotesSet, run: LoopRun): LoopSpec {
+  const { work, agent } = batch;
+  const agentNotes = set.taskFile.repos[run.task.repo]!.agentNotes ?? [];
+  const agentsMd = agentsMdFor(run.arm, agentNotes, set.prepend);
+  const label = { ...loopLabel(run), runDir: loopRunDir(work, agent.harness, run) };
+  const carried = `${run.writer}-${run.rep}`;
+  const prepared = args.carry && run.role === "reader" ? { ...preparedFor(batch, run.task)!, taskId: carried } : undefined;
+  if (run.arm === "bare") return { ...label, checkout: { agentsMd }, prepared };
+  const notes = notesDir(work, agent.harness, run.writer, run.rep);
+  // Cairn's Claude Code hook syncs after every edit, as it would for the agent in the product.
+  const hooks = agent.harness === "claude" ? ["claude-code"] : [];
+  if (run.role === "reader") return { ...label, checkout: { agentsMd, cairn: { hooks, sidecars: notes } }, prepared };
+  const carry = args.carry ? { mirror: batch.mirrorPaths.get(run.task.repo)!, branch: preparedBranch(carried, "none") } : undefined;
+  return { ...label, checkout: { agentsMd, cairn: { hooks } }, freezeTo: notes, carry };
+}
+
+/**
+ * Whether a reader must wait because the writer in the notes arm it takes from has no result
+ * yet: a reader in the notes arm takes its notes, and with --carry any reader takes its work.
+ */
+function waitsForWriter(work: string, set: NotesSet, run: LoopRun, harness: HarnessName): boolean {
+  if (run.role !== "reader" || (run.arm !== "notes" && !args.carry)) return false;
+  const writerRun: LoopRun = { task: taskOf(set, run.writer), role: "writer", arm: "notes", writer: run.writer, rep: run.rep };
+  return !existsSync(path.join(loopRunDir(work, harness, writerRun), "result.json"));
+}
+
+/** What the loop's runs share; writers get --writer-timeout when it is given. */
+function loopBatches(agent: AgentOptions, work: string, taskFile: TaskFile): { batch: Batch; writerBatch: Batch } {
+  const repoNames = [...new Set(taskFile.tasks.map((t) => t.repo))];
+  const batch: Batch = {
+    agent,
+    work,
+    taskFile,
+    mirrorPaths: mirrors(work, taskFile, repoNames, []),
+    prepared: loadPrepared(work, taskFile, taskFile.tasks),
+  };
+  if (!args["writer-timeout"]) return { batch, writerBatch: batch };
+  return { batch, writerBatch: { ...batch, agent: { ...agent, timeoutMs: Number(args["writer-timeout"]) * 60_000 } } };
+}
+
+async function loop(): Promise<void> {
+  const agent = agentOptions();
+  const work = workDir();
+  const set = selectedPairs(loadNotesSet(args.tasks!));
+  const roles: Role[] = args["writers-only"] ? ["writer"] : ["writer", "reader"];
+  const queue = planLoop(set, Number(args.reps), Number(args["bare-writers"]), roles);
+  await checkProvider(agent);
+  const { batch, writerBatch } = loopBatches(agent, work, set.taskFile);
+  const stopAt = args["stop-at"] ? nextOccurrence(args["stop-at"], new Date()) : undefined;
+  log(`loop: ${agent.harness} on ${agent.model}, ${queue.length} runs planned`);
+
+  let providerFailures = 0;
+  for (const [i, run] of queue.entries()) {
+    const spec = loopSpecFor(batch, set, run);
+    const label = `[${i + 1}/${queue.length}] ${agent.harness} ${run.task.id} ${run.role} ${run.arm}-${run.rep}`;
+    if (existsSync(path.join(spec.runDir, "result.json"))) continue;
+    if (stopAt && new Date() >= stopAt) {
+      log(`stop time reached before ${label}`);
+      return;
+    }
+    if (waitsForWriter(work, set, run, agent.harness)) {
+      log(`${label}: skipped, its writer has no result yet`);
+      continue;
+    }
+    const runBatch = run.role === "writer" ? writerBatch : batch;
+    const planned: Planned = { task: run.task, arm: "none", rep: run.rep };
+    const failed = await attempt(runBatch, planned, spec.runDir, label, spec); // NOSONAR: one run at a time on purpose
+    providerFailures = failed ? providerFailures + 1 : 0;
+    if (providerFailures >= MAX_PROVIDER_FAILURES) {
+      throw new Error(`the model server failed ${providerFailures} runs in a row; batch stopped`);
+    }
+  }
+  log("loop: queue finished");
+}
+
+function loopReport(): void {
+  const work = path.resolve(required("work", args.work));
+  const results = resultFiles(path.join(work, "loop")).map((file) => JSON.parse(readFileSync(file, "utf8")) as RunResult);
+  const markdown = renderLoopReport(results, loadNotesSet(args.tasks!).variants);
+  writeFileSync(path.join(work, "loop-report.md"), markdown);
+  console.log(markdown);
+}
+
 const COMMANDS = new Map<string, () => void | Promise<void>>([
   ["annotate", annotate],
   ["prepare", prepare],
   ["run", run],
   ["status", status],
   ["report", report],
+  ["loop", loop],
+  ["loop-report", loopReport],
 ]);
 
 const command = COMMANDS.get(positionals[0] ?? "");

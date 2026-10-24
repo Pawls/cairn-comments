@@ -1,0 +1,79 @@
+diff --git a/navgrid.py b/navgrid.py
+index 74739d1a..544d40c7 100644
+--- a/navgrid.py
++++ b/navgrid.py
+@@ -250,6 +250,22 @@ def emit(col_x: int, col_z: int, run_lo: int, run_hi: int) -> None:
+     return edges
+ 
+ 
++def _walk_pairs(adj: dict[Cell, list[Cell]], cells) -> set[frozenset]:
++    """The walk edges touching ``cells``, as unordered pairs."""
++    return {frozenset((c, n)) for c in cells for n in adj.get(c, ())}
++
++
++def _edge_changes(walk_before, walk_after, ladders_before, ladders_after) -> dict:
++    climb_before = {frozenset((a, b)) for a, bs in ladders_before.items() for b in bs}
++    climb_after = {frozenset((a, b)) for a, bs in ladders_after.items() for b in bs}
++    return {
++        "walk_opened": walk_after - walk_before,
++        "walk_closed": walk_before - walk_after,
++        "climb_opened": climb_after - climb_before,
++        "climb_closed": climb_before - climb_after,
++    }
++
++
+ def _heuristic(a: Cell, b: Cell) -> float:
+     """Octile distance (the 8-connected analogue of manhattan) plus the height difference —
+     admissible for the diagonal graph, where plain manhattan would over-estimate a 45° run by
+@@ -405,7 +421,7 @@ def build(
+     def empty(cls) -> NavGrid:
+         return cls(set(), {}, 1)
+ 
+-    def update_cells(self, is_solid, changed_cells) -> None:
++    def update_cells(self, is_solid, changed_cells) -> dict[str, set[frozenset]]:
+         """Patch the grid in place for a set of edited world cells (their solidity may have flipped),
+         reading the *current* solidity from ``is_solid``. O(changed) vs :func:`from_world`'s O(world),
+         so a block edit needn't rebuild the whole graph. Equivalent to a full rebuild of the post-edit
+@@ -417,8 +433,13 @@ def update_cells(self, is_solid, changed_cells) -> None:
+         tag-only edit is a walkability change even though it flipped no block), and re-reads the
+         ramp membership of every column a walkable-shape tag landed on (or left) — a slope retag
+         moves no node, but it is what makes a one-block fence passable to a climb-limited
+-        creature."""
++        creature.
++
++        Returns the edges the edit opened and closed, as ``frozenset({a, b})`` pairs under the
++        keys ``"walk_opened"``, ``"walk_closed"`` (``adj``) and ``"climb_opened"``,
++        ``"climb_closed"`` (``ladders``)."""
+         C, step = self.clearance, self.step
++        ladders_before = self.ladders  # _refresh_ladders replaces the dict, never mutates it
+         # A climb-tag edit that flips no block still flips NAV passability where a rungs/flat
+         # tag landed on (or left) a solid block, and those columns must be re-tested like any
+         # block change. The flip set is the symmetric difference of the body sets the grid
+@@ -492,7 +513,7 @@ def update_cells(self, is_solid, changed_cells) -> None:
+             # INSET ladder cut into an existing wall, a slope retag) re-wires the climb edges
+             # all the same, and an empty delta is exactly how a caller reports one.
+             self._refresh_ladders(fresh_bodies)
+-            return
++            return _edge_changes(set(), set(), ladders_before, self.ladders)
+         self._columns = None  # node set changed: rebuild the nearest_node/sampling caches lazily
+         self._sorted = None
+         # Edges can change only for the flipped nodes and their step-reachable neighbour columns.
+@@ -506,14 +527,18 @@ def update_cells(self, is_solid, changed_cells) -> None:
+             for dx, dz in dirs:
+                 for dy in range(-step, step + 1):
+                     recompute.add((x + dx, y + dy, z + dz))
++        # Only the recompute set's edges can move, so its before and after edges are the diff.
++        walk_before = _walk_pairs(self.adj, recompute)
+         for r in removed:
+             self.adj.pop(r, None)  # drop the gone node; its neighbours lose it via the recompute
+         for c in recompute:
+             if c in self.nodes:
+                 self.adj[c] = _neighbors_in(c, self.nodes, step, self.diagonals)
++        walk_after = _walk_pairs(self.adj, recompute)
+         # A flipped node can be a ladder's entry or exit (the floor under it appeared or went),
+         # and the tags themselves may have moved with the stroke — re-emit from the live set.
+         self._refresh_ladders(fresh_bodies)
++        return _edge_changes(walk_before, walk_after, ladders_before, self.ladders)
+ 
+     def _refresh_ladders(self, bodies: set[Cell] | None = None) -> None:
+         """Re-emit the climb edges from the live body-cell set, bumping the version when the

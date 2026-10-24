@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { loopRunDir, NOTES_ARMS } from "../notes.ts";
 import { legacyRunDirs, runDirFor } from "../runner.ts";
 import type { Task, WarmupChain } from "../tasks.ts";
 import { warmupDirFor } from "../warmup.ts";
@@ -22,6 +23,18 @@ describe("the directories an agent works in", () => {
         expect(dir).not.toMatch(/none|comments/i);
       }
     }
+  });
+
+  it("never name the arm or the role of a notes-loop run", () => {
+    const dirs = new Set<string>();
+    for (const arm of NOTES_ARMS) {
+      for (const role of ["writer", "reader"] as const) {
+        const dir = below(loopRunDir(workDir, "claude", { task, role, arm, writer: "w", rep: 2 }));
+        expect(dir).not.toMatch(/bare|notes|writer|reader/i);
+        dirs.add(dir);
+      }
+    }
+    expect(dirs.size).toBe(2);
   });
 
   it("never name the arm of a warm-up", () => {
