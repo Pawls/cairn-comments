@@ -15,6 +15,7 @@ import {
   renderLoopReport,
   verdict,
   type LoopSpec,
+  type NotesArm,
   type NotesSet,
 } from "../notes.ts";
 import { findPython, preparedBranch, prepareTask, type PreparedTask } from "../prepare.ts";
@@ -23,6 +24,7 @@ import { startStandIn, type StandIn } from "../standin.ts";
 import type { QuestionTask, TaskFile } from "../tasks.ts";
 import { CAIRN_CLI, checkoutArm, ensureMirror, isolatedEnv, placedComments, type NotesCheckout } from "../workspace.ts";
 import { makeRepo, writeUnder } from "./fixtures.ts";
+import { ID_PATTERN, STALE_TAG } from "../../../packages/core/src/markers.ts";
 
 const FAKE_PI = path.join(path.dirname(fileURLToPath(import.meta.url)), "fake-pi.ts");
 
@@ -321,6 +323,39 @@ describe("renderLoopReport", () => {
 
   it("refuses to pool readers that started from the writer's work with readers that did not", () => {
     expect(() => renderLoopReport([run(true), run(false)])).toThrow(/--carry/);
+  });
+
+  it("refuses to pool runs of different harnesses or models", () => {
+    expect(() => renderLoopReport([{ ...run(true), harness: "claude" }, { ...run(true), harness: "pi" }] as RunResult[])).toThrow(/harness/);
+    expect(() => renderLoopReport([{ ...run(true), model: "a" }, { ...run(true), model: "b" }] as RunResult[])).toThrow(/model/);
+  });
+
+  const reader = (task: string, arm: NotesArm, passed: boolean, output: number) =>
+    ({
+      harness: "claude",
+      task,
+      model: "m",
+      wallMs: 1000,
+      grade: { passed },
+      loop: { role: "reader", arm, writer: "w", carry: true },
+      metrics: { firstCallContext: 0, finalContext: 0, grownTokens: output, tokens: { input: 0, output, cacheRead: 0, cacheWrite: 0 }, toolCalls: {} },
+    }) as unknown as RunResult;
+
+  it("decides on pass rates over the same readers as the token ratio", () => {
+    const runs = [reader("a", "bare", false, 100), reader("a", "notes", false, 50), reader("b", "bare", true, 100)];
+    expect(renderLoopReport(runs)).toContain("the claim **holds**");
+  });
+
+  it("leaves out of a ratio a reader whose arm has a mean of zero, instead of printing Infinity", () => {
+    const report = renderLoopReport([reader("a", "bare", true, 100), reader("a", "notes", true, 50)]);
+    expect(report).not.toMatch(/Infinity|NaN/);
+  });
+});
+
+describe("placedComments' patterns", () => {
+  it("match core's id and stale tag, which workspace.ts restates without importing core", () => {
+    expect(ID_PATTERN).toBe("[0-9a-z]{4}");
+    expect(STALE_TAG).toBe("[stale?]");
   });
 });
 
