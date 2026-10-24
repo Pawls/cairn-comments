@@ -247,7 +247,7 @@ costs), then each reader in both arms, in an order that alternates by repetition
 `<work>/notes/<harness>/<writer>-<rep>/`); for a reader in `notes`, `given` (the writer's
 entries per file, the comments Cairn placed per file, and how many were placed `[stale?]`).
 The writer's code changes are not kept: a note in a function the writer changed places stale
-or not at all on the original code. Runs live under `<work>/loop/<harness>/<task>/<hash>/`.
+or not at all on the original code; `--carry` avoids that: the writer in `notes` commits its work (through Cairn's clean filter, so without the notes) as one parentless commit, and every reader of the repetition starts from it, in both arms. Runs live under `<work>/loop/<harness>/<task>/<hash>/`.
 
 **Report.** `loop-report` writes `<work>/loop-report.md`: per reader, each arm's pass rate,
 mean tokens (context added past the first call, plus output, as in D4b) and wall time, and
