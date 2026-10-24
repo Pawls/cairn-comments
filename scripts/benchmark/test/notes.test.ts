@@ -222,6 +222,7 @@ describe("planLoop", () => {
       { writer: "w2", readers: ["r3"] },
     ],
     prepend: "",
+    variants: {},
   };
   const names = (runs: ReturnType<typeof planLoop>) => runs.map((run) => `${run.task.id}:${run.arm}:${run.rep}`);
 

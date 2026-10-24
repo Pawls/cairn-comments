@@ -29,6 +29,12 @@
  *       what that run command has finished and what is left
  *   report --work <dir>
  *       Markdown tables from every result, printed and written to <work>/report.md
+ *   loop --work <dir> --tasks <notes set> --model <m> [--reps 2] [--bare-writers 1]
+ *       [--writers-only] [--writer-timeout <minutes>] [--only <writer,...>] [--stop-at HH:MM]
+ *       the notes loop (notes.ts): each pair's writer, then its readers in both arms, per
+ *       repetition; finished runs are skipped, as in `run`
+ *   loop-report --work <dir> --tasks <notes set>
+ *       the loop's tables, printed and written to <work>/loop-report.md
  *
  * `--provider` names the API the proxy forwards to. Against the Anthropic API (the default)
  * `annotate` and `run` need ANTHROPIC_API_KEY; any other provider is a local model server
@@ -549,11 +555,26 @@ function loopSpecFor(work: string, set: NotesSet, run: LoopRun, harness: Harness
   return { ...loopLabel(run), runDir, checkout: { agentsMd, cairn: { hooks, sidecars: notes } } };
 }
 
-/** Whether the writer a reader in the notes arm takes its notes from has a result. */
-function writerFinished(work: string, set: NotesSet, run: LoopRun, harness: HarnessName): boolean {
+/** Whether a reader in the notes arm must wait: the writer it takes its notes from has no result yet. */
+function waitsForWriter(work: string, set: NotesSet, run: LoopRun, harness: HarnessName): boolean {
+  if (run.role !== "reader" || run.arm !== "notes") return false;
   const task = set.taskFile.tasks.find((t) => t.id === run.writer)!;
   const writerRun: LoopRun = { task, role: "writer", arm: "notes", writer: run.writer, rep: run.rep };
-  return existsSync(path.join(loopRunDir(work, harness, writerRun), "result.json"));
+  return !existsSync(path.join(loopRunDir(work, harness, writerRun), "result.json"));
+}
+
+/** What the loop's runs share; writers get --writer-timeout when it is given. */
+function loopBatches(agent: AgentOptions, work: string, taskFile: TaskFile): { batch: Batch; writerBatch: Batch } {
+  const repoNames = [...new Set(taskFile.tasks.map((t) => t.repo))];
+  const batch: Batch = {
+    agent,
+    work,
+    taskFile,
+    mirrorPaths: mirrors(work, taskFile, repoNames, []),
+    prepared: loadPrepared(work, taskFile, taskFile.tasks),
+  };
+  if (!args["writer-timeout"]) return { batch, writerBatch: batch };
+  return { batch, writerBatch: { ...batch, agent: { ...agent, timeoutMs: Number(args["writer-timeout"]) * 60_000 } } };
 }
 
 async function loop(): Promise<void> {
@@ -562,17 +583,8 @@ async function loop(): Promise<void> {
   const set = selectedPairs(loadNotesSet(args.tasks!));
   const roles: Role[] = args["writers-only"] ? ["writer"] : ["writer", "reader"];
   const queue = planLoop(set, Number(args.reps), Number(args["bare-writers"]), roles);
-  const { taskFile } = set;
-  const repoNames = [...new Set(taskFile.tasks.map((t) => t.repo))];
   await checkProvider(agent);
-  const batch: Batch = {
-    agent,
-    work,
-    taskFile,
-    mirrorPaths: mirrors(work, taskFile, repoNames, []),
-    prepared: loadPrepared(work, taskFile, taskFile.tasks),
-  };
-  const writerBatch = args["writer-timeout"] ? { ...batch, agent: { ...agent, timeoutMs: Number(args["writer-timeout"]) * 60_000 } } : batch;
+  const { batch, writerBatch } = loopBatches(agent, work, set.taskFile);
   const stopAt = args["stop-at"] ? nextOccurrence(args["stop-at"], new Date()) : undefined;
   log(`loop: ${agent.harness} on ${agent.model}, ${queue.length} runs planned`);
 
@@ -585,7 +597,7 @@ async function loop(): Promise<void> {
       log(`stop time reached before ${label}`);
       return;
     }
-    if (run.role === "reader" && run.arm === "notes" && !writerFinished(work, set, run, agent.harness)) {
+    if (waitsForWriter(work, set, run, agent.harness)) {
       log(`${label}: skipped, its writer has no result yet`);
       continue;
     }
@@ -603,7 +615,7 @@ async function loop(): Promise<void> {
 function loopReport(): void {
   const work = path.resolve(required("work", args.work));
   const results = resultFiles(path.join(work, "loop")).map((file) => JSON.parse(readFileSync(file, "utf8")) as RunResult);
-  const markdown = renderLoopReport(results);
+  const markdown = renderLoopReport(results, loadNotesSet(args.tasks!).variants);
   writeFileSync(path.join(work, "loop-report.md"), markdown);
   console.log(markdown);
 }

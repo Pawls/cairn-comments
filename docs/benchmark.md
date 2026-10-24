@@ -215,6 +215,45 @@ session id, each prompt's exit, the wall time, and the final context). Runs live
 own. Every hash hides the arm, and `warmup.json` names no arm, since it sits beside the
 agent's checkout. Only `result.json` records the arm.
 
+## The notes loop
+
+D7 of the deep-context plan asks whether a note one agent leaves while it works saves the
+next agent from working the same thing out again. A notes set is a probe set with `pairs`
+(each a writer probe and the reader probes that take its notes), `prepend` (the file whose
+text goes at the top of AGENTS.md in the notes arm, [benchmark/notes-prepend.md](../benchmark/notes-prepend.md))
+and optional `variants` (named groups of readers, each reported on its own).
+
+```sh
+L="--work /c/cbn --tasks benchmark/notes-tasks.json --model swift-qwen3.8-27b-dflash2 --provider http://127.0.0.1:8410"
+npm run benchmark -- prepare --repo boxel $L --source <local clone>
+npm run benchmark -- loop $L --reps 2 --bare-writers 1 --writers-only   # the writers first, for gate GN
+npm run benchmark -- loop $L --reps 2 --bare-writers 1 --writer-timeout 60
+npm run benchmark -- loop-report $L
+```
+
+**Arms.** Both start from the stripped commit (`none`). In `bare`, AGENTS.md holds only the
+repository's agent notes and there is no Cairn. In `notes`, the prepend sits above them and
+the clone is in Cairn private mode with the Claude Code hook; a writer starts with an empty
+store, and a reader with the frozen notes of the same repetition of its writer. The AGENTS.md
+is committed into the clone's one parentless commit, so `git status` is clean in both arms.
+
+**Order.** Repetition by repetition and pair by pair: the writer in `notes` (its readers need
+its notes), the writer in `bare` for the first `--bare-writers` repetitions (what writing notes
+costs), then each reader in both arms, in an order that alternates by repetition. A reader in
+`notes` whose writer has no result yet is skipped and left for the next batch.
+
+**What a result records.** `loop` in `result.json`: the role, arm and writer; for a writer in
+`notes`, `left` (its entries per file after a final `sync`, frozen into
+`<work>/notes/<harness>/<writer>-<rep>/`); for a reader in `notes`, `given` (the writer's
+entries per file, the comments Cairn placed per file, and how many were placed `[stale?]`).
+The writer's code changes are not kept: a note in a function the writer changed places stale
+or not at all on the original code. Runs live under `<work>/loop/<harness>/<task>/<hash>/`.
+
+**Report.** `loop-report` writes `<work>/loop-report.md`: per reader, each arm's pass rate,
+mean tokens (context added past the first call, plus output, as in D4b) and wall time, and
+their ratio; over readers, the geometric mean of the notes / bare ratios with a 95% bootstrap
+interval and D7's decision rule; the writers' costs; and the whole loop per pair.
+
 ## Results
 
 **Deep context (2026-10-21, IQ3_XXS on Claude Code): the agent was not lost, and comments

@@ -28,6 +28,8 @@ export interface Pair {
 export interface NotesSet {
   taskFile: TaskFile;
   pairs: Pair[];
+  /** Named groups of readers, each reported on its own as well as with the rest. */
+  variants: Record<string, string[]>;
   /** The text the `notes` arm puts at the top of AGENTS.md. */
   prepend: string;
 }
@@ -57,6 +59,7 @@ export interface LoopRecord extends LoopLabel {
 interface NotesSetJson {
   pairs?: Pair[];
   prepend?: string;
+  variants?: Record<string, string[]>;
 }
 
 /**
@@ -78,7 +81,13 @@ export function loadNotesSet(file: string): NotesSet {
     }
   }
   const prepend = readFileSync(path.resolve(path.dirname(file), parsed.prepend), "utf8");
-  return { taskFile, pairs: parsed.pairs, prepend };
+  const readers = new Set(parsed.pairs.flatMap((pair) => pair.readers));
+  const variants = parsed.variants ?? {};
+  for (const [name, ids] of Object.entries(variants)) {
+    const strays = ids.filter((id) => !readers.has(id));
+    if (strays.length) throw new Error(`variant ${name}: ${strays.join(", ")} is not a reader of any pair`);
+  }
+  return { taskFile, pairs: parsed.pairs, prepend, variants };
 }
 
 /** The AGENTS.md of an arm: the repository's agent notes, under the prepend in the `notes` arm. */
@@ -285,11 +294,8 @@ function loopCost(writers: RunResult[], readers: RunResult[]): string[] {
   return lines;
 }
 
-export function renderLoopReport(results: RunResult[]): string {
-  const loop = results.filter((r) => r.loop);
-  const writers = loop.filter((r) => r.loop!.role === "writer");
-  const readers = loop.filter((r) => r.loop!.role === "reader");
-  const models = [...new Set(loop.map((r) => r.model))].join(", ");
+/** The overall ratios and the decision for one set of readers. */
+function overallSection(title: string, readers: RunResult[]): string[] {
   const overall = MEASURES.map((measure) => {
     const found = overallRatio(readers, measure);
     if (!found) return `- ${measure.label}: n/a`;
@@ -300,7 +306,7 @@ export function renderLoopReport(results: RunResult[]): string {
   const decision = tokens ? `Decision rule on the readers' tokens: the claim **${verdict(tokens.value, tokens.interval)}**.` : "";
   const arms = byArm(readers);
   return [
-    `# Notes loop (${models})`,
+    `## ${title}`,
     "",
     `Readers passed: bare ${passed(arms.bare)}, notes ${passed(arms.notes)}.`,
     "",
@@ -310,6 +316,23 @@ export function renderLoopReport(results: RunResult[]): string {
     "",
     decision,
     "",
+  ];
+}
+
+/** The report; `variants` names groups of readers, each with its own overall section. */
+export function renderLoopReport(results: RunResult[], variants: Record<string, string[]> = {}): string {
+  const loop = results.filter((r) => r.loop);
+  const writers = loop.filter((r) => r.loop!.role === "writer");
+  const readers = loop.filter((r) => r.loop!.role === "reader");
+  const models = [...new Set(loop.map((r) => r.model))].join(", ");
+  const sections = Object.entries(variants).flatMap(([name, ids]) =>
+    overallSection(`Variant: ${name}`, readers.filter((r) => ids.includes(r.task))),
+  );
+  return [
+    `# Notes loop (${models})`,
+    "",
+    ...overallSection("All readers", readers),
+    ...sections,
     "## Readers",
     "",
     ...readerTable(readers),
