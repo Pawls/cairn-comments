@@ -3,13 +3,13 @@
  * writer repetition that has frozen notes, a reader's checkout is made with them placed, and the
  * notes Cairn placed are counted per file against the readers' modules.
  *
- *   node scripts/benchmark/notes-gate.ts --work <dir> --tasks <notes set> [--rep 1] [--harness claude]
+ *   node scripts/benchmark/notes-gate.ts --work <dir> --tasks <notes set> [--rep 1] [--harness claude] [--carry]
  */
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import type { HarnessName } from "./harnesses.ts";
-import { loadNotesSet, notesDir, taskOf } from "./notes.ts";
+import { carriedId, loadNotesSet, notesDir, taskOf } from "./notes.ts";
 import { readPrepared } from "./prepare.ts";
 import { DEEP_PREPARED_ID, preparedEntries, type Probe } from "./tasks.ts";
 import { checkoutArm, entriesBySource, ensureMirror, isolatedEnv, placedComments } from "./workspace.ts";
@@ -19,6 +19,7 @@ const { values: args } = parseArgs({
     work: { type: "string" },
     tasks: { type: "string" },
     rep: { type: "string", default: "1" },
+    carry: { type: "boolean", default: false },
     harness: { type: "string", default: "claude" },
   },
 });
@@ -42,7 +43,10 @@ for (const pair of set.pairs) {
   }
   const runDir = mkdtempSync(path.join(work, "gate-"));
   try {
-    checkoutArm({ mirror, runDir, start: prepared.start, arm: "none", hooks: [], env, prepared, notes: { agentsMd: "", cairn: { sidecars, hooks: [] } } });
+    // With --carry the readers start from the writer's committed work, so the notes are placed there.
+    const from = args.carry ? { ...prepared, taskId: carriedId(args.harness as HarnessName, pair.writer, Number(args.rep)) } : prepared;
+    const notes = { agentsMd: "", cairn: { sidecars, hooks: [] } };
+    checkoutArm({ mirror, runDir, start: prepared.start, arm: "none", hooks: [], env, prepared: from, notes });
     const { placed, stale } = placedComments(runDir);
     const modules = new Set(pair.readers.flatMap((id) => (taskOf(set, id) as Probe).modules));
     const inModules = Object.entries(placed).filter(([file]) => modules.has(file));

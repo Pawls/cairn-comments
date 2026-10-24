@@ -170,10 +170,15 @@ export function checkoutArm(options: CheckoutOptions): string {
     git(repo, options.env, "worktree", "add", "--quiet", "-b", "bench", agent);
     return agent;
   }
-  const hookArgs = options.hooks.length ? ["--hooks", options.hooks.join(",")] : [];
-  cairn(repo, options.env, "init", "--private", ...hookArgs);
-  if (options.comments) cpSync(options.comments, path.join(repo, PRIVATE_STORE), { recursive: true });
-  cairn(repo, options.env, "worktree", "add", "-b", "bench", agent);
+  return privateWorktree(repo, agent, options.hooks, options.comments, options.env);
+}
+
+/** Cairn in private mode on the clone `repo`, with `sidecars` in its store, and the agent's worktree `agent`. */
+function privateWorktree(repo: string, agent: string, hooks: string[], sidecars: string | undefined, env: Record<string, string>): string {
+  const hookArgs = hooks.length ? ["--hooks", hooks.join(",")] : [];
+  cairn(repo, env, "init", "--private", ...hookArgs);
+  if (sidecars) cpSync(sidecars, path.join(repo, PRIVATE_STORE), { recursive: true });
+  cairn(repo, env, "worktree", "add", "-b", "bench", agent);
   return agent;
 }
 
@@ -226,11 +231,7 @@ function notesWorktree(repo: string, agent: string, notes: NotesCheckout, env: R
     git(repo, env, "worktree", "add", "--quiet", "-b", "bench", agent);
     return agent;
   }
-  const hookArgs = notes.cairn.hooks.length ? ["--hooks", notes.cairn.hooks.join(",")] : [];
-  cairn(repo, env, "init", "--private", ...hookArgs);
-  if (notes.cairn.sidecars) cpSync(notes.cairn.sidecars, path.join(repo, PRIVATE_STORE), { recursive: true });
-  cairn(repo, env, "worktree", "add", "-b", "bench", agent);
-  return agent;
+  return privateWorktree(repo, agent, notes.cairn.hooks, notes.cairn.sidecars, env);
 }
 
 export interface SetUpOptions {
