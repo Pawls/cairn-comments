@@ -49,7 +49,7 @@ import { globalPiCli, HARNESSES, type HarnessName } from "./harnesses.ts";
 import { findPython, prepareTask, readPrepared, type PreparedTask } from "./prepare.ts";
 import { ProviderError, readLog, runAgent, type AgentOptions } from "./agent.ts";
 import { providerFailed, runMetrics } from "./metrics.ts";
-import { startRecordingProxy } from "./proxy.ts";
+import { requestRewrite, startRecordingProxy } from "./proxy.ts";
 import {
   agentsMdFor,
   loadNotesSet,
@@ -309,7 +309,7 @@ async function annotate(): Promise<void> {
   const prompt = readFileSync(path.join("benchmark", "annotate-prompt.md"), "utf8");
   const logFile = path.join(runDir, "calls.jsonl");
   await checkProvider(agent);
-  const proxy = await startRecordingProxy(agent.provider, logFile, "probe");
+  const proxy = await startRecordingProxy(agent.provider, logFile, "probe", requestRewrite(agent.local));
   const dirs = { agentDir, homeDir: runDir, outputDir: runDir };
   const session = await runAgent(agent, [prompt], dirs, env, proxy.url).finally(() => proxy.close());
   const calls = readLog(logFile);
