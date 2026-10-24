@@ -1,0 +1,98 @@
+diff --git a/water.py b/water.py
+index fed954cb..b9d96188 100644
+--- a/water.py
++++ b/water.py
+@@ -542,6 +542,44 @@ def open_b(c: Cell) -> bool:
+     )
+ 
+ 
++def scoop(
++    is_open: IsOpen,
++    body: set[Cell],
++    count: int,
++    budget: int | None = None,
++    sources: frozenset[Cell] = frozenset(),
++) -> Drain:
++    """Take ``count`` cells of water out of a body at rest (the bucket): what is left stands
++    exactly as `solve_drain` leaves a body of that many cells in the same basin, ragged top
++    layer included. ``is_open`` is the plain "is this cell air" test, as for `solve_drain`.
++
++    A FED body (``sources``) refills as fast as it is scooped and comes back unchanged.
++    Scooping all of it or more empties it. ``bounded`` is False, with the body unchanged,
++    when the basin is too large to solve."""
++    if budget is None:
++        budget = DEFAULT_BUDGET
++    body = set(body)
++    if not body:
++        return Drain((), 0, (), (), None, 0, True)
++    top = max(c[1] for c in body) + 1
++    unchanged = Drain(tuple(sorted(body)), top, (), (), None, 0, True)
++    if count <= 0 or sources:
++        return unchanged
++    order = sorted(body, key=lambda c: (c[1], c[0], c[2]))
++    left = len(body) - count
++    if left <= 0:
++        return Drain((), order[0][1], tuple(order), (), None, 0, True)
++    # Re-solve a stand-in body of `left` cells. It keeps the lowest cell, which is the seed
++    # `solve_drain` floods from, and one cell of the top layer, so its flood still spans the
++    # whole basin; the cells scooped read as air.
++    stand_in = set(order[: left - 1]) | {order[-1]} if left > 1 else {order[0]}
++    drain = solve_drain(lambda c: c in body or is_open(c), stand_in, budget)
++    if not drain.bounded:
++        return Drain(unchanged.keep, top, (), (), None, 0, False)
++    keep = set(drain.keep)
++    return Drain(drain.keep, drain.level, tuple(sorted(body - keep)), (), None, 0, True)
++
++
+ @dataclass(frozen=True)
+ class Spill:
+     """One hop of escaped water: where it landed and came to rest, or where it goes next.
+diff --git a/window_water.py b/window_water.py
+index 2edca8f1..4a274859 100644
+--- a/window_water.py
++++ b/window_water.py
+@@ -215,6 +215,44 @@ def is_open(c):
+         else:
+             self.set_status(f"Water: filled {changed} cells")
+ 
++    def water_scoop(self, cell, count: int) -> int:
++        """The bucket: take ``count`` cells out of the body holding ``cell`` as one undo
++        entry, leaving the rest where `water.scoop` puts it. Returns the cells removed; a
++        cell that is not water, a body too large to solve and a spring-fed body (it refills)
++        are refused with a status line and remove nothing."""
++        world = self.world
++        liquid = world.liquid_by_ti
++        budget = water.DEFAULT_BUDGET
++
++        def is_water(c):
++            ti = world.block_at(c)
++            return ti is not None and bool(liquid[ti])
++
++        def is_air(c):
++            return world.block_at(c) is None
++
++        start = tuple(cell)
++        if not is_water(start):
++            self.set_status("Water: nothing to scoop here")
++            return 0
++        body = water.body_of(is_water, start, cap=budget)
++        if body is None:
++            self.set_status("Water: this body is too large to scoop from")
++            return 0
++        if any(is_mouth(world, world.block_at(c)) for c in body):
++            self.set_status("Water: a spring refills it as fast as it is scooped")
++            return 0
++        result = water.scoop(is_air, body, count, budget=budget)
++        if not result.bounded:
++            self.set_status("Water: this body is too large to scoop from")
++            return 0
++        if not result.drained:
++            return 0
++        self._apply_water_cells([(c, None) for c in result.drained])
++        self._record_map_edit()
++        self.set_status(f"Water: scooped {len(result.drained)} cells")
++        return len(result.drained)
++
+     # ---- Phase 2: the film fade ---------------------------------------------------------
+ 
+     def water_film_fade(self, pairs, seed, to: int | None = None, note: bool = True) -> None:

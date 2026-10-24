@@ -1,0 +1,136 @@
+diff --git a/navgrid.py b/navgrid.py
+index 74739d1a..707d5616 100644
+--- a/navgrid.py
++++ b/navgrid.py
+@@ -340,6 +340,13 @@ def __init__(
+         # node set caches against, so a block edit can't leave a giant routing through a wall
+         # that has just been built (or refusing a doorway that has just been opened).
+         self.version = 0
++        # Connected regions of the walk graph (see `region_of`): labelled lazily on first use and
++        # kept current by `edit`. `_region_version` is the grid version the labels describe, so a
++        # grid patched through `update_cells` directly falls back to one full relabel.
++        self._regions: dict[Cell, int] | None = None
++        self._region_members: dict[int, set[Cell]] = {}
++        self._region_version = -1
++        self._next_region = 0
+ 
+     @classmethod
+     def build(
+@@ -515,6 +522,86 @@ def update_cells(self, is_solid, changed_cells) -> None:
+         # and the tags themselves may have moved with the stroke — re-emit from the live set.
+         self._refresh_ladders(fresh_bodies)
+ 
++    def edit(self, is_solid, changed_cells) -> None:
++        """Apply an edit exactly as :meth:`update_cells` does, then bring the connected regions
++        up to date by relabelling only the regions the edit touched.
++
++        Walk edges only change when a node appears or goes (``update_cells`` leaves ``adj`` alone
++        otherwise), and adding nodes only adds edges while removing them only removes edges. Every
++        edge that appears or goes has an endpoint that flipped, or joins two neighbours of one that
++        did (a diagonal opened or closed by its flank), so the regions to redo are those of the
++        removed nodes and of the neighbours of the added ones."""
++        changed = {tuple(int(v) for v in cell) for cell in changed_cells}
++        if not self._regions_current():
++            self.update_cells(is_solid, changed)
++            return  # labelled on the next query
++        bodies_before = self._ladder_bodies
++        self.update_cells(is_solid, changed)
++        if bodies_before is not None and self._ladder_bodies is not None:
++            # A climb tag on a solid block flips walkability with no block edit: update_cells
++            # re-tests those cells too, so they belong in the candidate set as well.
++            changed |= bodies_before ^ self._ladder_bodies
++        C = self.clearance
++        candidates = {
++            (x, yy, z) for x, y, z in changed for yy in range(y - (C - 1), y + 2)
++        }
++        regions = self._regions
++        removed = {c for c in candidates if c in regions and c not in self.nodes}
++        added = {c for c in candidates if c in self.nodes and c not in regions}
++        if removed or added:
++            dirty = {regions[c] for c in removed}
++            for c in added:
++                dirty.update(regions[n] for n in self.adj.get(c, ()) if n in regions)
++            seeds = set(added)
++            for rid in dirty:
++                seeds |= self._region_members.pop(rid)
++            seeds -= removed
++            for c in seeds | removed:
++                regions.pop(c, None)
++            for c in sorted(seeds):
++                if c not in regions:
++                    self._flood_region(c)
++        self._region_version = self.version
++
++    def region_of(self, cell) -> int | None:
++        """The id of the connected walk region ``cell`` stands in, or None for a cell that is not
++        a node. Two nodes share an id exactly when a route over ``adj`` joins them (climb edges do
++        not count). A region an edit did not touch keeps its id."""
++        if not self._regions_current():
++            self._label_regions()
++        return self._regions.get(tuple(int(v) for v in cell))
++
++    def reachable(self, a, b) -> bool:
++        """Whether a walk route joins nodes ``a`` and ``b`` (False when either is not a node)."""
++        ra = self.region_of(a)
++        return ra is not None and ra == self.region_of(b)
++
++    def _regions_current(self) -> bool:
++        return self._regions is not None and self._region_version == self.version
++
++    def _label_regions(self) -> None:
++        self._regions = {}
++        self._region_members = {}
++        for node in sorted(self.nodes):
++            if node not in self._regions:
++                self._flood_region(node)
++        self._region_version = self.version
++
++    def _flood_region(self, start: Cell) -> None:
++        rid = self._next_region
++        self._next_region += 1
++        members = {start}
++        self._regions[start] = rid
++        stack = [start]
++        while stack:
++            cur = stack.pop()
++            for nb in self.adj.get(cur, ()):
++                if nb not in members:
++                    members.add(nb)
++                    self._regions[nb] = rid
++                    stack.append(nb)
++        self._region_members[rid] = members
++
+     def _refresh_ladders(self, bodies: set[Cell] | None = None) -> None:
+         """Re-emit the climb edges from the live body-cell set, bumping the version when the
+         edge set moved. A no-op (and no allocation) on a grid that tracks no ladders.
+diff --git a/window_logic_world.py b/window_logic_world.py
+index 8eab2673..ed857f57 100644
+--- a/window_logic_world.py
++++ b/window_logic_world.py
+@@ -2008,7 +2008,7 @@ def _record_map_edit(self, blocks_changed=True):
+                 # the grid was built by `navgrid.from_world`, which reads a rungs/flat-tagged
+                 # solid cell as passable, and a patch that read it as a wall would silently
+                 # un-walk the node.
+-                self._nav_grid.update_cells(
++                self._nav_grid.edit(
+                     navgrid.nav_solidity(self.world), delta if delta is not None else ()
+                 )
+         else:
+@@ -2025,7 +2025,7 @@ def _record_map_edit(self, blocks_changed=True):
+                 # change the empty patch re-derives from the tag's body cells) re-wires the
+                 # nav graph's shape-derived edges while flipping no block: an EMPTY patch
+                 # refreshes exactly those, without a whole-world rebuild.
+-                self._nav_grid.update_cells(navgrid.nav_solidity(self.world), ())
++                self._nav_grid.edit(navgrid.nav_solidity(self.world), ())
+         self._map_history.record(entry)
+         self._edit_dirty = False
+         self._unsaved = True
+@@ -2051,7 +2051,7 @@ def _apply_map_entry(self, entry, *, forward):
+             # undo of a rungs-on-stone tag unwalks exactly what the tag walkified. An ents-only
+             # entry (a tag-only edit's undo) flips no block but still re-wires the shape-derived
+             # edges — an empty patch.
+-            self._nav_grid.update_cells(
++            self._nav_grid.edit(
+                 navgrid.nav_solidity(self.world), blocks if blocks is not None else ()
+             )
+         self.apply_cutaway()  # re-hide blocks above the active layer if cutaway is on
