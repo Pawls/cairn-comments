@@ -9,9 +9,8 @@
 > **Diff sign-off:** each slice's tests pass on Windows and on an LF platform (WSL Ubuntu),
 > and nothing runs against the model server until D4's gates pass.
 > **Lanes:** one lane from here: D4→D5→D6 (D2 and D3 ran as parallel lanes; D4a joined them)
-> **Next:** [D7](#d7), chosen by the owner 2026-10-21: does a note one agent writes while it
-> works save the next agent from working the same thing out again? Build its harness pieces
-> first; the runs wait for the night. D5 and D6 stay on hold.
+> **Next:** the owner's call. [D7](#d7) ran 2026-10-24 and its claim failed: a writer's notes
+> cost the next agent 12% more tokens on these tasks and this model. D5 and D6 stay on hold.
 > **Branch:** `benchmark-deep-context` for this plan; lane branches `bench/<slice>`.
 
 - [~~D1 — The claim, the conditions, and the gates~~ — SHIPPED 2026-10-14](#d1)
@@ -452,8 +451,8 @@ so the matrix cannot detect the claim as built (D4, D4b).
 
 ## D7 — Notes one agent leaves for the next · Opus 5.5 / high {#d7}
 
-**Status:** Harness built 2026-10-24 (`loop` and `loop-report`, [../benchmark.md](../benchmark.md#the-notes-loop));
-the owner revised the arms and the model the same night (below). The runs are next.
+**Status:** Done 2026-10-24: the claim fails (notes cost readers 12% more tokens; results at the
+end of this slice). Harness: `loop` and `loop-report` ([../benchmark.md](../benchmark.md#the-notes-loop)).
 
 **Revision (owner, 2026-10-24), which replaces the four B arms and the model below:**
 
@@ -614,23 +613,65 @@ reads (Claude Code's `CLAUDE.local.md`; others differ). Either becomes a v2 slic
       `NOTES.md` renderer are dropped
 - [x] Harness: the report (per-reader ratios, geometric means with intervals, the decision
       rule, the writers' cost, the whole loop); tests against the stand-in and Cairn
-- [ ] Run (carry, started 2026-10-24 04:40 in `C:\cbn`, log `C:\cbn\carry.log`): 40 runs
-      (4 pairs × writer notes + 2 readers × 2 arms, × 2 reps), then the 4 writers in `bare`,
-      then `loop-report`; the batch appends `done` to the log when all three are finished
-- [ ] Rerun `fell-touching-crowns` notes rep 2 (run dir
-      `C:\cbn\loop\claude\fell-touching-crowns\f8c4edb74997`): its last call, 10:50–10:51:30, overlapped
-      ComfyUI starting on GPU 0 and decoded at about 54 tokens/s against 73 earlier in the run.
-      Tokens and grade are unaffected, wall time maybe 20 s. Move the dir to `C:\cbn\aside\`
-      and run `loop ... --carry --reps 2 --bare-writers 0 --only tree-holding-foliage`
-- [ ] Apply the decision rule, write the numbers here and in
-      [../benchmark.md](../benchmark.md#results), and answer the owner's question: did the
-      notes reader use fewer tokens, finish sooner, or fail less (or pass where bare failed),
-      per variant (`probes`, `hard`)
-- **Note (from the run):** observations to check against the full numbers.
-  `drain-into-shaft` rep 1: bare answered `drained=8` (wrong), notes `drained=2` (right),
-  with the writer's one note on `solve_drain` placed. `canopy-reach-grows-with-height` rep 1:
-  notes failed after 40.8 min (bare passed in 13.1); the writer's note "budgeted by visits, not
-  reach" (on its own `tree_at` search) appears to have led the reader to unbound
-  `_claim_canopy`, failing `test_a_short_neighbour_cannot_claim_past_its_own_reach`: a note
-  that misled. `drain-reports-ragged-layer` notes rep 2 failed (not yet read). Notes readers
-  mostly read more context than bare ones, since placed notes include a writer's scratch files.
+- [x] Run (carry), 2026-10-24 04:40 to 16:20 in `C:\cbn` (log `C:\cbn\carry.log`): 40 runs, then the
+      4 writers in `bare`. No 5xx and no timeout. One run (`fell-touching-crowns` notes rep 2)
+      overlapped ComfyUI starting on GPU 0 for its last call; it was set aside in
+      `C:\cbn\aside\comfyui-overlap` and rerun
+- [x] Apply the decision rule and answer the owner's question (below)
+
+**Result: the claim fails.** Over the 8 readers, notes / bare tokens (context added past the
+first call, plus output, as in D4b) has a geometric mean of **1.12**, 95% interval **1.01 to
+1.22**: its lower end is above 0.80. The notes readers did not finish sooner (wall 1.26, 0.99
+to 1.54) and did not fail less: 14 of 16 passed against 15 of 16. They read more (all input
+tokens 1.60, tool calls 1.36). Full tables: `C:\cbn\loop-report.md`.
+
+| Reader | Variant | Passed, bare / notes | Tokens, bare / notes (ratio) | Wall s, bare / notes (ratio) |
+| --- | --- | --- | --- | --- |
+| drain-into-shaft | probes | 1/2 / 2/2 | 25,357 / 22,387 (0.88) | 104 / 103 (0.99) |
+| fell-touching-crowns | probes | 2/2 / 2/2 | 41,772 / 61,307 (1.47) | 278 / 365 (1.31) |
+| navgrid-changed-nodes | probes | 2/2 / 2/2 | 80,446 / 85,446 (1.06) | 444 / 509 (1.15) |
+| portal-one-way | probes | 2/2 / 2/2 | 18,722 / 22,234 (1.19) | 41 / 52 (1.29) |
+| drain-reports-ragged-layer | hard | 2/2 / 1/2 | 149,488 / 126,333 (0.85) | 1,051 / 812 (0.77) |
+| canopy-reach-grows-with-height | hard | 2/2 / 1/2 | 163,063 / 241,862 (1.48) | 1,027 / 2,073 (2.02) |
+| navgrid-opened-closed-edges | hard | 2/2 / 2/2 | 96,447 / 120,068 (1.24) | 566 / 1,090 (1.93) |
+| portal-first-reached-crossing | hard | 2/2 / 2/2 | 102,739 / 96,645 (0.94) | 928 / 1,030 (1.11) |
+
+The owner's three questions, per variant:
+
+- **Fewer tokens?** No. `probes` 1.13 (1.03 to 1.24), `hard` 1.10 (0.93 to 1.28). Three
+  readers were cheaper with notes (both water readers, 0.88 and 0.85; portal-first-reached-crossing
+  0.94), five dearer.
+- **Sooner?** No. `probes` 1.18 (1.00 to 1.37), `hard` 1.35 (0.86 to 1.96). Only the hard water
+  reader was clearly faster (0.77).
+- **Fewer mistakes, or passing where bare failed?** Mixed, and too few to call. `probes`: notes
+  8/8, bare 7/8, the one difference being `drain-into-shaft` rep 1, where bare answered
+  `drained=8` and the notes reader, with the writer's note on `solve_drain` placed, answered
+  correctly. `hard`: notes 6/8, bare 8/8. One notes failure was a note that misled:
+  the felling writer's "budgeted by visits, not reach" (about its own `tree_at` search) was
+  carried into `_claim_canopy`, which lost its reach bound and failed
+  `test_a_short_neighbour_cannot_claim_past_its_own_reach` after 40.8 min (bare passed in 13.1).
+  The other, `drain-reports-ragged-layer` rep 2, failed two of the hidden cases about water
+  placed lower down.
+
+**Where it went the claimed way:** the water pair, whose writer left the fewest notes (3 on
+average) and one that states `solve_drain`'s contract outright. The whole loop (writer plus both
+readers) was cheaper with notes there (0.88) and for portal (0.95), dearer for navgrid (1.08)
+and felling (1.41). The writers themselves passed 6 of 8 with the prepend against 2 of 4
+without it, and were faster for portal and water; one bare repetition per writer is too few to
+say the notes helped the writer.
+
+**Why, as far as the transcripts show:**
+
+1. **Placed notes are read whether or not they bear on the task.** A writer left 1 to 39 notes,
+   some in its own scratch files and tests, and every one placed in a file the reader opens
+   costs the reader context. The felling writer's notes sat in `scratch/verify_tree_at.py` as
+   well as `felling.py`.
+2. **Notes are written about the writer's own code**, not the shared function, even after the
+   prepend asked for the reverse (gate GN, above). A note true of the writer's new search reads
+   as a rule about the module to the next agent: the canopy failure.
+3. **The model is not lost on these tasks.** As in D4 and D4b, the bare readers reached the code
+   they needed in a few calls; a note can only save searching that happens.
+
+**Not tested:** a reader deep in a long session (every reader here is fresh), any model but this
+one, and notes chosen per task (Cairn places every note in every opened file). 10 of the 15
+felling notes of rep 2 did not place on the carried commit; why is not yet read.
