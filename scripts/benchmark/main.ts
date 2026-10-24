@@ -29,7 +29,7 @@
  *       what that run command has finished and what is left
  *   report --work <dir>
  *       Markdown tables from every result, printed and written to <work>/report.md
- *   loop --work <dir> --tasks <notes set> --model <m> [--reps 2] [--bare-writers 1]
+ *   loop --work <dir> --tasks <notes set> --model <m> [--reps 5] [--bare-writers 1]
  *       [--writers-only] [--writer-timeout <minutes>] [--carry] [--only <writer,...>] [--stop-at HH:MM]
  *       the notes loop (notes.ts): each pair's writer, then its readers in both arms, per
  *       repetition; finished runs are skipped, as in `run`
@@ -52,6 +52,7 @@ import { providerFailed, runMetrics } from "./metrics.ts";
 import { startRecordingProxy } from "./proxy.ts";
 import {
   agentsMdFor,
+  carriedId,
   loadNotesSet,
   loopLabel,
   loopRunDir,
@@ -553,26 +554,33 @@ function loopSpecFor(batch: Batch, set: NotesSet, run: LoopRun): LoopSpec {
   const { work, agent } = batch;
   const agentNotes = set.taskFile.repos[run.task.repo]!.agentNotes ?? [];
   const agentsMd = agentsMdFor(run.arm, agentNotes, set.prepend);
-  const label = { ...loopLabel(run), runDir: loopRunDir(work, agent.harness, run) };
-  const carried = `${run.writer}-${run.rep}`;
+  const label = { ...loopLabel({ ...run, carry: args.carry }), runDir: loopRunDir(work, agent.harness, run) };
+  const carried = carriedId(agent.harness, run.writer, run.rep);
   const prepared = args.carry && run.role === "reader" ? { ...preparedFor(batch, run.task)!, taskId: carried } : undefined;
   if (run.arm === "bare") return { ...label, checkout: { agentsMd }, prepared };
   const notes = notesDir(work, agent.harness, run.writer, run.rep);
   // Cairn's Claude Code hook syncs after every edit, as it would for the agent in the product.
   const hooks = agent.harness === "claude" ? ["claude-code"] : [];
   if (run.role === "reader") return { ...label, checkout: { agentsMd, cairn: { hooks, sidecars: notes } }, prepared };
-  const carry = args.carry ? { mirror: batch.mirrorPaths.get(run.task.repo)!, branch: preparedBranch(carried, "none") } : undefined;
-  return { ...label, checkout: { agentsMd, cairn: { hooks } }, freezeTo: notes, carry };
+  const carryTo = args.carry ? { mirror: batch.mirrorPaths.get(run.task.repo)!, branch: preparedBranch(carried, "none") } : undefined;
+  return { ...label, checkout: { agentsMd, cairn: { hooks } }, freezeTo: notes, carryTo };
 }
 
 /**
- * Whether a reader must wait because the writer in the notes arm it takes from has no result
- * yet: a reader in the notes arm takes its notes, and with --carry any reader takes its work.
+ * Why a reader cannot run yet, if it cannot: a reader in the notes arm takes the notes of the
+ * writer in the notes arm, and with --carry any reader takes that writer's work, so the writer
+ * must have a result, from a batch with the same --carry.
  */
-function waitsForWriter(work: string, set: NotesSet, run: LoopRun, harness: HarnessName): boolean {
-  if (run.role !== "reader" || (run.arm !== "notes" && !args.carry)) return false;
+function writerNotReady(work: string, set: NotesSet, run: LoopRun, harness: HarnessName): string | undefined {
+  if (run.role !== "reader" || (run.arm !== "notes" && !args.carry)) return undefined;
   const writerRun: LoopRun = { task: taskOf(set, run.writer), role: "writer", arm: "notes", writer: run.writer, rep: run.rep };
-  return !existsSync(path.join(loopRunDir(work, harness, writerRun), "result.json"));
+  const file = path.join(loopRunDir(work, harness, writerRun), "result.json");
+  if (!existsSync(file)) return "its writer has no result yet";
+  const writer = JSON.parse(readFileSync(file, "utf8")) as RunResult;
+  if (Boolean(writer.loop?.carry) !== args.carry!) {
+    return `its writer ran ${args.carry ? "without" : "with"} --carry; move ${path.dirname(file)} aside to run it again`;
+  }
+  return undefined;
 }
 
 /** What the loop's runs share; writers get --writer-timeout when it is given. */
@@ -609,8 +617,9 @@ async function loop(): Promise<void> {
       log(`stop time reached before ${label}`);
       return;
     }
-    if (waitsForWriter(work, set, run, agent.harness)) {
-      log(`${label}: skipped, its writer has no result yet`);
+    const notReady = writerNotReady(work, set, run, agent.harness);
+    if (notReady) {
+      log(`${label}: skipped, ${notReady}`);
       continue;
     }
     const runBatch = run.role === "writer" ? writerBatch : batch;

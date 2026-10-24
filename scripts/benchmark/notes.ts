@@ -42,6 +42,11 @@ export interface LoopLabel {
   arm: NotesArm;
   /** The writer of the run's pair; a writer's own id. */
   writer: string;
+  /**
+   * The run belongs to a --carry batch: its readers start from the notes writer's committed work.
+   * Absent on runs from a batch without it. A report never pools the two.
+   */
+  carry?: boolean;
 }
 
 export interface LoopSpec extends LoopLabel {
@@ -50,7 +55,7 @@ export interface LoopSpec extends LoopLabel {
   /** A writer in the `notes` arm: where its notes are frozen once its session ends. */
   freezeTo?: string;
   /** A writer in the `notes` arm whose work its readers start from: the branch it is committed to. */
-  carry?: { mirror: string; branch: string };
+  carryTo?: { mirror: string; branch: string };
   /** A reader that starts from its writer's carried work instead of the set's commit. */
   prepared?: PreparedTask;
 }
@@ -85,6 +90,10 @@ export function loadNotesSet(file: string): NotesSet {
       if (seen.has(id)) throw new Error(`pair ${pair.writer}: ${id} is in more than one pair, or twice in this one`);
       seen.add(id);
     }
+  }
+  for (const repo of new Set(taskFile.tasks.map((task) => task.repo))) {
+    // Only prepared checkouts take the notes arm's AGENTS.md and Cairn (workspace.ts `checkoutArm`).
+    if (taskFile.repos[repo]!.treatment !== "own-comments") throw new Error(`${file}: repo ${repo} needs the own-comments treatment`);
   }
   const prepend = readFileSync(path.resolve(path.dirname(file), parsed.prepend), "utf8");
   const readers = new Set(parsed.pairs.flatMap((pair) => pair.readers));
@@ -144,6 +153,11 @@ export function loopRunDir(work: string, harness: HarnessName, run: LoopRun): st
   return path.join(work, "loop", harness, run.task.id, neutralName("loop", run.arm, run.rep));
 }
 
+/** The prepared id under which repetition `rep` of `writer` in the `notes` arm carries its work, per harness. */
+export function carriedId(harness: HarnessName, writer: string, rep: number): string {
+  return `${harness}-${writer}-${rep}`;
+}
+
 /** Where repetition `rep` of `writer` in the `notes` arm freezes its notes. */
 export function notesDir(work: string, harness: HarnessName, writer: string, rep: number): string {
   return path.join(work, "notes", harness, `${writer}-${rep}`);
@@ -151,7 +165,7 @@ export function notesDir(work: string, harness: HarnessName, writer: string, rep
 
 /** The label a run's result records. */
 export function loopLabel(label: LoopLabel): LoopLabel {
-  return { role: label.role, arm: label.arm, writer: label.writer };
+  return { role: label.role, arm: label.arm, writer: label.writer, ...(label.carry && { carry: true }) };
 }
 
 /** For a reader given notes: the writer's entries per file, and what Cairn placed of them in `runDir`. */
@@ -169,13 +183,15 @@ export function freezeNotes(spec: LoopSpec, agentDir: string, runDir: string, en
   if (!spec.freezeTo) return undefined;
   cairn(agentDir, env, "sync");
   freezeComments(runDir, spec.freezeTo);
-  if (spec.carry) commitWork(agentDir, env, spec.carry.mirror, spec.carry.branch);
+  if (spec.carryTo) commitWork(agentDir, env, spec.carryTo.mirror, spec.carryTo.branch);
   return entriesBySource(spec.freezeTo);
 }
 
 /** The tokens a fresh run spent on its own work: the context it added past its first call, plus its output. */
 export function addedTokens(result: RunResult): number {
-  return result.metrics.finalContext - result.metrics.firstCallContext + result.metrics.tokens.output;
+  // A run whose harness compacted ends below its first call; count its output only, never less.
+  const added = Math.max(0, result.metrics.finalContext - result.metrics.firstCallContext);
+  return added + result.metrics.tokens.output;
 }
 
 interface LoopMeasure {
@@ -230,8 +246,8 @@ function overallRatio(runs: RunResult[], measure: LoopMeasure): { value: number;
  * of notes / bare is below 0.80 and its interval ends below 1.0, and fails when the interval
  * starts above 0.80.
  */
-export function verdict(value: number, interval: Interval): "holds" | "fails" | "inconclusive" {
-  if (value < 0.8 && interval.high < 1) return "holds";
+export function verdict(value: number, interval: Interval, passRate: Record<NotesArm, number>): "holds" | "fails" | "inconclusive" {
+  if (value < 0.8 && interval.high < 1 && passRate.notes >= passRate.bare) return "holds";
   if (interval.low > 0.8) return "fails";
   return "inconclusive";
 }
@@ -305,8 +321,10 @@ function overallSection(title: string, readers: RunResult[]): string[] {
     return `- ${measure.label}: ${ratio(value)} (95% interval ${ratio(interval.low)} to ${ratio(interval.high)}, ${tasks} readers)`;
   });
   const tokens = ratios.find(({ measure }) => measure === TOKENS)!.found;
-  const decision = tokens ? `Decision rule on the readers' tokens: the claim **${verdict(tokens.value, tokens.interval)}**.` : "";
   const arms = byArm(readers);
+  const passRate = (runs: RunResult[]) => runs.filter((r) => r.grade.passed).length / runs.length;
+  const rates = { bare: passRate(arms.bare), notes: passRate(arms.notes) };
+  const decision = tokens ? `Decision rule on the readers' tokens: the claim **${verdict(tokens.value, tokens.interval, rates)}**.` : "";
   return [
     `## ${title}`,
     "",
@@ -324,6 +342,10 @@ function overallSection(title: string, readers: RunResult[]): string[] {
 /** The report; `variants` names groups of readers, each with its own overall section. */
 export function renderLoopReport(results: RunResult[], variants: Record<string, string[]> = {}): string {
   const loop = results.filter((r) => r.loop);
+  const carried = loop.filter((r) => r.loop!.carry).length;
+  if (carried && carried < loop.length) {
+    throw new Error(`${carried} of ${loop.length} loop results ran with --carry; report the two designs from separate work dirs`);
+  }
   const writers = loop.filter((r) => r.loop!.role === "writer");
   const readers = loop.filter((r) => r.loop!.role === "reader");
   const models = [...new Set(loop.map((r) => r.model))].join(", ");

@@ -46,16 +46,22 @@ function declaredTools(request: Buffer): number {
   }
 }
 
+interface Block {
+  type: string;
+  text?: string;
+}
+
 interface Message {
   role: string;
-  content: string | Array<{ type: string; text?: string }>;
+  content: string | Block[];
 }
 
 /**
- * The request with every `system` message in `messages` turned into a system-reminder text block
- * at the end of the user turn before it, or a user turn of its own after an assistant turn.
- * Claude Code 2.1.310 sends its environment that way, and a Qwen chat template refuses any
- * system message but the first. A body with none, or that is not JSON, is returned as it was.
+ * The request with every `system` message in `messages` turned into system-reminder text blocks
+ * at the end of a user turn: the one before it, or after an assistant turn the next one, so a
+ * tool call is still followed straight away by its result; a user turn of its own when there is
+ * none. Claude Code 2.1.310 sends its environment that way, and a Qwen chat template refuses
+ * any system message but the first. A body with none, or that is not JSON, is returned as it was.
  */
 export function systemMessagesAsUser(body: Buffer): Buffer {
   let parsed: { messages?: Message[] };
@@ -66,22 +72,35 @@ export function systemMessagesAsUser(body: Buffer): Buffer {
   }
   if (!parsed.messages?.some((message) => message.role === "system")) return body;
   const messages: Message[] = [];
+  let waiting: Block[] = [];
   for (const message of parsed.messages) {
-    if (message.role !== "system") {
+    if (message.role === "system") {
+      const reminders = reminderBlocks(message);
+      const previous = messages.at(-1);
+      if (previous?.role === "user") messages[messages.length - 1] = withBlocks(previous, reminders);
+      else waiting = [...waiting, ...reminders];
+    } else if (waiting.length && message.role === "user") {
+      messages.push(withBlocks(message, waiting));
+      waiting = [];
+    } else {
+      if (waiting.length) messages.push({ role: "user", content: waiting });
+      waiting = [];
       messages.push(message);
-      continue;
     }
-    const texts = typeof message.content === "string" ? [message.content] : message.content.map((block) => block.text ?? "");
-    const blocks = texts.map((text) => ({ type: "text", text: `<system-reminder>\n${text}\n</system-reminder>` }));
-    const previous = messages.at(-1);
-    if (previous?.role !== "user") {
-      messages.push({ role: "user", content: blocks });
-      continue;
-    }
-    const content = typeof previous.content === "string" ? [{ type: "text", text: previous.content }] : previous.content;
-    messages[messages.length - 1] = { ...previous, content: [...content, ...blocks] };
   }
+  if (waiting.length) messages.push({ role: "user", content: waiting });
   return Buffer.from(JSON.stringify({ ...parsed, messages }));
+}
+
+function reminderBlocks(message: Message): Block[] {
+  const texts = typeof message.content === "string" ? [message.content] : message.content.map((block) => block.text ?? "");
+  return texts.map((text) => ({ type: "text", text: `<system-reminder>\n${text}\n</system-reminder>` }));
+}
+
+/** `message` with `blocks` after its own content. */
+function withBlocks(message: Message, blocks: Block[]): Message {
+  const content = typeof message.content === "string" ? [{ type: "text", text: message.content }] : message.content;
+  return { ...message, content: [...content, ...blocks] };
 }
 
 interface Exchange {
