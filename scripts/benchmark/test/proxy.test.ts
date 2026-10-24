@@ -146,6 +146,25 @@ describe("systemMessagesAsUser", () => {
     ]);
   });
 
+  it("keeps a tool result right after its tool call, folding the reminder into the result's turn", () => {
+    const toolUse = { role: "assistant", content: [{ type: "tool_use", id: "x", name: "Read", input: {} }] };
+    const toolResult = { type: "tool_result", tool_use_id: "x", content: "file" };
+    const rewritten = systemMessagesAsUser(
+      body([
+        { role: "user", content: "go" },
+        toolUse,
+        { role: "system", content: "reminder" },
+        { role: "user", content: [toolResult] },
+      ]),
+    );
+
+    expect(messagesOf(rewritten)).toEqual([
+      { role: "user", content: "go" },
+      toolUse,
+      { role: "user", content: [toolResult, { type: "text", text: "<system-reminder>\nreminder\n</system-reminder>" }] },
+    ]);
+  });
+
   it("leaves a request without system messages byte for byte as it was", () => {
     const original = Buffer.from('{"model":"m",  "messages":[{"role":"user","content":"hi"}]}');
     expect(systemMessagesAsUser(original)).toBe(original);

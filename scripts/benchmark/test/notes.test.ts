@@ -4,9 +4,21 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { agentsMdFor, freezeNotes, loadNotesSet, notesGiven, planLoop, verdict, type LoopSpec, type NotesSet } from "../notes.ts";
+import {
+  addedTokens,
+  agentsMdFor,
+  carriedId,
+  freezeNotes,
+  loadNotesSet,
+  notesGiven,
+  planLoop,
+  renderLoopReport,
+  verdict,
+  type LoopSpec,
+  type NotesSet,
+} from "../notes.ts";
 import { findPython, preparedBranch, prepareTask, type PreparedTask } from "../prepare.ts";
-import { runOne, type RunSpec } from "../runner.ts";
+import { runOne, type RunResult, type RunSpec } from "../runner.ts";
 import { startStandIn, type StandIn } from "../standin.ts";
 import type { QuestionTask, TaskFile } from "../tasks.ts";
 import { CAIRN_CLI, checkoutArm, ensureMirror, isolatedEnv, placedComments, type NotesCheckout } from "../workspace.ts";
@@ -102,6 +114,14 @@ describe.skipIf(!python || !existsSync(CAIRN_CLI))("a notes-loop checkout", () =
       if (notes.cairn) expect(placedComments(runDir)).toEqual({ placed: { "mod.py": 1 }, stale: 0 });
       else expect(readFileSync(path.join(agent, "mod.py"), "utf8")).not.toContain("#~");
     }
+  });
+
+  it("counts a placed note on a CRLF line with nothing after its id", () => {
+    const runDir = mkdtempSync(path.join(dir, "crlf-"));
+    writeUnder(runDir, "repo/.git/cairn/comments/mod.py.md", "## ab12\n");
+    writeUnder(runDir, "agent/mod.py", "def f():\r\n    #~ab12\r\n    return 1\r\n");
+
+    expect(placedComments(runDir)).toEqual({ placed: { "mod.py": 1 }, stale: 0 });
   });
 
   it("freezes nothing for a writer in the bare arm", () => {
@@ -207,11 +227,11 @@ function probe(id: string) {
   return { id, use: "understanding", kind: "change", modules: ["m.py"], prompt: id, hiddenTests: [], testCommand: "x" };
 }
 
-function writeSet(pairs: unknown, probes = ["w1", "r1", "r2", "w2", "r3"]): string {
+function writeSet(pairs: unknown, probes = ["w1", "r1", "r2", "w2", "r3"], treatment: object = { treatment: "own-comments" }): string {
   const root = mkdtempSync(path.join(os.tmpdir(), "notes-set-"));
   writeUnder(root, "prepend.md", "## Notes\n");
   for (const id of probes) writeUnder(root, `probes/${id}/reference.patch`, "");
-  const repos = { r: { url: "u", base: "b", setup: [] } };
+  const repos = { r: { url: "u", base: "b", setup: [], ...treatment } };
   writeUnder(root, "set.json", { repos, repo: "r", start: "s", warmups: [], probes: probes.map(probe), pairs, prepend: "prepend.md" });
   return path.join(root, "set.json");
 }
@@ -225,6 +245,10 @@ describe("loadNotesSet", () => {
 
   it("refuses a pair that names no probe of the set", () => {
     expect(() => loadNotesSet(writeSet([{ writer: "w1", readers: ["missing"] }]))).toThrow(/no probe missing/);
+  });
+
+  it("refuses a repository whose checkouts are not prepared, where the notes arm would quietly run bare", () => {
+    expect(() => loadNotesSet(writeSet([{ writer: "w1", readers: ["r1"] }], undefined, {}))).toThrow(/own-comments/);
   });
 
   it("refuses a reader in two pairs, whose notes would come from two writers", () => {
@@ -265,9 +289,44 @@ describe("planLoop", () => {
 });
 
 describe("verdict", () => {
+  const even = { bare: 0.9, notes: 0.9 };
+
   it("applies the rule fixed before the results", () => {
-    expect(verdict(0.7, { low: 0.5, high: 0.95 })).toBe("holds");
-    expect(verdict(0.7, { low: 0.5, high: 1.05 })).toBe("inconclusive");
-    expect(verdict(0.9, { low: 0.82, high: 1.1 })).toBe("fails");
+    expect(verdict(0.7, { low: 0.5, high: 0.95 }, even)).toBe("holds");
+    expect(verdict(0.7, { low: 0.5, high: 1.05 }, even)).toBe("inconclusive");
+    expect(verdict(0.9, { low: 0.82, high: 1.1 }, even)).toBe("fails");
+  });
+
+  it("never lets the claim hold when the notes readers pass less often", () => {
+    expect(verdict(0.7, { low: 0.55, high: 0.9 }, { bare: 1, notes: 0.625 })).toBe("inconclusive");
+  });
+});
+
+describe("addedTokens", () => {
+  const result = (first: number, final: number) =>
+    ({ metrics: { firstCallContext: first, finalContext: final, tokens: { input: 0, output: 500, cacheRead: 0, cacheWrite: 0 } } }) as RunResult;
+
+  it("counts the context a run added past its first call, plus its output", () => {
+    expect(addedTokens(result(4_000, 9_000))).toBe(5_500);
+  });
+
+  it("counts a run that compacted below its first call as output only, never negative", () => {
+    expect(addedTokens(result(40_000, 9_000))).toBe(500);
+  });
+});
+
+describe("renderLoopReport", () => {
+  const run = (carried: boolean) =>
+    ({ task: "r", model: "m", loop: { role: "reader", arm: "bare", writer: "w", carried } }) as unknown as RunResult;
+
+  it("refuses to pool readers that started from the writer's work with readers that did not", () => {
+    expect(() => renderLoopReport([run(true), run(false)])).toThrow(/--carry/);
+  });
+});
+
+describe("carriedId", () => {
+  it("names a writer's carried work by harness, so two harnesses on one work dir keep their own", () => {
+    expect(carriedId("claude", "w", 1)).not.toBe(carriedId("pi", "w", 1));
+    expect(carriedId("claude", "w", 1)).not.toBe(carriedId("claude", "w", 2));
   });
 });
