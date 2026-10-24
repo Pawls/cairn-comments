@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { agentsMdFor, freezeNotes, loadNotesSet, notesGiven, planLoop, verdict, type LoopSpec, type NotesSet } from "../notes.ts";
-import { findPython, prepareTask, type PreparedTask } from "../prepare.ts";
+import { findPython, preparedBranch, prepareTask, type PreparedTask } from "../prepare.ts";
 import { runOne, type RunSpec } from "../runner.ts";
 import { startStandIn, type StandIn } from "../standin.ts";
 import type { QuestionTask, TaskFile } from "../tasks.ts";
@@ -79,6 +79,29 @@ describe.skipIf(!python || !existsSync(CAIRN_CLI))("a notes-loop checkout", () =
     expect(placedComments(reader.runDir)).toEqual({ placed: { "mod.py": 1 }, stale: 0 });
     const readerSpec: LoopSpec = { role: "reader", arm: "notes", writer: "w", runDir: reader.runDir, checkout: { agentsMd: "", cairn: sidecars } };
     expect(notesGiven(readerSpec, reader.runDir)).toEqual({ entries: { "mod.py": 1 }, placed: { "mod.py": 1 }, stale: 0 });
+  });
+
+  it("carries a writer's work to its readers as one clean parentless commit, where its notes place exactly", () => {
+    const writer = checkout({ agentsMd: "## Notes\n", cairn: { hooks: [] } });
+    writeFileSync(path.join(writer.agent, "mod.py"), "def f():\n    return 1\n\n\ndef g():\n    #~ new and tricky\n    return 2\n");
+    const frozen = path.join(dir, "frozen-carried");
+    const carry = { mirror, branch: preparedBranch("w-1", "none") };
+    const spec: LoopSpec = { role: "writer", arm: "notes", writer: "w", runDir: writer.runDir, checkout: {} as NotesCheckout, freezeTo: frozen, carry };
+
+    freezeNotes(spec, writer.agent, writer.runDir, env);
+
+    const log = git(mirror, "log", "--format=%P|%s", carry.branch).trim();
+    expect(log).toBe("|Initial commit");
+    expect(git(mirror, "show", `${carry.branch}:mod.py`)).toBe("def f():\n    return 1\n\n\ndef g():\n    return 2\n");
+    const carried = { ...prepared, taskId: "w-1" };
+    for (const notes of [{ agentsMd: "# Agent notes\n" }, { agentsMd: "# Agent notes\n", cairn: { sidecars: frozen, hooks: [] } }]) {
+      const runDir = mkdtempSync(path.join(dir, "run-"));
+      const agent = checkoutArm({ mirror, runDir, start, arm: "none", hooks: [], env, prepared: carried, notes });
+      expect(readFileSync(path.join(agent, "AGENTS.md"), "utf8")).toBe("# Agent notes\n");
+      expect(git(agent, "log", "--all", "--format=%P").trim()).toBe("");
+      if (notes.cairn) expect(placedComments(runDir)).toEqual({ placed: { "mod.py": 1 }, stale: 0 });
+      else expect(readFileSync(path.join(agent, "mod.py"), "utf8")).not.toContain("#~");
+    }
   });
 
   it("freezes nothing for a writer in the bare arm", () => {

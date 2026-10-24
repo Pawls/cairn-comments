@@ -12,7 +12,8 @@ import { contextOf } from "./metrics.ts";
 import type { RunResult } from "./runner.ts";
 import { bootstrapGeomeanRatio, geomean, type Interval } from "./stats.ts";
 import { loadTaskFile, type Task, type TaskFile } from "./tasks.ts";
-import { cairn, entriesBySource, freezeComments, neutralName, placedComments, type NotesCheckout } from "./workspace.ts";
+import type { PreparedTask } from "./prepare.ts";
+import { cairn, commitWork, entriesBySource, freezeComments, neutralName, placedComments, type NotesCheckout } from "./workspace.ts";
 
 export type NotesArm = "bare" | "notes";
 export const NOTES_ARMS: NotesArm[] = ["bare", "notes"];
@@ -47,6 +48,10 @@ export interface LoopSpec extends LoopLabel {
   checkout: NotesCheckout;
   /** A writer in the `notes` arm: where its notes are frozen once its session ends. */
   freezeTo?: string;
+  /** A writer in the `notes` arm whose work its readers start from: the branch it is committed to. */
+  carry?: { mirror: string; branch: string };
+  /** A reader that starts from its writer's carried work instead of the set's commit. */
+  prepared?: PreparedTask;
 }
 
 export interface LoopRecord extends LoopLabel {
@@ -151,11 +156,15 @@ export function notesGiven(spec: LoopSpec, runDir: string): LoopRecord["given"] 
   return { entries: entriesBySource(sidecars), ...placedComments(runDir) };
 }
 
-/** For a writer in the `notes` arm: records its notes with `sync`, freezes them, and counts them per file. */
+/**
+ * For a writer in the `notes` arm: records its notes with `sync`, freezes them, commits its work for
+ * the readers when it is carried, and counts the notes per file.
+ */
 export function freezeNotes(spec: LoopSpec, agentDir: string, runDir: string, env: Record<string, string>): Record<string, number> | undefined {
   if (!spec.freezeTo) return undefined;
   cairn(agentDir, env, "sync");
   freezeComments(runDir, spec.freezeTo);
+  if (spec.carry) commitWork(agentDir, env, spec.carry.mirror, spec.carry.branch);
   return entriesBySource(spec.freezeTo);
 }
 

@@ -177,6 +177,16 @@ export function checkoutArm(options: CheckoutOptions): string {
   return agent;
 }
 
+/**
+ * A parentless commit of `tree` with the message and dates of HEAD in `cwd`. The author is
+ * isolatedEnv's, as it was when prepare.ts made the commit HEAD is.
+ */
+function commitLikeHead(cwd: string, env: Record<string, string>, tree: string): string {
+  const [authorDate, committerDate] = git(cwd, env, "show", "-s", "--format=%aI%n%cI", "HEAD").trim().split("\n");
+  const commitEnv = { ...env, GIT_AUTHOR_DATE: authorDate!, GIT_COMMITTER_DATE: committerDate! };
+  return git(cwd, commitEnv, "commit-tree", tree, "-m", COMMIT_MESSAGE).trim();
+}
+
 function gitWithInput(cwd: string, env: Record<string, string>, input: string, ...args: string[]): string {
   return execFileSync("git", args, { cwd, env, input, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }); // NOSONAR: git comes from PATH, as for any tool that drives git
 }
@@ -191,11 +201,21 @@ function recommitAgentsMd(repo: string, env: Record<string, string>, text: strin
   const replaced = entries.map((entry) => (entry.endsWith("\tAGENTS.md") ? `100644 blob ${blob}\tAGENTS.md` : entry));
   if (!entries.some((entry) => entry.endsWith("\tAGENTS.md"))) replaced.push(`100644 blob ${blob}\tAGENTS.md`);
   const tree = gitWithInput(repo, env, replaced.map((entry) => `${entry}\0`).join(""), "mktree", "-z").trim();
-  // The author is isolatedEnv's, as it was when prepare.ts made the commit.
-  const [authorDate, committerDate] = git(repo, env, "show", "-s", "--format=%aI%n%cI", "HEAD").trim().split("\n");
-  const commitEnv = { ...env, GIT_AUTHOR_DATE: authorDate!, GIT_COMMITTER_DATE: committerDate! };
-  const commit = git(repo, commitEnv, "commit-tree", tree, "-m", COMMIT_MESSAGE).trim();
+  const commit = commitLikeHead(repo, env, tree);
   git(repo, env, "update-ref", "--no-deref", "HEAD", commit);
+}
+
+/**
+ * Commits everything in the worktree, through its filters (Cairn's clean filter strips the
+ * notes), as one parentless commit with the clone's message and dates, onto `branch` in
+ * `mirror`, where `checkoutArm` can clone it as a prepared branch.
+ */
+export function commitWork(agentDir: string, env: Record<string, string>, mirror: string, branch: string): string {
+  git(agentDir, env, "add", "-A");
+  const tree = git(agentDir, env, "write-tree").trim();
+  const commit = commitLikeHead(agentDir, env, tree);
+  git(agentDir, env, "push", "--quiet", "--force", mirror, `${commit}:refs/heads/${branch}`);
+  return commit;
 }
 
 /** The agent's worktree for a notes-loop run, with its AGENTS.md and, in the notes arm, Cairn. */

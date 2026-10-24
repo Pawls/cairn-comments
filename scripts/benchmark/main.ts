@@ -30,7 +30,7 @@
  *   report --work <dir>
  *       Markdown tables from every result, printed and written to <work>/report.md
  *   loop --work <dir> --tasks <notes set> --model <m> [--reps 2] [--bare-writers 1]
- *       [--writers-only] [--writer-timeout <minutes>] [--only <writer,...>] [--stop-at HH:MM]
+ *       [--writers-only] [--writer-timeout <minutes>] [--carry] [--only <writer,...>] [--stop-at HH:MM]
  *       the notes loop (notes.ts): each pair's writer, then its readers in both arms, per
  *       repetition; finished runs are skipped, as in `run`
  *   loop-report --work <dir> --tasks <notes set>
@@ -46,7 +46,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { globalPiCli, HARNESSES, type HarnessName } from "./harnesses.ts";
-import { findPython, prepareTask, readPrepared, type PreparedTask } from "./prepare.ts";
+import { findPython, preparedBranch, prepareTask, readPrepared, type PreparedTask } from "./prepare.ts";
 import { ProviderError, readLog, runAgent, type AgentOptions } from "./agent.ts";
 import { providerFailed, runMetrics } from "./metrics.ts";
 import { requestRewrite, startRecordingProxy } from "./proxy.ts";
@@ -121,6 +121,7 @@ const { values: args, positionals } = parseArgs({
     "bare-writers": { type: "string", default: "1" },
     "writers-only": { type: "boolean", default: false },
     "writer-timeout": { type: "string" },
+    carry: { type: "boolean", default: false },
   },
 });
 
@@ -432,7 +433,7 @@ async function attempt(batch: Batch, planned: Planned, runDir: string, label: st
       mirror: batch.mirrorPaths.get(planned.task.repo)!,
       workDir: batch.work,
       comments: path.join(FROZEN_COMMENTS, planned.task.repo),
-      prepared: preparedFor(batch, planned.task),
+      prepared: loop?.prepared ?? preparedFor(batch, planned.task),
       warmup: warmupFor(batch, planned),
       keep: args.keep!,
       loop,
@@ -543,21 +544,33 @@ function selectedPairs(set: NotesSet): NotesSet {
 }
 
 /** A loop run's checkout, and for a writer in the notes arm where its notes are frozen. */
-function loopSpecFor(work: string, set: NotesSet, run: LoopRun, harness: HarnessName): LoopSpec {
+/**
+ * A loop run's checkout, and for a writer in the notes arm where its notes are frozen. With
+ * --carry, that writer's work is committed for its readers, and every reader of the repetition
+ * starts from that commit in both arms.
+ */
+function loopSpecFor(batch: Batch, set: NotesSet, run: LoopRun): LoopSpec {
+  const { work, agent } = batch;
   const agentNotes = set.taskFile.repos[run.task.repo]!.agentNotes ?? [];
   const agentsMd = agentsMdFor(run.arm, agentNotes, set.prepend);
-  const runDir = loopRunDir(work, harness, run);
-  if (run.arm === "bare") return { ...loopLabel(run), runDir, checkout: { agentsMd } };
-  const notes = notesDir(work, harness, run.writer, run.rep);
+  const label = { ...loopLabel(run), runDir: loopRunDir(work, agent.harness, run) };
+  const carried = `${run.writer}-${run.rep}`;
+  const prepared = args.carry && run.role === "reader" ? { ...preparedFor(batch, run.task)!, taskId: carried } : undefined;
+  if (run.arm === "bare") return { ...label, checkout: { agentsMd }, prepared };
+  const notes = notesDir(work, agent.harness, run.writer, run.rep);
   // Cairn's Claude Code hook syncs after every edit, as it would for the agent in the product.
-  const hooks = harness === "claude" ? ["claude-code"] : [];
-  if (run.role === "writer") return { ...loopLabel(run), runDir, checkout: { agentsMd, cairn: { hooks } }, freezeTo: notes };
-  return { ...loopLabel(run), runDir, checkout: { agentsMd, cairn: { hooks, sidecars: notes } } };
+  const hooks = agent.harness === "claude" ? ["claude-code"] : [];
+  if (run.role === "reader") return { ...label, checkout: { agentsMd, cairn: { hooks, sidecars: notes } }, prepared };
+  const carry = args.carry ? { mirror: batch.mirrorPaths.get(run.task.repo)!, branch: preparedBranch(carried, "none") } : undefined;
+  return { ...label, checkout: { agentsMd, cairn: { hooks } }, freezeTo: notes, carry };
 }
 
-/** Whether a reader in the notes arm must wait: the writer it takes its notes from has no result yet. */
+/**
+ * Whether a reader must wait because the writer in the notes arm it takes from has no result
+ * yet: a reader in the notes arm takes its notes, and with --carry any reader takes its work.
+ */
 function waitsForWriter(work: string, set: NotesSet, run: LoopRun, harness: HarnessName): boolean {
-  if (run.role !== "reader" || run.arm !== "notes") return false;
+  if (run.role !== "reader" || (run.arm !== "notes" && !args.carry)) return false;
   const task = set.taskFile.tasks.find((t) => t.id === run.writer)!;
   const writerRun: LoopRun = { task, role: "writer", arm: "notes", writer: run.writer, rep: run.rep };
   return !existsSync(path.join(loopRunDir(work, harness, writerRun), "result.json"));
@@ -590,7 +603,7 @@ async function loop(): Promise<void> {
 
   let providerFailures = 0;
   for (const [i, run] of queue.entries()) {
-    const spec = loopSpecFor(work, set, run, agent.harness);
+    const spec = loopSpecFor(batch, set, run);
     const label = `[${i + 1}/${queue.length}] ${agent.harness} ${run.task.id} ${run.role} ${run.arm}-${run.rep}`;
     if (existsSync(path.join(spec.runDir, "result.json"))) continue;
     if (stopAt && new Date() >= stopAt) {
