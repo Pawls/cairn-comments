@@ -44,6 +44,14 @@ export function lastAgentContext(calls: LoggedCall[]): number {
   return last ? contextOf(last.usage) : 0;
 }
 
+/** See `RunMetrics.grownTokens`. */
+function grownTokens(calls: LoggedCall[]): number {
+  const usages = calls.filter((call) => call.response && isAgentCall(call)).map((call) => call.response!.usage);
+  let grown = 0;
+  for (let i = 1; i < usages.length; i++) grown += Math.max(0, contextOf(usages[i]!) - contextOf(usages[i - 1]!));
+  return grown + (usages.at(-1)?.output ?? 0);
+}
+
 /** Every input token: uncached, read from cache, and written to it. For one call, its context. */
 export function contextOf(usage: Usage): number {
   return usage.input + usage.cacheRead + usage.cacheWrite;
@@ -67,6 +75,12 @@ export interface RunMetrics {
   firstCallContext: number;
   /** The context of the probe's last agent call; less the first call's, it is the context the run added. */
   finalContext: number;
+  /**
+   * The context the probe's agent calls grew by, call over call (a compaction's fall is skipped,
+   * the growth before and after it counted), plus the last call's output, which no later call
+   * carries. Absent in results written before it existed.
+   */
+  grownTokens?: number;
   /** Calls to the run's own model. */
   turns: number;
   tokens: Usage;
@@ -110,6 +124,7 @@ export function runMetrics(log: LoggedCall[], options: { model: string; agentDir
     calls: responses.length,
     firstCallContext: firstAgentContext(ownCalls),
     finalContext: lastAgentContext(ownCalls),
+    grownTokens: grownTokens(ownCalls),
     turns: ownModel.length,
     tokens,
     toolCalls,

@@ -257,11 +257,11 @@ interval and D7's decision rule; the writers' costs; and the whole loop per pair
 ## Results
 
 **Notes one agent leaves for the next (2026-10-24, Swift 1.5 Qwen3.8-27B on Claude Code): they
-cost the next agent tokens.** A writer did a real task in Cairn's notes mode and its work was
+saved the next agent nothing.** A writer did a real task in Cairn's notes mode and its work was
 committed; a fresh reader then did a task on the same functions with the writer's notes placed,
-or without them. Over 8 readers × 2 repetitions, the notes readers spent 1.12× the tokens (95%
-interval 1.01 to 1.22), took 1.26× the wall time (0.99 to 1.54), and passed 14 of 16 against 15
-of 16. One water pair went the other way (0.85 and 0.88, and one run the notes got right where
+or without them. Over 8 readers × 2 repetitions, the notes readers spent 1.06× the tokens counted
+once (95% interval 0.97 to 1.15; 1.12× on D4b's column, which counts output twice), took 1.26×
+the wall time (0.99 to 1.54), and passed 14 of 16 against 15 of 16. One water pair went the other way (0.85 and 0.88, and one run the notes got right where
 bare did not); one felling note misled its reader into a failure. Numbers and causes:
 [plans/benchmark-deep-context.md § D7](plans/benchmark-deep-context.md#d7).
 

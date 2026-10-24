@@ -200,10 +200,14 @@ interface LoopMeasure {
 }
 
 const TOKENS: LoopMeasure = { label: "Tokens (added + output)", value: addedTokens };
+// D7's decision rule names TOKENS (D4b's column), which counts all but the last call's output
+// twice; GROWN counts each token once and sees past a compaction.
+const GROWN: LoopMeasure = { label: "Tokens (grown + last output)", value: (r) => r.metrics.grownTokens ?? Number.NaN };
 const WALL: LoopMeasure = { label: "Wall (s)", value: (r) => r.wallMs / 1000 };
 
 const MEASURES: LoopMeasure[] = [
   TOKENS,
+  GROWN,
   { label: "Input tokens, all", value: (r) => contextOf(r.metrics.tokens) },
   { label: "Output", value: (r) => r.metrics.tokens.output },
   WALL,
@@ -228,7 +232,9 @@ function valuesByTask(runs: RunResult[], measure: LoopMeasure): Map<string, Reco
   const tasks = new Map<string, Record<NotesArm, number[]>>();
   for (const [task, taskRuns] of groupBy(runs, (r) => r.task)) {
     const arms = byArm(taskRuns);
-    if (arms.bare.length && arms.notes.length) tasks.set(task, { bare: arms.bare.map(measure.value), notes: arms.notes.map(measure.value) });
+    const values = { bare: arms.bare.map(measure.value), notes: arms.notes.map(measure.value) };
+    // A ratio needs runs in both arms and a mean above zero in each (no Infinity, no log of 0).
+    if (values.bare.length && values.notes.length && mean(values.bare) > 0 && mean(values.notes) > 0) tasks.set(task, values);
   }
   return tasks;
 }
@@ -320,11 +326,17 @@ function overallSection(title: string, readers: RunResult[]): string[] {
     const { value, interval, tasks } = found;
     return `- ${measure.label}: ${ratio(value)} (95% interval ${ratio(interval.low)} to ${ratio(interval.high)}, ${tasks} readers)`;
   });
-  const tokens = ratios.find(({ measure }) => measure === TOKENS)!.found;
   const arms = byArm(readers);
+  // The pass rates the rule compares count only readers with runs in both arms, like the ratios.
+  const matched = byArm(readers.filter((r) => arms.bare.some((b) => b.task === r.task) && arms.notes.some((n) => n.task === r.task)));
   const passRate = (runs: RunResult[]) => runs.filter((r) => r.grade.passed).length / runs.length;
-  const rates = { bare: passRate(arms.bare), notes: passRate(arms.notes) };
-  const decision = tokens ? `Decision rule on the readers' tokens: the claim **${verdict(tokens.value, tokens.interval, rates)}**.` : "";
+  const rates = { bare: passRate(matched.bare), notes: passRate(matched.notes) };
+  const decide = (measure: LoopMeasure) => {
+    const found = ratios.find((entry) => entry.measure === measure)!.found;
+    return found ? `the claim **${verdict(found.value, found.interval, rates)}** on ${measure.label.toLowerCase()}` : undefined;
+  };
+  const decisions = [decide(TOKENS), decide(GROWN)].filter(Boolean);
+  const decision = decisions.length ? `Decision rule: ${decisions.join("; ")}.` : "";
   return [
     `## ${title}`,
     "",
@@ -345,6 +357,10 @@ export function renderLoopReport(results: RunResult[], variants: Record<string, 
   const carried = loop.filter((r) => r.loop!.carry).length;
   if (carried && carried < loop.length) {
     throw new Error(`${carried} of ${loop.length} loop results ran with --carry; report the two designs from separate work dirs`);
+  }
+  for (const key of ["harness", "model"] as const) {
+    const values = new Set(loop.map((r) => r[key]));
+    if (values.size > 1) throw new Error(`loop results from more than one ${key} (${[...values].join(", ")}); report each from its own work dir`);
   }
   const writers = loop.filter((r) => r.loop!.role === "writer");
   const readers = loop.filter((r) => r.loop!.role === "reader");

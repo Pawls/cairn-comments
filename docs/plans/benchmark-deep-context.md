@@ -10,7 +10,8 @@
 > and nothing runs against the model server until D4's gates pass.
 > **Lanes:** one lane from here: D4→D5→D6 (D2 and D3 ran as parallel lanes; D4a joined them)
 > **Next:** the owner's call. [D7](#d7) ran 2026-10-24 and its claim failed: a writer's notes
-> cost the next agent 12% more tokens on these tasks and this model. D5 and D6 stay on hold.
+> saved the next agent nothing (tokens 1.06 to 1.12 of bare) on these tasks and this model.
+> D5 and D6 stay on hold.
 > **Branch:** `benchmark-deep-context` for this plan; lane branches `bench/<slice>`.
 
 - [~~D1 — The claim, the conditions, and the gates~~ — SHIPPED 2026-10-14](#d1)
@@ -451,7 +452,7 @@ so the matrix cannot detect the claim as built (D4, D4b).
 
 ## D7 — Notes one agent leaves for the next · Opus 5.5 / high {#d7}
 
-**Status:** Done 2026-10-24: the claim fails (notes cost readers 12% more tokens; results at the
+**Status:** Done 2026-10-24: the claim fails (notes saved readers nothing; results at the
 end of this slice). Harness: `loop` and `loop-report` ([../benchmark.md](../benchmark.md#the-notes-loop)).
 
 **Revision (owner, 2026-10-24), which replaces the four B arms and the model below:**
@@ -619,11 +620,15 @@ reads (Claude Code's `CLAUDE.local.md`; others differ). Either becomes a v2 slic
       `C:\cbn\aside\comfyui-overlap` and rerun
 - [x] Apply the decision rule and answer the owner's question (below)
 
-**Result: the claim fails.** Over the 8 readers, notes / bare tokens (context added past the
-first call, plus output, as in D4b) has a geometric mean of **1.12**, 95% interval **1.01 to
-1.22**: its lower end is above 0.80. The notes readers did not finish sooner (wall 1.26, 0.99
-to 1.54) and did not fail less: 14 of 16 passed against 15 of 16. They read more (all input
-tokens 1.60, tool calls 1.36). Full tables: `C:\cbn\loop-report.md`.
+**Result: the claim fails: no saving.** Over the 8 readers, notes / bare tokens (context added
+past the first call, plus output, as in D4b) has a geometric mean of **1.12**, 95% interval
+**1.01 to 1.22**. That column counts every call's output but the last twice, once as output and
+once in the next call's context. On tokens counted once (`grownTokens`: each agent call's growth
+over the last, plus the last call's output), it is **1.06**, interval **0.97 to 1.15**. Both lower
+ends are far above 0.80, so on either the notes saved nothing. The notes readers did not finish
+sooner (wall 1.26, 0.99 to 1.54) and did not fail less: 14 of 16 passed against 15 of 16. With
+--carry, every pair has a placed note in a reader's module (`notes-gate.ts --carry`: 4 of 4).
+No run compacted or used a subagent. Full tables: `C:\cbn\loop-report.md`.
 
 | Reader | Variant | Passed, bare / notes | Tokens, bare / notes (ratio) | Wall s, bare / notes (ratio) |
 | --- | --- | --- | --- | --- |
@@ -662,10 +667,13 @@ say the notes helped the writer.
 
 **Why, as far as the transcripts show:**
 
-1. **Placed notes are read whether or not they bear on the task.** A writer left 1 to 39 notes,
-   some in its own scratch files and tests, and every one placed in a file the reader opens
-   costs the reader context. The felling writer's notes sat in `scratch/verify_tree_at.py` as
-   well as `felling.py`.
+1. **Reading the notes cost little; the reader's own work around them did.** A reader read 350
+   to 2,600 bytes of notes per run (about 100 to 700 tokens), far less than the gap. The notes
+   readers made more tool calls (1.36) and, told by the prepend to leave notes too, wrote their
+   own: up to 14,313 output tokens on `canopy-reach-grows-with-height` rep 1, about 700 to 1,400
+   elsewhere. That writing is in the notes arm's tokens, by the owner's two-case design. Many
+   notes sat where a reader gains nothing: 31 of the portal writer's 39 were in its test files,
+   and the felling writer's in `scratch/verify_tree_at.py` as well as `felling.py`.
 2. **Notes are written about the writer's own code**, not the shared function, even after the
    prepend asked for the reverse (gate GN, above). A note true of the writer's new search reads
    as a rule about the module to the next agent: the canopy failure.
@@ -673,5 +681,9 @@ say the notes helped the writer.
    they needed in a few calls; a note can only save searching that happens.
 
 **Not tested:** a reader deep in a long session (every reader here is fresh), any model but this
-one, and notes chosen per task (Cairn places every note in every opened file). 10 of the 15
+one, notes chosen per task (Cairn places every note in every opened file), a reader that only
+reads notes (here it writes them too), and prompts that do not name the function (most did, so
+there was little searching for a note to save). With 8 readers on one repository, one model and
+tasks written by agents, this is a negative result for this setup, not evidence that agent notes
+cannot help. 10 of the 15
 felling notes of rep 2 did not place on the carried commit; why is not yet read.

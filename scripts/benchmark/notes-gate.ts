@@ -1,5 +1,5 @@
 /**
- * Gate GN of the notes loop (docs/plans/benchmark-deep-context.md § D7), with no model: for each
+ * Whether a writer's notes reach its readers, with no model (the gate in docs/plans/benchmark-deep-context.md § D7): for each
  * writer repetition that has frozen notes, a reader's checkout is made with them placed, and the
  * notes Cairn placed are counted per file against the readers' modules.
  *
@@ -60,4 +60,4 @@ for (const pair of set.pairs) {
     rmSync(runDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
   }
 }
-console.log(`GN: ${passing} of ${set.pairs.length} pairs have a placed note in a reader's module`);
+console.log(`${passing} of ${set.pairs.length} pairs have a placed note in a reader's module`);
