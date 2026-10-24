@@ -13,8 +13,11 @@ sits on and marks a note `[stale?]` when that code has changed since the note wa
 ### Leave notes as you work
 
 When you work something out that the code does not make obvious, write it down where you
-learned it, right away, before moving on. There is no limit on how many notes you write.
-Worth recording:
+learned it, right away, before moving on. The notes worth most sit on code that was here
+before you: the functions you had to read and trace to do your task, which the next agent
+will have to read too. Write those notes on that code as soon as you understand it, before
+you start your own change; a note only on code you add tells the next agent much less.
+There is no limit on how many notes you write. Worth recording:
 
 - what a function guarantees or assumes, and what breaks if a caller ignores it;
 - the order of its effects, its edge cases, or a result you had to trace by hand;
