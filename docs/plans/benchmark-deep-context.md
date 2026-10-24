@@ -614,6 +614,23 @@ reads (Claude Code's `CLAUDE.local.md`; others differ). Either becomes a v2 slic
       `NOTES.md` renderer are dropped
 - [x] Harness: the report (per-reader ratios, geometric means with intervals, the decision
       rule, the writers' cost, the whole loop); tests against the stand-in and Cairn
-- [ ] Night run: A repetition 1, gate GN, then the rest of the matrix
+- [ ] Run (carry, started 2026-10-24 04:40 in `C:\cbn`, log `C:\cbn\carry.log`): 40 runs
+      (4 pairs × writer notes + 2 readers × 2 arms, × 2 reps), then the 4 writers in `bare`,
+      then `loop-report`; the batch appends `done` to the log when all three are finished
+- [ ] Rerun `fell-touching-crowns` notes rep 2 (run dir
+      `C:\cbn\loop\claude\fell-touching-crowns\f8c4edb74997`): its last call, 10:50–10:51:30, overlapped
+      ComfyUI starting on GPU 0 and decoded at about 54 tokens/s against 73 earlier in the run.
+      Tokens and grade are unaffected, wall time maybe 20 s. Move the dir to `C:\cbn\aside\`
+      and run `loop ... --carry --reps 2 --bare-writers 0 --only tree-holding-foliage`
 - [ ] Apply the decision rule, write the numbers here and in
-      [../benchmark.md](../benchmark.md#results)
+      [../benchmark.md](../benchmark.md#results), and answer the owner's question: did the
+      notes reader use fewer tokens, finish sooner, or fail less (or pass where bare failed),
+      per variant (`probes`, `hard`)
+- **Note (from the run):** observations to check against the full numbers.
+  `drain-into-shaft` rep 1: bare answered `drained=8` (wrong), notes `drained=2` (right),
+  with the writer's one note on `solve_drain` placed. `canopy-reach-grows-with-height` rep 1:
+  notes failed after 40.8 min (bare passed in 13.1); the writer's note "budgeted by visits, not
+  reach" (on its own `tree_at` search) appears to have led the reader to unbound
+  `_claim_canopy`, failing `test_a_short_neighbour_cannot_claim_past_its_own_reach`: a note
+  that misled. `drain-reports-ragged-layer` notes rep 2 failed (not yet read). Notes readers
+  mostly read more context than bare ones, since placed notes include a writer's scratch files.
