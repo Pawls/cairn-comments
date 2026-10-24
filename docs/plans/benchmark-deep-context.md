@@ -478,6 +478,24 @@ the owner revised the arms and the model the same night (below). The runs are ne
   the writer runs. Writer tasks avoid editing the shared function: the writer's code changes
   are discarded, and a note inside a function it changed places stale, or not at all, on the
   original code.
+
+**Gate GN failed twice; the run switched to `--carry` (2026-10-24, 04:50).** With the prepend as
+drafted, the water and felling writers left 2 and 5 notes, every one on code they added (the
+new `scoop` and `tree_at`), so none placed on the original commit: GN 0 of 2. The prepend was
+revised once (it now asks for notes on the code read, before the change), and the water writer
+ran again: 3 notes, again all on its own code, 0 placed. The notes were good (one states which
+cells `solve_drain` keeps in a partly filled layer, with a worked case), but they sit where the
+writer worked, not where it read. Runs set aside in `C:\cbn\aside\prepend-v1` and
+`prepend-v2-nocarry`.
+
+So the discard-the-code design cannot test the loop with this model. `--carry` keeps the
+product's shape instead: the writer in `notes` commits its work (Cairn's clean filter strips
+the notes, as in any repository), and every reader of that repetition starts from the commit,
+in both arms. The arms then differ only in whether the writer's notes are placed. The writer
+in `bare` still runs, for the writer's cost, but its work is not carried. Each reader's
+hidden tests run on top of the writer's work, so a writer that broke something breaks it
+for both arms alike.
+
 **Touches:** `scripts/benchmark/` (a note-writing session, four arms, a notes renderer, the
 report), `benchmark/deep-tasks.json` (seven sessions that come first), the work directory.
 **After:** D4b.
