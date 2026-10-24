@@ -452,7 +452,32 @@ so the matrix cannot detect the claim as built (D4, D4b).
 
 ## D7 — Notes one agent leaves for the next · Opus 5.5 / high {#d7}
 
-**Status:** Planned 2026-10-21; the runs wait for the night. Nothing below has run.
+**Status:** Harness built 2026-10-24 (`loop` and `loop-report`, [../benchmark.md](../benchmark.md#the-notes-loop));
+the owner revised the arms and the model the same night (below). The runs are next.
+
+**Revision (owner, 2026-10-24), which replaces the four B arms and the model below:**
+
+- **Two cases.** Case 1 (`bare`): writer and reader both get the test-command AGENTS.md only,
+  no prepend, no Cairn; neither leaves notes. Case 2 (`notes`): both get the prepend and
+  Cairn; the reader starts with the writer's notes placed. `inline-plain` and `markdown` are
+  dropped for now. The writer in `bare` is what D7 called "A without the prepend", so the
+  writer's cost and the whole loop's come out of the same runs.
+- **Model:** `swift-qwen3.8-27b-dflash2` (Swift 1.5, Qwen3.8-27B, DFlash2 drafter) on the
+  llama.cpp router at `http://127.0.0.1:8410`, not Strata. Measured: an 18,050-token first
+  call prefilled in 14 s (about 1,300 tokens/s). Claude Code 2.1.310 sends its environment as
+  a `system` message mid-conversation, which the Qwen template refuses (HTTP 500); the proxy
+  now folds such messages into the user turn as a system reminder, for local servers only.
+- **Success, as the owner put it:** the notes reader uses fewer tokens, finishes sooner, or
+  makes fewer mistakes, or passes where the bare reader fails; the report says which. With
+  three measures, one of them favoring notes by chance is likely, so each is reported with
+  its interval, and only an interval below 1.0 counts as a win. The token rule below stays
+  the primary decision.
+- **Variants.** The writers are new tasks (four, one per module group: water, felling,
+  navgrid, portal). Each writer's notes go to two readers: a D4b probe (variant `probes`) and
+  a new, harder change task on the same function (variant `hard`), so both variants share
+  the writer runs. Writer tasks avoid editing the shared function: the writer's code changes
+  are discarded, and a note inside a function it changed places stale, or not at all, on the
+  original code.
 **Touches:** `scripts/benchmark/` (a note-writing session, four arms, a notes renderer, the
 report), `benchmark/deep-tasks.json` (seven sessions that come first), the work directory.
 **After:** D4b.
