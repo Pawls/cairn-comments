@@ -23,6 +23,7 @@ import type { PreparedTask } from "./prepare.ts";
 import { startRecordingProxy } from "./proxy.ts";
 import { answersByReading, type EditTask, type RepoSpec, type Task, type WarmupChain } from "./tasks.ts";
 import { ensureWarmup, refuseUnfinished, restoreWarmup } from "./warmup.ts";
+import { freezeNotes, loopLabel, notesGiven, type LoopRecord, type LoopSpec } from "./notes.ts";
 import { ARMS, git, isolatedEnv, neutralName, placedCommentBytes, removeCheckouts, setUpCheckout, type Arm } from "./workspace.ts";
 
 export type Depth = "fresh" | "deep";
@@ -42,6 +43,8 @@ export interface RunSpec extends AgentOptions {
   prepared?: PreparedTask;
   /** For a deep run, the chain the probe forks from, and the chain's arm commits. */
   warmup?: { chain: WarmupChain; prepared?: PreparedTask };
+  /** A notes-loop run (notes.ts): its checkout, its directory, and where a writer's notes are frozen. */
+  loop?: LoopSpec;
 }
 
 export interface Grade {
@@ -78,6 +81,8 @@ export interface RunResult {
   commentBytes: Record<string, number>;
   /** Of those bytes, the ones in files the agent read. A ranged read counts the whole file. */
   commentBytesRead: number;
+  /** A notes-loop run's role and arm, and the notes it was given or left. */
+  loop?: LoopRecord;
 }
 
 export function depthOf(result: RunResult): Depth {
@@ -168,7 +173,8 @@ function committedIn(dir: string, env: Record<string, string>): string {
 
 /** A new checkout in the run's own directory, and a new session. */
 function freshStart(spec: RunSpec, runDir: string, env: Record<string, string>): Start {
-  const checkout = setUpCheckout({ ...spec, dir: runDir, start: spec.task.start, setup: spec.repo.setup, env });
+  const notes = spec.loop?.checkout;
+  const checkout = setUpCheckout({ ...spec, dir: runDir, start: spec.task.start, setup: spec.repo.setup, env, notes });
   return { ...checkout, homeDir: runDir, committed: committedIn(runDir, env) };
 }
 
@@ -206,11 +212,12 @@ function probeTotals(harness: HarnessName, start: Start, runDir: string): Harnes
 
 export async function runOne(spec: RunSpec): Promise<RunResult> {
   const chain = spec.warmup?.chain.id;
-  const runDir = runDirFor({ ...spec, chain: spec.warmup?.chain });
+  const runDir = spec.loop?.runDir ?? runDirFor({ ...spec, chain: spec.warmup?.chain });
   mkdirSync(runDir, { recursive: true });
   const env = isolatedEnv(path.join(runDir, "state"), path.join(spec.workDir, "cli-home"));
   const logFile = path.join(runDir, "calls.jsonl");
   const start = spec.warmup ? await deepStart(spec, spec.warmup, logFile, env) : freshStart(spec, runDir, env);
+  const given = spec.loop && notesGiven(spec.loop, runDir);
 
   const proxy = await startRecordingProxy(spec.provider, logFile, "probe");
   const startedAt = new Date();
@@ -226,6 +233,7 @@ export async function runOne(spec: RunSpec): Promise<RunResult> {
   // On a failure there is no result.json, so the next batch runs this one again; the checkouts stay for a look.
   refuseFailedSession(probeCalls(log), `task ${spec.task.id}`);
   const metrics = runMetrics(log, { model: spec.model, agentDir: start.agentDir });
+  const left = spec.loop && freezeNotes(spec.loop, start.agentDir, runDir, env);
   const result: RunResult = {
     harness: spec.harness,
     task: spec.task.id,
@@ -245,6 +253,7 @@ export async function runOne(spec: RunSpec): Promise<RunResult> {
     harnessTotals: probeTotals(spec.harness, start, runDir),
     commentBytes: start.commentBytes,
     commentBytesRead: metrics.filesRead.reduce((sum, file) => sum + (start.commentBytes[file] ?? 0), 0),
+    loop: spec.loop && { ...loopLabel(spec.loop), given, left },
   };
   writeFileSync(path.join(runDir, "result.json"), JSON.stringify(result, null, 2));
   // A deep run's checkouts are its warm-up's, so its own directory has none to remove.

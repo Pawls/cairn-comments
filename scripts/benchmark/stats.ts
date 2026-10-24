@@ -113,3 +113,32 @@ export function shuffled<T>(items: T[], seed: number): T[] {
   }
   return out;
 }
+
+export function geomean(values: number[]): number {
+  return Math.exp(values.reduce((sum, v) => sum + Math.log(v), 0) / values.length);
+}
+
+const meanOf = (values: number[]) => values.reduce((a, b) => a + b, 0) / values.length;
+
+/**
+ * A 95% percentile bootstrap interval for the geometric mean over tasks of the ratio of arm
+ * means (treatment / baseline). Like `bootstrapMedianChange`, each iteration resamples every
+ * task's runs within each arm, holding the task set fixed. Every task needs runs in both arms.
+ */
+export function bootstrapGeomeanRatio(
+  byTask: Map<string, Record<string, number[]>>,
+  baselineArm: string,
+  treatmentArm: string,
+  options: { iterations: number; seed: number },
+): Interval {
+  const random = seededRandom(options.seed);
+  const means: number[] = [];
+  for (let i = 0; i < options.iterations; i++) {
+    const ratios = [...byTask.values()].map(
+      (arms) => meanOf(resample(arms[treatmentArm]!, random)) / meanOf(resample(arms[baselineArm]!, random)),
+    );
+    means.push(geomean(ratios));
+  }
+  means.sort((a, b) => a - b);
+  return { low: quantile(means, 0.025), high: quantile(means, 0.975) };
+}

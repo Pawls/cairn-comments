@@ -4,11 +4,11 @@
  */
 import { execFileSync, execSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { HarnessName } from "./harnesses.ts";
-import { preparedBranch, type PreparedTask } from "./prepare.ts";
+import { COMMIT_MESSAGE, preparedBranch, type PreparedTask } from "./prepare.ts";
 import { expandCommand, type RepoSpec } from "./tasks.ts";
 
 export type Arm = "none" | "comments";
@@ -127,6 +127,16 @@ export interface CheckoutOptions {
   env: Record<string, string>;
   /** The task's arm commits (prepare.ts); both arms are then plain worktrees, with no Cairn. */
   prepared?: PreparedTask;
+  /** For a prepared checkout in the notes loop (notes.ts): its own AGENTS.md, and Cairn. */
+  notes?: NotesCheckout;
+}
+
+/** How a notes-loop run's prepared checkout differs from the plain one. */
+export interface NotesCheckout {
+  /** Replaces AGENTS.md in the clone's one commit. */
+  agentsMd: string;
+  /** Cairn in private mode, with these frozen sidecars placed (none for a writer's empty store). */
+  cairn?: { sidecars?: string; hooks: string[] };
 }
 
 /**
@@ -150,6 +160,7 @@ export function checkoutArm(options: CheckoutOptions): string {
     const head = git(repo, options.env, "rev-parse", "HEAD").trim();
     git(repo, options.env, "update-ref", "--no-deref", "HEAD", head);
     git(repo, options.env, "branch", "--quiet", "--delete", "--force", branch);
+    if (options.notes) return notesWorktree(repo, agent, options.notes, options.env);
     git(repo, options.env, "worktree", "add", "--quiet", "-b", "bench", agent);
     return agent;
   }
@@ -166,6 +177,41 @@ export function checkoutArm(options: CheckoutOptions): string {
   return agent;
 }
 
+function gitWithInput(cwd: string, env: Record<string, string>, input: string, ...args: string[]): string {
+  return execFileSync("git", args, { cwd, env, input, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }); // NOSONAR: git comes from PATH, as for any tool that drives git
+}
+
+/**
+ * Swaps AGENTS.md in the clone's one commit for `text`, keeping the commit parentless with the
+ * same message, author and dates, so the agent sees an AGENTS.md that was always there.
+ */
+function recommitAgentsMd(repo: string, env: Record<string, string>, text: string): void {
+  const blob = gitWithInput(repo, env, text, "hash-object", "-w", "--stdin").trim();
+  const entries = git(repo, env, "ls-tree", "-z", "HEAD").split("\0").filter(Boolean);
+  const replaced = entries.map((entry) => (entry.endsWith("\tAGENTS.md") ? `100644 blob ${blob}\tAGENTS.md` : entry));
+  if (!entries.some((entry) => entry.endsWith("\tAGENTS.md"))) replaced.push(`100644 blob ${blob}\tAGENTS.md`);
+  const tree = gitWithInput(repo, env, replaced.map((entry) => `${entry}\0`).join(""), "mktree", "-z").trim();
+  // The author is isolatedEnv's, as it was when prepare.ts made the commit.
+  const [authorDate, committerDate] = git(repo, env, "show", "-s", "--format=%aI%n%cI", "HEAD").trim().split("\n");
+  const commitEnv = { ...env, GIT_AUTHOR_DATE: authorDate!, GIT_COMMITTER_DATE: committerDate! };
+  const commit = git(repo, commitEnv, "commit-tree", tree, "-m", COMMIT_MESSAGE).trim();
+  git(repo, env, "update-ref", "--no-deref", "HEAD", commit);
+}
+
+/** The agent's worktree for a notes-loop run, with its AGENTS.md and, in the notes arm, Cairn. */
+function notesWorktree(repo: string, agent: string, notes: NotesCheckout, env: Record<string, string>): string {
+  recommitAgentsMd(repo, env, notes.agentsMd);
+  if (!notes.cairn) {
+    git(repo, env, "worktree", "add", "--quiet", "-b", "bench", agent);
+    return agent;
+  }
+  const hookArgs = notes.cairn.hooks.length ? ["--hooks", notes.cairn.hooks.join(",")] : [];
+  cairn(repo, env, "init", "--private", ...hookArgs);
+  if (notes.cairn.sidecars) cpSync(notes.cairn.sidecars, path.join(repo, PRIVATE_STORE), { recursive: true });
+  cairn(repo, env, "worktree", "add", "-b", "bench", agent);
+  return agent;
+}
+
 export interface SetUpOptions {
   harness: HarnessName;
   mirror: string;
@@ -176,6 +222,7 @@ export interface SetUpOptions {
   /** Frozen sidecars for the comments arm. */
   comments: string;
   prepared?: PreparedTask;
+  notes?: NotesCheckout;
   setup: string[];
   env: Record<string, string>;
 }
@@ -196,9 +243,11 @@ export function setUpCheckout(options: SetUpOptions): { agentDir: string; commen
     hooks: options.harness === "claude" && !prepared ? ["claude-code"] : [],
     env,
     prepared,
+    notes: options.notes,
   });
   runSetup(options.setup, agentDir, env, path.join(dir, "setup.log"));
-  return { agentDir, commentBytes: placedCommentBytes(options.arm, dir, env, prepared) };
+  const bytes = options.notes?.cairn ? commentBytes(dir, env) : placedCommentBytes(options.arm, dir, env, prepared);
+  return { agentDir, commentBytes: bytes };
 }
 
 /** The bytes the comments add to each file of the checkout in `dir`; none in the `none` arm. */
@@ -217,6 +266,37 @@ function sidecarSources(store: string, prefix = ""): string[] {
     else if (entry.name.endsWith(".md")) sources.push(relative.slice(0, -".md".length));
   }
   return sources;
+}
+
+/** Entries per source file in the sidecars under `store`: each entry is one `## <id>` heading. */
+export function entriesBySource(store: string): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const source of sidecarSources(store)) {
+    counts[source] = readFileSync(path.join(store, `${source}.md`), "utf8").match(/^## /gm)?.length ?? 0;
+  }
+  return counts;
+}
+
+/** A placed Python comment with its id, and one placed behind the stale tag (design.md § Staleness). */
+const PLACED_ID = /#~[0-9a-z]{4}(?= |$)/gm;
+const PLACED_STALE = /#~[0-9a-z]{4} \[stale\?\]/g;
+
+/**
+ * Per file with a sidecar in the clone's private store, the comments the agent worktree in
+ * `runDir` shows, and how many in all were placed stale. Python's `#~` sigil only.
+ */
+export function placedComments(runDir: string): { placed: Record<string, number>; stale: number } {
+  const placed: Record<string, number> = {};
+  let stale = 0;
+  for (const source of sidecarSources(path.join(runDir, "repo", PRIVATE_STORE))) {
+    const working = path.join(runDir, "agent", source);
+    if (!existsSync(working)) continue;
+    const text = readFileSync(working, "utf8");
+    const count = text.match(PLACED_ID)?.length ?? 0;
+    if (count) placed[source] = count;
+    stale += text.match(PLACED_STALE)?.length ?? 0;
+  }
+  return { placed, stale };
 }
 
 /**

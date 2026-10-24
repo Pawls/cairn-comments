@@ -44,6 +44,19 @@ import { findPython, prepareTask, readPrepared, type PreparedTask } from "./prep
 import { ProviderError, readLog, runAgent, type AgentOptions } from "./agent.ts";
 import { providerFailed, runMetrics } from "./metrics.ts";
 import { startRecordingProxy } from "./proxy.ts";
+import {
+  agentsMdFor,
+  loadNotesSet,
+  loopLabel,
+  loopRunDir,
+  notesDir,
+  planLoop,
+  renderLoopReport,
+  type LoopRun,
+  type LoopSpec,
+  type NotesSet,
+  type Role,
+} from "./notes.ts";
 import { renderReport } from "./report.ts";
 import { depthOf, legacyRunDirs, runDirFor, runOne, type RunResult } from "./runner.ts";
 import { nextOccurrence, planRuns, shard, unforked, warmupOf, type Depths, type Planned } from "./schedule.ts";
@@ -63,6 +76,7 @@ import {
 import {
   ARMS,
   cairn,
+  entriesBySource,
   checkoutArm,
   ensureMirror,
   freezeComments,
@@ -98,6 +112,9 @@ const { values: args, positionals } = parseArgs({
     "pi-cli": { type: "string" },
     provider: { type: "string", default: ANTHROPIC_API },
     "stop-at": { type: "string" },
+    "bare-writers": { type: "string", default: "1" },
+    "writers-only": { type: "boolean", default: false },
+    "writer-timeout": { type: "string" },
   },
 });
 
@@ -262,16 +279,10 @@ function prepare(): void {
   }
 }
 
-/** Total entries over the sidecars under `dir`: each entry is one `## <id>` heading. */
+/** Total entries over the sidecars under `dir`. */
 function countEntries(dir: string): { sidecars: number; entries: number } {
-  let sidecars = 0;
-  let entries = 0;
-  for (const entry of readdirSync(dir, { withFileTypes: true, recursive: true })) {
-    if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
-    sidecars++;
-    entries += readFileSync(path.join(entry.parentPath, entry.name), "utf8").match(/^## /gm)?.length ?? 0;
-  }
-  return { sidecars, entries };
+  const counts = Object.values(entriesBySource(dir));
+  return { sidecars: counts.length, entries: counts.reduce((sum, n) => sum + n, 0) };
 }
 
 async function annotate(): Promise<void> {
@@ -405,7 +416,7 @@ function warmupFor(batch: Batch, planned: Planned): { chain: WarmupChain; prepar
  * Runs one planned run from nothing and logs its outcome. Returns whether the model server
  * failed it; any other error is the run's own and leaves only `error.txt`.
  */
-async function attempt(batch: Batch, planned: Planned, runDir: string, label: string): Promise<boolean> {
+async function attempt(batch: Batch, planned: Planned, runDir: string, label: string, loop?: LoopSpec): Promise<boolean> {
   rmSync(runDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
   try {
     const result = await runOne({
@@ -418,6 +429,7 @@ async function attempt(batch: Batch, planned: Planned, runDir: string, label: st
       prepared: preparedFor(batch, planned.task),
       warmup: warmupFor(batch, planned),
       keep: args.keep!,
+      loop,
     });
     log(`${label}: ${describeResult(result)}`);
     return false;
@@ -515,12 +527,95 @@ function report(): void {
   console.log(markdown);
 }
 
+/** The pairs --only names by writer, all of them when it is absent. */
+function selectedPairs(set: NotesSet): NotesSet {
+  const only = args.only?.split(",");
+  if (!only) return set;
+  const unknown = only.filter((id) => !set.pairs.some((pair) => pair.writer === id));
+  if (unknown.length) throw new Error(`--only names no pair's writer: ${unknown.join(", ")}`);
+  return { ...set, pairs: set.pairs.filter((pair) => only.includes(pair.writer)) };
+}
+
+/** A loop run's checkout, and for a writer in the notes arm where its notes are frozen. */
+function loopSpecFor(work: string, set: NotesSet, run: LoopRun, harness: HarnessName): LoopSpec {
+  const agentNotes = set.taskFile.repos[run.task.repo]!.agentNotes ?? [];
+  const agentsMd = agentsMdFor(run.arm, agentNotes, set.prepend);
+  const runDir = loopRunDir(work, harness, run);
+  if (run.arm === "bare") return { ...loopLabel(run), runDir, checkout: { agentsMd } };
+  const notes = notesDir(work, harness, run.writer, run.rep);
+  // Cairn's Claude Code hook syncs after every edit, as it would for the agent in the product.
+  const hooks = harness === "claude" ? ["claude-code"] : [];
+  if (run.role === "writer") return { ...loopLabel(run), runDir, checkout: { agentsMd, cairn: { hooks } }, freezeTo: notes };
+  return { ...loopLabel(run), runDir, checkout: { agentsMd, cairn: { hooks, sidecars: notes } } };
+}
+
+/** Whether the writer a reader in the notes arm takes its notes from has a result. */
+function writerFinished(work: string, set: NotesSet, run: LoopRun, harness: HarnessName): boolean {
+  const task = set.taskFile.tasks.find((t) => t.id === run.writer)!;
+  const writerRun: LoopRun = { task, role: "writer", arm: "notes", writer: run.writer, rep: run.rep };
+  return existsSync(path.join(loopRunDir(work, harness, writerRun), "result.json"));
+}
+
+async function loop(): Promise<void> {
+  const agent = agentOptions();
+  const work = workDir();
+  const set = selectedPairs(loadNotesSet(args.tasks!));
+  const roles: Role[] = args["writers-only"] ? ["writer"] : ["writer", "reader"];
+  const queue = planLoop(set, Number(args.reps), Number(args["bare-writers"]), roles);
+  const { taskFile } = set;
+  const repoNames = [...new Set(taskFile.tasks.map((t) => t.repo))];
+  await checkProvider(agent);
+  const batch: Batch = {
+    agent,
+    work,
+    taskFile,
+    mirrorPaths: mirrors(work, taskFile, repoNames, []),
+    prepared: loadPrepared(work, taskFile, taskFile.tasks),
+  };
+  const writerBatch = args["writer-timeout"] ? { ...batch, agent: { ...agent, timeoutMs: Number(args["writer-timeout"]) * 60_000 } } : batch;
+  const stopAt = args["stop-at"] ? nextOccurrence(args["stop-at"], new Date()) : undefined;
+  log(`loop: ${agent.harness} on ${agent.model}, ${queue.length} runs planned`);
+
+  let providerFailures = 0;
+  for (const [i, run] of queue.entries()) {
+    const spec = loopSpecFor(work, set, run, agent.harness);
+    const label = `[${i + 1}/${queue.length}] ${agent.harness} ${run.task.id} ${run.role} ${run.arm}-${run.rep}`;
+    if (existsSync(path.join(spec.runDir, "result.json"))) continue;
+    if (stopAt && new Date() >= stopAt) {
+      log(`stop time reached before ${label}`);
+      return;
+    }
+    if (run.role === "reader" && run.arm === "notes" && !writerFinished(work, set, run, agent.harness)) {
+      log(`${label}: skipped, its writer has no result yet`);
+      continue;
+    }
+    const runBatch = run.role === "writer" ? writerBatch : batch;
+    const planned: Planned = { task: run.task, arm: "none", rep: run.rep };
+    const failed = await attempt(runBatch, planned, spec.runDir, label, spec); // NOSONAR: one run at a time on purpose
+    providerFailures = failed ? providerFailures + 1 : 0;
+    if (providerFailures >= MAX_PROVIDER_FAILURES) {
+      throw new Error(`the model server failed ${providerFailures} runs in a row; batch stopped`);
+    }
+  }
+  log("loop: queue finished");
+}
+
+function loopReport(): void {
+  const work = path.resolve(required("work", args.work));
+  const results = resultFiles(path.join(work, "loop")).map((file) => JSON.parse(readFileSync(file, "utf8")) as RunResult);
+  const markdown = renderLoopReport(results);
+  writeFileSync(path.join(work, "loop-report.md"), markdown);
+  console.log(markdown);
+}
+
 const COMMANDS = new Map<string, () => void | Promise<void>>([
   ["annotate", annotate],
   ["prepare", prepare],
   ["run", run],
   ["status", status],
   ["report", report],
+  ["loop", loop],
+  ["loop-report", loopReport],
 ]);
 
 const command = COMMANDS.get(positionals[0] ?? "");

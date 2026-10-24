@@ -17,7 +17,7 @@ export const STRIP_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url
 const AGENT_PATHS = [".claude", ".agents", ".serena", ".pawl", ".mcp.json", ".coderabbit.yaml"];
 
 /** The one message of both arm commits, so the commit does not say which arm it is. */
-const COMMIT_MESSAGE = "Initial commit";
+export const COMMIT_MESSAGE = "Initial commit";
 
 export interface PreparedTask {
   taskId: string;

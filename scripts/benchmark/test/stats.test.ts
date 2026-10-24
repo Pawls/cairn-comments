@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bootstrapMedianChange, pairedDifferences, shuffled, spreadOf } from "../stats.ts";
+import { bootstrapGeomeanRatio, bootstrapMedianChange, geomean, pairedDifferences, shuffled, spreadOf } from "../stats.ts";
 
 describe("spreadOf", () => {
   it("gives the median and the interpolated quartiles", () => {
@@ -70,5 +70,28 @@ describe("shuffled", () => {
     expect(shuffled(items, 8)).not.toEqual(once);
     expect([...once].sort((a, b) => a - b)).toEqual(items);
     expect(items[0]).toBe(0);
+  });
+});
+
+describe("bootstrapGeomeanRatio", () => {
+  const options = { iterations: 2_000, seed: 7 };
+
+  it("collapses to the geometric mean of the ratios when no run varies", () => {
+    const byTask = new Map([
+      ["a", { bare: [100, 100], notes: [50, 50] }],
+      ["b", { bare: [10, 10], notes: [20, 20] }],
+    ]);
+
+    expect(geomean([0.5, 2])).toBeCloseTo(1);
+    expect(bootstrapGeomeanRatio(byTask, "bare", "notes", options)).toEqual({ low: 1, high: 1 });
+  });
+
+  it("spans the ratios the runs allow, and holds still for one seed", () => {
+    const byTask = new Map([["a", { bare: [100, 200], notes: [100, 100] }]]);
+
+    const interval = bootstrapGeomeanRatio(byTask, "bare", "notes", options);
+    expect(interval.low).toBeCloseTo(0.5);
+    expect(interval.high).toBeCloseTo(1);
+    expect(bootstrapGeomeanRatio(byTask, "bare", "notes", options)).toEqual(interval);
   });
 });
