@@ -586,8 +586,8 @@ reads (Claude Code's `CLAUDE.local.md`; others differ). Either becomes a v2 slic
 
 **Steps:**
 
-- [x] Write the A tasks: four writers (water, felling, navgrid, portal; the owner's revision
-      cut seven to four), each sending the agent through the function its two readers need,
+- [x] Write the A tasks: four writers (water, felling, navgrid, portal; four, not seven, to fit
+      the night), each sending the agent through the function its two readers need,
       plus four harder readers. verify-probes passes all eight in both arms
 - [x] Harness: the note-writing session (Cairn private mode on the prepared `none` commit,
       prepend in AGENTS.md, `sync` and freeze afterward, code changes discarded)
