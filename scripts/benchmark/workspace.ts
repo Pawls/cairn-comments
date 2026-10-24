@@ -197,10 +197,12 @@ function gitWithInput(cwd: string, env: Record<string, string>, input: string, .
  */
 function recommitAgentsMd(repo: string, env: Record<string, string>, text: string): void {
   const blob = gitWithInput(repo, env, text, "hash-object", "-w", "--stdin").trim();
-  const entries = git(repo, env, "ls-tree", "-z", "HEAD").split("\0").filter(Boolean);
-  const replaced = entries.map((entry) => (entry.endsWith("\tAGENTS.md") ? `100644 blob ${blob}\tAGENTS.md` : entry));
-  if (!entries.some((entry) => entry.endsWith("\tAGENTS.md"))) replaced.push(`100644 blob ${blob}\tAGENTS.md`);
-  const tree = gitWithInput(repo, env, replaced.map((entry) => `${entry}\0`).join(""), "mktree", "-z").trim();
+  const others = git(repo, env, "ls-tree", "-z", "HEAD")
+    .split("\0")
+    .filter((entry) => entry && !entry.endsWith("\tAGENTS.md"));
+  // mktree sorts its input, so the new entry can go last.
+  const entries = [...others, `100644 blob ${blob}\tAGENTS.md`];
+  const tree = gitWithInput(repo, env, entries.map((entry) => `${entry}\0`).join(""), "mktree", "-z").trim();
   const commit = commitLikeHead(repo, env, tree);
   git(repo, env, "update-ref", "--no-deref", "HEAD", commit);
 }
@@ -210,12 +212,11 @@ function recommitAgentsMd(repo: string, env: Record<string, string>, text: strin
  * notes), as one parentless commit with the clone's message and dates, onto `branch` in
  * `mirror`, where `checkoutArm` can clone it as a prepared branch.
  */
-export function commitWork(agentDir: string, env: Record<string, string>, mirror: string, branch: string): string {
+export function commitWork(agentDir: string, env: Record<string, string>, mirror: string, branch: string): void {
   git(agentDir, env, "add", "-A");
   const tree = git(agentDir, env, "write-tree").trim();
   const commit = commitLikeHead(agentDir, env, tree);
   git(agentDir, env, "push", "--quiet", "--force", mirror, `${commit}:refs/heads/${branch}`);
-  return commit;
 }
 
 /** The agent's worktree for a notes-loop run, with its AGENTS.md and, in the notes arm, Cairn. */

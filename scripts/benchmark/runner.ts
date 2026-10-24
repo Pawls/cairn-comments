@@ -20,7 +20,7 @@ import {
   type RunMetrics,
 } from "./metrics.ts";
 import type { PreparedTask } from "./prepare.ts";
-import { requestRewrite, startRecordingProxy } from "./proxy.ts";
+import { startRecordingProxy } from "./proxy.ts";
 import { answersByReading, type EditTask, type RepoSpec, type Task, type WarmupChain } from "./tasks.ts";
 import { ensureWarmup, refuseUnfinished, restoreWarmup } from "./warmup.ts";
 import { freezeNotes, loopLabel, notesGiven, type LoopRecord, type LoopSpec } from "./notes.ts";
@@ -219,7 +219,7 @@ export async function runOne(spec: RunSpec): Promise<RunResult> {
   const start = spec.warmup ? await deepStart(spec, spec.warmup, logFile, env) : freshStart(spec, runDir, env);
   const given = spec.loop && notesGiven(spec.loop, runDir);
 
-  const proxy = await startRecordingProxy(spec.provider, logFile, "probe", requestRewrite(spec.local));
+  const proxy = await startRecordingProxy(spec.provider, logFile, "probe", spec.local);
   const startedAt = new Date();
   const dirs = { agentDir: start.agentDir, homeDir: start.homeDir, outputDir: runDir };
   const agent = { ...spec, readOnly: answersByReading(spec.task) };

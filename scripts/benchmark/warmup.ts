@@ -10,7 +10,7 @@ import { HOME_DIRS, readLog, refuseFailedSession, runAgent, type AgentOptions, t
 import type { HarnessName } from "./harnesses.ts";
 import { lastAgentContext } from "./metrics.ts";
 import type { PreparedTask } from "./prepare.ts";
-import { requestRewrite, startRecordingProxy } from "./proxy.ts";
+import { startRecordingProxy } from "./proxy.ts";
 import type { RepoSpec, WarmupChain } from "./tasks.ts";
 import { CHECKOUTS, git, isolatedEnv, neutralName, setUpCheckout, type Arm } from "./workspace.ts";
 
@@ -122,7 +122,7 @@ export async function ensureWarmup(spec: WarmupSpec): Promise<ReadyWarmup> {
   const checkout = setUpCheckout({ ...spec, dir, start: spec.chain.start, setup: spec.repo.setup, env });
 
   const logFile = path.join(dir, "calls.jsonl");
-  const proxy = await startRecordingProxy(spec.provider, logFile, "warmup", requestRewrite(spec.local));
+  const proxy = await startRecordingProxy(spec.provider, logFile, "warmup", spec.local);
   const startedAt = Date.now();
   const dirs = { agentDir: checkout.agentDir, homeDir: dir, outputDir: dir };
   const session = await runAgent(spec, spec.chain.prompts, dirs, env, proxy.url).finally(() => proxy.close());

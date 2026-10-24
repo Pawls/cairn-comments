@@ -9,7 +9,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import type { HarnessName } from "./harnesses.ts";
-import { loadNotesSet, notesDir } from "./notes.ts";
+import { loadNotesSet, notesDir, taskOf } from "./notes.ts";
 import { readPrepared } from "./prepare.ts";
 import { DEEP_PREPARED_ID, preparedEntries, type Probe } from "./tasks.ts";
 import { checkoutArm, entriesBySource, ensureMirror, isolatedEnv, placedComments } from "./workspace.ts";
@@ -44,7 +44,7 @@ for (const pair of set.pairs) {
   try {
     checkoutArm({ mirror, runDir, start: prepared.start, arm: "none", hooks: [], env, prepared, notes: { agentsMd: "", cairn: { sidecars, hooks: [] } } });
     const { placed, stale } = placedComments(runDir);
-    const modules = new Set(pair.readers.flatMap((id) => (set.taskFile.tasks.find((t) => t.id === id) as Probe).modules));
+    const modules = new Set(pair.readers.flatMap((id) => (taskOf(set, id) as Probe).modules));
     const inModules = Object.entries(placed).filter(([file]) => modules.has(file));
     const entries = entriesBySource(sidecars);
     if (inModules.length) passing++;

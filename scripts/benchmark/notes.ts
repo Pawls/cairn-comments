@@ -5,14 +5,15 @@
  * task on the same functions, fresh, from the same commit: in the `notes` arm with the writer's
  * notes placed by Cairn and the same AGENTS.md, in the `bare` arm with neither.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { HarnessName } from "./harnesses.ts";
 import { contextOf } from "./metrics.ts";
+import { groupBy, successCount, whole } from "./report.ts";
 import type { RunResult } from "./runner.ts";
-import { bootstrapGeomeanRatio, geomean, type Interval } from "./stats.ts";
+import { bootstrapGeomeanRatio, geomean, mean, sum, type Interval } from "./stats.ts";
 import { loadTaskFile, type Task, type TaskFile } from "./tasks.ts";
-import type { PreparedTask } from "./prepare.ts";
+import { agentsMdText, type PreparedTask } from "./prepare.ts";
 import { cairn, commitWork, entriesBySource, freezeComments, neutralName, placedComments, type NotesCheckout } from "./workspace.ts";
 
 export type NotesArm = "bare" | "notes";
@@ -95,9 +96,14 @@ export function loadNotesSet(file: string): NotesSet {
   return { taskFile, pairs: parsed.pairs, prepend, variants };
 }
 
+/** The probe `id` of the set; `loadNotesSet` has checked that every pair's ids are probes. */
+export function taskOf(set: NotesSet, id: string): Task {
+  return set.taskFile.tasks.find((t) => t.id === id)!;
+}
+
 /** The AGENTS.md of an arm: the repository's agent notes, under the prepend in the `notes` arm. */
 export function agentsMdFor(arm: NotesArm, agentNotes: string[], prepend: string): string {
-  const own = agentNotes.map((line) => `${line}\n`).join("");
+  const own = agentsMdText(agentNotes);
   if (arm === "bare") return own;
   return `${prepend.trimEnd()}\n\n${own}`;
 }
@@ -115,19 +121,18 @@ export interface LoopRun extends LoopLabel {
  * The readers' arm order alternates by repetition, so neither arm always runs first.
  */
 export function planLoop(set: NotesSet, reps: number, bareWriterReps: number, roles: Role[] = ["writer", "reader"]): LoopRun[] {
-  const task = (id: string) => set.taskFile.tasks.find((t) => t.id === id)!;
   const runs: LoopRun[] = [];
   for (let rep = 1; rep <= reps; rep++) {
     const readerArms: NotesArm[] = rep % 2 === 1 ? ["bare", "notes"] : ["notes", "bare"];
     for (const pair of set.pairs) {
-      const writer = { task: task(pair.writer), role: "writer" as const, writer: pair.writer, rep };
+      const writer = { task: taskOf(set, pair.writer), role: "writer" as const, writer: pair.writer, rep };
       if (roles.includes("writer")) {
         runs.push({ ...writer, arm: "notes" });
         if (rep <= bareWriterReps) runs.push({ ...writer, arm: "bare" });
       }
       if (!roles.includes("reader")) continue;
       for (const reader of pair.readers) {
-        for (const arm of readerArms) runs.push({ task: task(reader), role: "reader", arm, writer: pair.writer, rep });
+        for (const arm of readerArms) runs.push({ task: taskOf(set, reader), role: "reader", arm, writer: pair.writer, rep });
       }
     }
   }
@@ -168,11 +173,6 @@ export function freezeNotes(spec: LoopSpec, agentDir: string, runDir: string, en
   return entriesBySource(spec.freezeTo);
 }
 
-/** Whether a reader's notes exist yet: its writer's repetition has frozen them. */
-export function notesReady(work: string, harness: HarnessName, run: LoopRun): boolean {
-  return existsSync(notesDir(work, harness, run.writer, run.rep));
-}
-
 /** The tokens a fresh run spent on its own work: the context it added past its first call, plus its output. */
 export function addedTokens(result: RunResult): number {
   return result.metrics.finalContext - result.metrics.firstCallContext + result.metrics.tokens.output;
@@ -191,36 +191,28 @@ const MEASURES: LoopMeasure[] = [
   { label: "Input tokens, all", value: (r) => contextOf(r.metrics.tokens) },
   { label: "Output", value: (r) => r.metrics.tokens.output },
   WALL,
-  { label: "Tool calls", value: (r) => Object.values(r.metrics.toolCalls).reduce((a, b) => a + b, 0) },
+  { label: "Tool calls", value: (r) => sum(Object.values(r.metrics.toolCalls)) },
 ];
 
 /** Fixed so the intervals in a recorded report can be reproduced. */
 const BOOTSTRAP = { iterations: 10_000, seed: 20261024 };
 
-const mean = (values: number[]) => values.reduce((a, b) => a + b, 0) / values.length;
-const whole = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 0 });
 const ratio = (n: number) => n.toFixed(2);
 
 function byArm(runs: RunResult[]): Record<NotesArm, RunResult[]> {
   return { bare: runs.filter((r) => r.loop?.arm === "bare"), notes: runs.filter((r) => r.loop?.arm === "notes") };
 }
 
-function passed(runs: RunResult[]): string {
-  return `${runs.filter((r) => r.grade.passed).length}/${runs.length}`;
-}
-
 function sumOf(record: Record<string, number> | undefined): number {
-  return Object.values(record ?? {}).reduce((a, b) => a + b, 0);
+  return sum(Object.values(record ?? {}));
 }
 
 /** Per task, each arm's values of `measure`, for tasks with runs in both arms. */
 function valuesByTask(runs: RunResult[], measure: LoopMeasure): Map<string, Record<NotesArm, number[]>> {
   const tasks = new Map<string, Record<NotesArm, number[]>>();
-  for (const task of new Set(runs.map((r) => r.task))) {
-    const arms = byArm(runs.filter((r) => r.task === task));
-    if (arms.bare.length && arms.notes.length) {
-      tasks.set(task, { bare: arms.bare.map((r) => measure.value(r)), notes: arms.notes.map((r) => measure.value(r)) });
-    }
+  for (const [task, taskRuns] of groupBy(runs, (r) => r.task)) {
+    const arms = byArm(taskRuns);
+    if (arms.bare.length && arms.notes.length) tasks.set(task, { bare: arms.bare.map(measure.value), notes: arms.notes.map(measure.value) });
   }
   return tasks;
 }
@@ -234,7 +226,7 @@ function overallRatio(runs: RunResult[], measure: LoopMeasure): { value: number;
 }
 
 /**
- * The decision rule fixed in D7: on the readers' tokens, the claim holds when the geometric mean
+ * The decision rule (docs/plans/benchmark-deep-context.md § D7): on the readers' tokens, the claim holds when the geometric mean
  * of notes / bare is below 0.80 and its interval ends below 1.0, and fails when the interval
  * starts above 0.80.
  */
@@ -249,13 +241,13 @@ function writerTable(writers: RunResult[]): string[] {
     "| Writer | Passed, bare | notes | Tokens, bare | notes | Wall (s), bare | notes | Notes left (mean) |",
     "| --- | --- | --- | --- | --- | --- | --- | --- |",
   ];
-  for (const task of new Set(writers.map((r) => r.task))) {
-    const arms = byArm(writers.filter((r) => r.task === task));
-    const cell = (runs: RunResult[], value: (r: RunResult) => number) => (runs.length ? whole(mean(runs.map(value))) : "n/a");
+  const cell = (runs: RunResult[], value: (r: RunResult) => number) => (runs.length ? whole(mean(runs.map(value))) : "n/a");
+  for (const [task, taskRuns] of groupBy(writers, (r) => r.task)) {
+    const arms = byArm(taskRuns);
     const left = arms.notes.length ? mean(arms.notes.map((r) => sumOf(r.loop?.left))).toFixed(1) : "n/a";
     lines.push(
-      `| ${task} | ${passed(arms.bare)} | ${passed(arms.notes)} | ${cell(arms.bare, addedTokens)} | ${cell(arms.notes, addedTokens)} | ` +
-        `${cell(arms.bare, (r) => r.wallMs / 1000)} | ${cell(arms.notes, (r) => r.wallMs / 1000)} | ${left} |`,
+      `| ${task} | ${successCount(arms.bare)} | ${successCount(arms.notes)} | ${cell(arms.bare, addedTokens)} | ${cell(arms.notes, addedTokens)} | ` +
+        `${cell(arms.bare, WALL.value)} | ${cell(arms.notes, WALL.value)} | ${left} |`,
     );
   }
   return lines;
@@ -267,19 +259,20 @@ function readerTable(readers: RunResult[]): string[] {
     `| Reader | Writer | Passed, bare | notes | ${header.map((m) => `${m.label}, bare | notes | ratio`).join(" | ")} | Notes placed / given | stale |`,
     `| --- | --- | --- | --- | ${header.map(() => "--- | --- | ---").join(" | ")} | --- | --- |`,
   ];
-  for (const task of new Set(readers.map((r) => r.task))) {
-    const runs = readers.filter((r) => r.task === task);
+  for (const [task, runs] of groupBy(readers, (r) => r.task)) {
     const arms = byArm(runs);
     const cells = header.flatMap((measure) => {
       if (!arms.bare.length || !arms.notes.length) return ["n/a", "n/a", "n/a"];
-      const bare = mean(arms.bare.map((r) => measure.value(r)));
-      const notes = mean(arms.notes.map((r) => measure.value(r)));
+      const bare = mean(arms.bare.map(measure.value));
+      const notes = mean(arms.notes.map(measure.value));
       return [whole(bare), whole(notes), ratio(notes / bare)];
     });
     const given = arms.notes.map((r) => r.loop?.given);
     const placed = given.map((g) => `${sumOf(g?.placed)}/${sumOf(g?.entries)}`).join(", ") || "n/a";
     const stale = given.map((g) => g?.stale ?? 0).join(", ") || "n/a";
-    lines.push(`| ${task} | ${runs[0]!.loop!.writer} | ${passed(arms.bare)} | ${passed(arms.notes)} | ${cells.join(" | ")} | ${placed} | ${stale} |`);
+    lines.push(
+      `| ${task} | ${runs[0]!.loop!.writer} | ${successCount(arms.bare)} | ${successCount(arms.notes)} | ${cells.join(" | ")} | ${placed} | ${stale} |`,
+    );
   }
   return lines;
 }
@@ -292,8 +285,8 @@ function loopCost(writers: RunResult[], readers: RunResult[]): string[] {
       const own = writers.filter((r) => r.task === writer && r.loop?.arm === arm);
       const theirs = readers.filter((r) => r.loop?.writer === writer && r.loop?.arm === arm);
       if (!own.length) return Number.NaN;
-      const tasks = new Set(theirs.map((r) => r.task));
-      return mean(own.map(addedTokens)) + [...tasks].reduce((sum, t) => sum + mean(theirs.filter((r) => r.task === t).map(addedTokens)), 0);
+      const perReader = [...groupBy(theirs, (r) => r.task).values()].map((runs) => mean(runs.map(addedTokens)));
+      return mean(own.map(addedTokens)) + sum(perReader);
     };
     const bare = total("bare");
     const notes = total("notes");
@@ -305,19 +298,19 @@ function loopCost(writers: RunResult[], readers: RunResult[]): string[] {
 
 /** The overall ratios and the decision for one set of readers. */
 function overallSection(title: string, readers: RunResult[]): string[] {
-  const overall = MEASURES.map((measure) => {
-    const found = overallRatio(readers, measure);
+  const ratios = MEASURES.map((measure) => ({ measure, found: overallRatio(readers, measure) }));
+  const overall = ratios.map(({ measure, found }) => {
     if (!found) return `- ${measure.label}: n/a`;
     const { value, interval, tasks } = found;
     return `- ${measure.label}: ${ratio(value)} (95% interval ${ratio(interval.low)} to ${ratio(interval.high)}, ${tasks} readers)`;
   });
-  const tokens = overallRatio(readers, TOKENS);
+  const tokens = ratios.find(({ measure }) => measure === TOKENS)!.found;
   const decision = tokens ? `Decision rule on the readers' tokens: the claim **${verdict(tokens.value, tokens.interval)}**.` : "";
   const arms = byArm(readers);
   return [
     `## ${title}`,
     "",
-    `Readers passed: bare ${passed(arms.bare)}, notes ${passed(arms.notes)}.`,
+    `Readers passed: bare ${successCount(arms.bare)}, notes ${successCount(arms.notes)}.`,
     "",
     "Geometric mean over readers of notes / bare (mean per arm per reader):",
     "",

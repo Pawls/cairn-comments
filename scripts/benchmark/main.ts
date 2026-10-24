@@ -49,7 +49,7 @@ import { globalPiCli, HARNESSES, type HarnessName } from "./harnesses.ts";
 import { findPython, preparedBranch, prepareTask, readPrepared, type PreparedTask } from "./prepare.ts";
 import { ProviderError, readLog, runAgent, type AgentOptions } from "./agent.ts";
 import { providerFailed, runMetrics } from "./metrics.ts";
-import { requestRewrite, startRecordingProxy } from "./proxy.ts";
+import { startRecordingProxy } from "./proxy.ts";
 import {
   agentsMdFor,
   loadNotesSet,
@@ -58,6 +58,7 @@ import {
   notesDir,
   planLoop,
   renderLoopReport,
+  taskOf,
   type LoopRun,
   type LoopSpec,
   type NotesSet,
@@ -66,7 +67,7 @@ import {
 import { renderReport } from "./report.ts";
 import { depthOf, legacyRunDirs, runDirFor, runOne, type RunResult } from "./runner.ts";
 import { nextOccurrence, planRuns, shard, unforked, warmupOf, type Depths, type Planned } from "./schedule.ts";
-import { spreadOf } from "./stats.ts";
+import { spreadOf, sum } from "./stats.ts";
 import {
   chainsNamedLikeTasks,
   isEditTask,
@@ -289,7 +290,7 @@ function prepare(): void {
 /** Total entries over the sidecars under `dir`. */
 function countEntries(dir: string): { sidecars: number; entries: number } {
   const counts = Object.values(entriesBySource(dir));
-  return { sidecars: counts.length, entries: counts.reduce((sum, n) => sum + n, 0) };
+  return { sidecars: counts.length, entries: sum(counts) };
 }
 
 async function annotate(): Promise<void> {
@@ -310,7 +311,7 @@ async function annotate(): Promise<void> {
   const prompt = readFileSync(path.join("benchmark", "annotate-prompt.md"), "utf8");
   const logFile = path.join(runDir, "calls.jsonl");
   await checkProvider(agent);
-  const proxy = await startRecordingProxy(agent.provider, logFile, "probe", requestRewrite(agent.local));
+  const proxy = await startRecordingProxy(agent.provider, logFile, "probe", agent.local);
   const dirs = { agentDir, homeDir: runDir, outputDir: runDir };
   const session = await runAgent(agent, [prompt], dirs, env, proxy.url).finally(() => proxy.close());
   const calls = readLog(logFile);
@@ -543,7 +544,6 @@ function selectedPairs(set: NotesSet): NotesSet {
   return { ...set, pairs: set.pairs.filter((pair) => only.includes(pair.writer)) };
 }
 
-/** A loop run's checkout, and for a writer in the notes arm where its notes are frozen. */
 /**
  * A loop run's checkout, and for a writer in the notes arm where its notes are frozen. With
  * --carry, that writer's work is committed for its readers, and every reader of the repetition
@@ -571,8 +571,7 @@ function loopSpecFor(batch: Batch, set: NotesSet, run: LoopRun): LoopSpec {
  */
 function waitsForWriter(work: string, set: NotesSet, run: LoopRun, harness: HarnessName): boolean {
   if (run.role !== "reader" || (run.arm !== "notes" && !args.carry)) return false;
-  const task = set.taskFile.tasks.find((t) => t.id === run.writer)!;
-  const writerRun: LoopRun = { task, role: "writer", arm: "notes", writer: run.writer, rep: run.rep };
+  const writerRun: LoopRun = { task: taskOf(set, run.writer), role: "writer", arm: "notes", writer: run.writer, rep: run.rep };
   return !existsSync(path.join(loopRunDir(work, harness, writerRun), "result.json"));
 }
 

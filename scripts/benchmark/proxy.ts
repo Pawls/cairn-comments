@@ -1,7 +1,8 @@
 /**
- * A local HTTP proxy between a harness and the model provider. It forwards every request,
- * unchanged unless a rewrite is given, and appends one JSON line per call to a log, with the parsed response for each
- * model call, so token counts come from the provider's own usage fields for any harness.
+ * A local HTTP proxy between a harness and the model provider. It forwards every request
+ * (unchanged, except `systemMessagesAsUser` for a local model server) and appends one JSON
+ * line per call to a log, with the parsed response for each model call, so token counts come
+ * from the provider's own usage fields for any harness.
  */
 import { appendFileSync } from "node:fs";
 import { request as httpRequest, createServer, type IncomingHttpHeaders, type IncomingMessage } from "node:http";
@@ -71,9 +72,7 @@ export function systemMessagesAsUser(body: Buffer): Buffer {
       continue;
     }
     const texts = typeof message.content === "string" ? [message.content] : message.content.map((block) => block.text ?? "");
-    const blocks = texts.map((text) => ({ type: "text", text: `<system-reminder>
-${text}
-</system-reminder>` }));
+    const blocks = texts.map((text) => ({ type: "text", text: `<system-reminder>\n${text}\n</system-reminder>` }));
     const previous = messages.at(-1);
     if (previous?.role !== "user") {
       messages.push({ role: "user", content: blocks });
@@ -104,13 +103,12 @@ function loggedCall(phase: Phase, exchange: Exchange): LoggedCall {
   return call;
 }
 
-/** Appends to `logFile`, so a probe's calls can follow its warm-up's in one log. */
-export async function startRecordingProxy(
-  upstream: string,
-  logFile: string,
-  phase: Phase,
-  rewrite: (body: Buffer) => Buffer = (body) => body,
-): Promise<RecordingProxy> {
+/**
+ * Appends to `logFile`, so a probe's calls can follow its warm-up's in one log. For a `local`
+ * model server each request goes through `systemMessagesAsUser`; the API gets it unchanged.
+ */
+export async function startRecordingProxy(upstream: string, logFile: string, phase: Phase, local = false): Promise<RecordingProxy> {
+  const rewrite = local ? systemMessagesAsUser : (body: Buffer) => body;
   const base = new URL(upstream);
   const send = base.protocol === "https:" ? httpsRequest : httpRequest;
   const log = (call: LoggedCall) => appendFileSync(logFile, JSON.stringify(call) + "\n");
@@ -151,9 +149,4 @@ export async function startRecordingProxy(
         server.close(() => resolve());
       }),
   };
-}
-
-/** What the proxy does to each request: a local model server gets `systemMessagesAsUser`, the API nothing. */
-export function requestRewrite(local: boolean): ((body: Buffer) => Buffer) | undefined {
-  return local ? systemMessagesAsUser : undefined;
 }

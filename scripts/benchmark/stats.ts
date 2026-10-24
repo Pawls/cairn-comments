@@ -118,7 +118,8 @@ export function geomean(values: number[]): number {
   return Math.exp(values.reduce((sum, v) => sum + Math.log(v), 0) / values.length);
 }
 
-const meanOf = (values: number[]) => values.reduce((a, b) => a + b, 0) / values.length;
+export const sum = (values: number[]) => values.reduce((a, b) => a + b, 0);
+export const mean = (values: number[]) => sum(values) / values.length;
 
 /**
  * A 95% percentile bootstrap interval for the geometric mean over tasks of the ratio of arm
@@ -132,13 +133,10 @@ export function bootstrapGeomeanRatio(
   options: { iterations: number; seed: number },
 ): Interval {
   const random = seededRandom(options.seed);
-  const means: number[] = [];
-  for (let i = 0; i < options.iterations; i++) {
-    const ratios = [...byTask.values()].map(
-      (arms) => meanOf(resample(arms[treatmentArm]!, random)) / meanOf(resample(arms[baselineArm]!, random)),
-    );
-    means.push(geomean(ratios));
-  }
-  means.sort((a, b) => a - b);
-  return { low: quantile(means, 0.025), high: quantile(means, 0.975) };
+  const tasks = [...byTask.values()];
+  const geomeans = Array.from({ length: options.iterations }, () =>
+    geomean(tasks.map((arms) => mean(resample(arms[treatmentArm]!, random)) / mean(resample(arms[baselineArm]!, random)))),
+  );
+  geomeans.sort((a, b) => a - b);
+  return { low: quantile(geomeans, 0.025), high: quantile(geomeans, 0.975) };
 }
