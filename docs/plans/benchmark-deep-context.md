@@ -586,17 +586,16 @@ reads (Claude Code's `CLAUDE.local.md`; others differ). Either becomes a v2 slic
 
 **Steps:**
 
-- [ ] Write the seven A tasks, one per D4b probe, each sending the agent through the probe's
-      function. A reader checks that none can be answered from its prompt alone and that it
-      does not contain the probe's answer
-- [ ] Harness: a note-writing session (Cairn private mode on the prepared `none` commit,
-      prepend in AGENTS.md, `sync` and freeze afterward, code changes discarded; today
-      `checkoutArm` runs no Cairn on a prepared repository)
-- [ ] Harness: the four B arms, with names an agent cannot read the arm from (`neutralName`),
-      per-arm AGENTS.md, and the `NOTES.md` renderer (place the notes in a scratch worktree,
-      record each with its file, enclosing symbol and line, then strip them)
-- [ ] Harness: the report's three ratios and the loop's cost; tests for each piece against
-      the stand-in, then a PR
+- [x] Write the A tasks: four writers (water, felling, navgrid, portal; the owner's revision
+      cut seven to four), each sending the agent through the function its two readers need,
+      plus four harder readers. verify-probes passes all eight in both arms
+- [x] Harness: the note-writing session (Cairn private mode on the prepared `none` commit,
+      prepend in AGENTS.md, `sync` and freeze afterward, code changes discarded)
+- [x] Harness: the two arms of the revision (`bare`, `notes`) with neutral run directories and
+      a per-arm AGENTS.md committed into the clone; `inline-plain`, `markdown` and the
+      `NOTES.md` renderer are dropped
+- [x] Harness: the report (per-reader ratios, geometric means with intervals, the decision
+      rule, the writers' cost, the whole loop); tests against the stand-in and Cairn
 - [ ] Night run: A repetition 1, gate GN, then the rest of the matrix
 - [ ] Apply the decision rule, write the numbers here and in
       [../benchmark.md](../benchmark.md#results)
