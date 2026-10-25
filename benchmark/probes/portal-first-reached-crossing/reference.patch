@@ -1,0 +1,51 @@
+diff --git a/portal.py b/portal.py
+index 6c16f67d..f9a9f822 100644
+--- a/portal.py
++++ b/portal.py
+@@ -386,6 +386,15 @@ def crossed_through(p: Portal, prev, cur, eps: float = 0.0, margin: float = 0.0)
+     return contains_point_on_plane(p, ix, iy, iz, eps)
+ 
+ 
++def crossing_fraction(p: Portal, prev, cur, margin: float = 0.0) -> float:
++    """How far along ``prev`` -> ``cur`` (0 at ``prev``, 1 at ``cur``) the segment meets the
++    trigger plane :func:`crossed_through` tests with the same ``margin``. Only meaningful for a
++    segment that crosses it."""
++    a = p.axis
++    plane = p.plane - p.sign * margin
++    return (plane - prev[a]) / (cur[a] - prev[a])
++
++
+ # ---- virtual camera / link transform ---------------------------------------
+ 
+ 
+diff --git a/window_portal.py b/window_portal.py
+index 45af0e44..108dc9d4 100644
+--- a/window_portal.py
++++ b/window_portal.py
+@@ -1001,7 +1001,10 @@ def update_portals(self, dt: float) -> None:
+         portals = portal_mod.get_portals(self.world)
+         if prev is None or not portals:
+             return
+-        for p in portals:
++        # Every opening this move crosses, tried in the order the eye reaches their trigger
++        # planes (map order breaks a tie); one that refuses the transfer passes to the next.
++        crossings = []
++        for order, p in enumerate(portals):
+             if not portal_mod.walkable(p):
+                 continue  # a view-only window never transfers, however you approach it
+             # A FLOOR opening (axis 1, fall-through) triggers on the FEET, not the eye: falling,
+@@ -1013,9 +1016,11 @@ def update_portals(self, dt: float) -> None:
+             margin = PORTAL_CROSS_MARGIN
+             if p.axis == 1 and p.sign < 0:
+                 margin = physics.EYE_HEIGHT - PORTAL_CROSS_MARGIN
+-            if portal_mod.crossed_through(
+-                p, prev, eye, margin=margin
+-            ) and self._portal_walk_through(p, eye):
++            if portal_mod.crossed_through(p, prev, eye, margin=margin):
++                reached = portal_mod.crossing_fraction(p, prev, eye, margin)
++                crossings.append((reached, order, p))
++        for _reached, _order, p in sorted(crossings, key=lambda c: c[:2]):
++            if self._portal_walk_through(p, eye):
+                 return  # one transfer per frame
+ 
+     def _portal_back_out(self, eye) -> bool:

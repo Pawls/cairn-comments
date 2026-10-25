@@ -1,0 +1,79 @@
+diff --git a/felling.py b/felling.py
+index 92b87d5b..e71c5bf8 100644
+--- a/felling.py
++++ b/felling.py
+@@ -58,6 +58,7 @@
+ MAX_TRUNK_COLUMNS = 9  # a 3x3 redwood is the thickest real trunk; wider is a WALL
+ MIN_CANOPY = 3  # a tree has foliage — this is what keeps a bare post from felling
+ CANOPY_REACH = 6  # canopy-flood steps allowed away from the trunk (see `gather_tree`)
++# ...or a third of the trunk's height, when that is more: a tall tree's crown spreads wider.
+ CANOPY_FLOOR = 2  # ...and no canopy below this height above the trunk's base
+ # A same-type flood this wide or this big is terrain or a wall, not another tree's trunk
+ # (`_other_trunk`): the giants' 3x3 x 30 trunk is the biggest real one at 270 cells.
+@@ -300,6 +301,13 @@ def blocks_fall(cell: Cell) -> bool:
+ # ---- gathering ---------------------------------------------------------------
+ 
+ 
++def canopy_reach(trunk) -> int:
++    """How many canopy-flood steps a tree's crown may spread from its wood: `CANOPY_REACH`,
++    or a third of the trunk's height (lowest cell to highest) when that is more."""
++    ys = [c[1] for c in trunk]
++    return max(CANOPY_REACH, (max(ys) - min(ys) + 1) // 3)
++
++
+ def gather_tree(world, seed: Cell, cap: int = FELL_MAX_CELLS) -> Tree | None:
+     """The tree the struck cell belongs to, or ``None`` if that strike is not a felling one.
+ 
+@@ -401,7 +409,8 @@ def gather_tree(world, seed: Cell, cap: int = FELL_MAX_CELLS) -> Tree | None:
+     others: dict[Cell, Cell] = {}  # other trees' trunk cells the flood ran into -> that tree
+     probed: dict[Cell, frozenset[Cell] | None] = {}
+     frontier: list[Cell] = sorted(trunk, key=lambda c: c[1])
+-    for level in range(1, 2 * CANOPY_REACH + 1):
++    reach = canopy_reach(trunk)
++    for level in range(1, 2 * reach + 1):
+         nxt: list[Cell] = []
+         for x, y, z in frontier:
+             for dx, dy, dz in _NEIGHBOURS:
+@@ -421,7 +430,7 @@ def gather_tree(world, seed: Cell, cap: int = FELL_MAX_CELLS) -> Tree | None:
+                     if other is not None:
+                         others.update(dict.fromkeys(other, min(other)))
+                     continue
+-                if level <= CANOPY_REACH:
++                if level <= reach:
+                     if len(cells) >= cap:
+                         return None
+                     canopy.append(n)
+@@ -530,16 +539,23 @@ def _claim_canopy(
+     support rule is re-asked until it settles."""
+     our_key = min(trunk)
+     theirs: dict[Cell, Cell] = dict(others)  # cell -> the tree (its lowest trunk cell)
++    trunks_of: dict[Cell, list[Cell]] = {}
++    for c, key in others.items():
++        trunks_of.setdefault(key, []).append(c)
++    reach_of = {key: canopy_reach(cells_of) for key, cells_of in trunks_of.items()}
+     dist_theirs: dict[Cell, int] = {}
+     frontier = sorted(others, key=lambda c: c[1])
+     trunk_cells = set(trunk)
+     level = 0
+     budget = cap * 2
+-    while frontier and level < CANOPY_REACH and budget > 0:
++    # Each tree's flood stops at its OWN reach, as its own gather would.
++    while frontier and level < max(reach_of.values(), default=0) and budget > 0:
+         level += 1
+         nxt = []
+         for x, y, z in frontier:
+             key = theirs[(x, y, z)]
++            if level > reach_of[key]:
++                continue
+             for dx, dy, dz in _NEIGHBOURS:
+                 n = (x + dx, y + dy, z + dz)
+                 if n in trunk_cells:
+@@ -565,7 +581,7 @@ def _claim_canopy(
+ 
+     kept = set()
+     for c in canopy:
+-        mine = dist_ours.get(c, CANOPY_REACH + 1)
++        mine = dist_ours.get(c, canopy_reach(trunk) + 1)
+         other = dist_theirs.get(c)
+         if other is None or mine < other or (mine == other and our_key < theirs[c]):
+             kept.add(c)

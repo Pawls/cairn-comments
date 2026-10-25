@@ -96,6 +96,35 @@ describe("runMetrics", () => {
     expect(runMetrics([logged(300, 0), logged(150_000, 12)], { model: "m", agentDir }).firstCallContext).toBe(150_000);
   });
 
+  it("gives the context of the probe's last agent call, so the tokens a run added can be read off", () => {
+    const usage = (input: number) => ({ input, output: 1, cacheRead: 0, cacheWrite: 0 });
+    const logged = (input: number, tools: number): LoggedCall => ({
+      path: "/v1/messages",
+      status: 200,
+      ms: 10,
+      phase: "probe",
+      tools,
+      response: { model: "m", usage: usage(input), tools: [], text: "" },
+    });
+
+    expect(runMetrics([logged(4_000, 12), logged(9_000, 12), logged(50, 0)], { model: "m", agentDir }).finalContext).toBe(9_000);
+  });
+
+  it("counts the context a run grew by across compactions, and its last output, without counting earlier output twice", () => {
+    const logged = (input: number, output: number): LoggedCall => ({
+      path: "/v1/messages",
+      status: 200,
+      ms: 10,
+      phase: "probe",
+      tools: 12,
+      response: { model: "m", usage: { input, output, cacheRead: 0, cacheWrite: 0 }, tools: [], text: "" },
+    });
+    // 4k to 9k to 200k, compacted to 30k, then 35k: growth 5k + 191k + 5k, plus the last call's 700 of output.
+    const log = [logged(4_000, 100), logged(9_000, 100), logged(200_000, 100), logged(30_000, 100), logged(35_000, 700)];
+
+    expect(runMetrics(log, { model: "m", agentDir }).grownTokens).toBe(201_700);
+  });
+
   it("counts every call of a log written before calls had phases", () => {
     expect(runMetrics([call("m", []), call("m", [])], { model: "m", agentDir }).calls).toBe(2);
   });

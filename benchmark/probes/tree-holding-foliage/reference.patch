@@ -1,0 +1,143 @@
+diff --git a/felling.py b/felling.py
+index 92b87d5b..45dbb55a 100644
+--- a/felling.py
++++ b/felling.py
+@@ -583,6 +583,56 @@ def _claim_canopy(
+     return [c for c in canopy if c in kept]
+ 
+ 
++TREE_AT_SEARCH = 4096  # cells `tree_at` may visit looking for the trunk
++
++
++def tree_at(world, cell: Cell) -> Tree | None:
++    """The tree whose fell would bring ``cell`` down, as `gather_tree` returns it for a strike
++    at the lowest cell of its trunk (lowest y, then x, then z). ``None`` for air and for a
++    cell that no tree's fell would take.
++
++    The trunk is searched for from ``cell`` over non-air cells, nearest first. A crown cell is
++    at most `CANOPY_REACH` canopy steps from its wood, but what RESTS on the crown is the
++    tree's however high it is stacked (`gather_tree`'s climb), so the search also starts from
++    every cell of the column ``cell`` stands on.
++    """
++    cell = (int(cell[0]), int(cell[1]), int(cell[2]))
++    at = world.block_at
++    if at(cell) is None:
++        return None
++    sources = [cell]
++    below = (cell[0], cell[1] - 1, cell[2])
++    while at(below) is not None and len(sources) < TREE_AT_SEARCH:
++        sources.append(below)
++        below = (below[0], below[1] - 1, below[2])
++    seen = set(sources)
++    frontier = sources
++    tried: set[Cell] = set()  # trunk cells already gathered
++    for _ in range(CANOPY_REACH + 1):
++        nxt: list[Cell] = []
++        for c in frontier:
++            ti = at(c)
++            if c not in tried and at((c[0], c[1] + 1, c[2])) == ti:
++                tree = gather_tree(world, c)
++                if tree is not None:
++                    tried.update(tree.trunk)
++                    low = min(tree.trunk, key=lambda t: (t[1], t[0], t[2]))
++                    if low != c:
++                        tree = gather_tree(world, low)
++                    if tree is not None and cell in tree.cells:
++                        return tree
++            for dx, dy, dz in _NEIGHBOURS:
++                n = (c[0] + dx, c[1] + dy, c[2] + dz)
++                if n in seen or at(n) is None or len(seen) >= TREE_AT_SEARCH:
++                    continue
++                seen.add(n)
++                nxt.append(n)
++        if not nxt:
++            break
++        frontier = nxt
++    return None
++
++
+ def loose_marks(lands: dict[Cell, int]) -> dict[Cell, int]:
+     """`chopped.LOOSE` for every cell of the felled log — "this is a detached body, not the
+     terrain it came to rest on".
+@@ -641,13 +691,10 @@ class Crusher:
+     out where and WHEN the trunk reaches each one; a tree met only in a direction the fall did
+     not take is never touched.
+ 
+-    A cell's tree is found by SHAPE, through `gather_tree`, like everything else here: the
+-    first gather within `CANOPY_REACH` steps of the cell that contains it. The reach is what
+-    finds a snow pine's opaque needle ring from the needle the swing struck — a needle's own
+-    column has no trunk under it, and a gather seeded ON a needle floods the crown as a trunk
+-    and refuses it as a wall. Every answer is cached per cell, because the sweep asks about
+-    the same cells at several angles and in four directions, and a failed gather seeded on
+-    plain terrain is remembered too — the search from a cliff face visits a lot of rock.
++    A cell's tree is found by SHAPE, through `tree_at`, like everything else here: a needle's
++    own column has no trunk under it, and a gather seeded ON a needle floods the crown as a
++    trunk and refuses it as a wall. Every answer is cached per cell, because the sweep asks
++    about the same cells at several angles and in four directions.
+     """
+ 
+     def __init__(self, world, own, mass: int):
+@@ -656,7 +703,6 @@ def __init__(self, world, own, mass: int):
+         self.mass = mass
+         self.victims: list[Tree] = []
+         self._by_cell: dict[Cell, Tree | None] = {}
+-        self._seeded: dict[Cell, Tree | None] = {}
+ 
+     def gives_way(self, cell: Cell) -> bool:
+         return self.victim(cell) is not None
+@@ -666,7 +712,7 @@ def victim(self, cell: Cell) -> Tree | None:
+         cell = (int(cell[0]), int(cell[1]), int(cell[2]))
+         if cell in self._by_cell:
+             return self._by_cell[cell]
+-        tree = self._find(cell)
++        tree = tree_at(self.world, cell)
+         if tree is None:
+             self._by_cell[cell] = None
+             return None
+@@ -678,46 +724,6 @@ def victim(self, cell: Cell) -> Tree | None:
+             return tree
+         return None
+ 
+-    def _gather(self, seed: Cell) -> Tree | None:
+-        if seed not in self._seeded:
+-            at = self.world.block_at
+-            ti = at(seed)
+-            # `gather_tree` refuses a seed with anything but its own type above it; asking
+-            # first keeps the cost of a rock face down to one lookup per cell.
+-            above = (seed[0], seed[1] + 1, seed[2])
+-            self._seeded[seed] = (
+-                None if ti is None or at(above) != ti else gather_tree(self.world, seed)
+-            )
+-        return self._seeded[seed]
+-
+-    def _find(self, cell: Cell) -> Tree | None:
+-        """Breadth-first over solid cells from ``cell``, up to `CANOPY_REACH` steps, for a
+-        gather that contains it. The same reach the canopy flood has from the trunk, so any
+-        cell a gather would claim as canopy is within range of the trunk that claims it."""
+-        at = self.world.block_at
+-        solid = self.world.solid_by_ti
+-        seen = {cell}
+-        frontier = [cell]
+-        for _ in range(CANOPY_REACH + 1):
+-            nxt: list[Cell] = []
+-            for c in frontier:
+-                tree = self._gather(c)
+-                if tree is not None and cell in tree.cells:
+-                    return tree
+-                for dx, dy, dz in _NEIGHBOURS:
+-                    n = (c[0] + dx, c[1] + dy, c[2] + dz)
+-                    if n in seen or n in self.own:
+-                        continue
+-                    ti = at(n)
+-                    if ti is None or not solid[ti]:
+-                        continue
+-                    seen.add(n)
+-                    nxt.append(n)
+-            if not nxt:
+-                break
+-            frontier = nxt
+-        return None
+-
+ 
+ # ---- the geometry ------------------------------------------------------------
+ 

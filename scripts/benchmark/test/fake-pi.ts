@@ -57,3 +57,6 @@ if (positionals.at(-1)!.startsWith("commit-kept:")) {
   writeFileSync(path.join("tests", "kept.txt"), "edited and committed by the agent");
   execFileSync("git", ["commit", "--quiet", "-am", "the agent's edit"]);
 }
+// One that starts "note:<file>" stands in for an agent that leaves a note at the top of that file.
+const noteFor = /^note:(\S+)/.exec(positionals.at(-1)!)?.[1];
+if (noteFor) writeFileSync(noteFor, `#~ a note from the agent\n${readFileSync(noteFor, "utf8")}`);

@@ -8,7 +8,7 @@ import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writ
 import path from "node:path";
 import { HOME_DIRS, readLog, refuseFailedSession, runAgent, type AgentOptions, type Exit } from "./agent.ts";
 import type { HarnessName } from "./harnesses.ts";
-import { contextOf, isAgentCall } from "./metrics.ts";
+import { lastAgentContext } from "./metrics.ts";
 import type { PreparedTask } from "./prepare.ts";
 import { startRecordingProxy } from "./proxy.ts";
 import type { RepoSpec, WarmupChain } from "./tasks.ts";
@@ -122,14 +122,13 @@ export async function ensureWarmup(spec: WarmupSpec): Promise<ReadyWarmup> {
   const checkout = setUpCheckout({ ...spec, dir, start: spec.chain.start, setup: spec.repo.setup, env });
 
   const logFile = path.join(dir, "calls.jsonl");
-  const proxy = await startRecordingProxy(spec.provider, logFile, "warmup");
+  const proxy = await startRecordingProxy(spec.provider, logFile, "warmup", spec.local);
   const startedAt = Date.now();
   const dirs = { agentDir: checkout.agentDir, homeDir: dir, outputDir: dir };
   const session = await runAgent(spec, spec.chain.prompts, dirs, env, proxy.url).finally(() => proxy.close());
   const log = readLog(logFile);
   // On a failure there is no warmup.json, so the next batch runs the chain again.
   refuseFailedSession(log, `warm-up ${spec.chain.id}`);
-  const last = log.findLast((call) => call.response && isAgentCall(call))?.response;
   const warmup: Warmup = {
     chain: spec.chain.id,
     harness: spec.harness,
@@ -139,7 +138,7 @@ export async function ensureWarmup(spec: WarmupSpec): Promise<ReadyWarmup> {
     model: spec.model,
     exits: session.exits,
     wallMs: Date.now() - startedAt,
-    finalContext: last ? contextOf(last.usage) : 0,
+    finalContext: lastAgentContext(log),
   };
   for (const name of RESTORED.filter((n) => existsSync(path.join(dir, n)))) {
     cpSync(path.join(dir, name), path.join(dir, SNAPSHOT, name), { recursive: true });

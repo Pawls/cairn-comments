@@ -1,7 +1,8 @@
 /**
  * A local HTTP proxy between a harness and the model provider. It forwards every request
- * unchanged and appends one JSON line per call to a log, with the parsed response for each
- * model call, so token counts come from the provider's own usage fields for any harness.
+ * (unchanged, except `systemMessagesAsUser` for a local model server) and appends one JSON
+ * line per call to a log, with the parsed response for each model call, so token counts come
+ * from the provider's own usage fields for any harness.
  */
 import { appendFileSync } from "node:fs";
 import { request as httpRequest, createServer, type IncomingHttpHeaders, type IncomingMessage } from "node:http";
@@ -45,6 +46,63 @@ function declaredTools(request: Buffer): number {
   }
 }
 
+interface Block {
+  type: string;
+  text?: string;
+}
+
+interface Message {
+  role: string;
+  content: string | Block[];
+}
+
+/**
+ * The request with every `system` message in `messages` turned into system-reminder text blocks
+ * at the end of a user turn: the one before it, or after an assistant turn the next one, so a
+ * tool call is still followed straight away by its result; a user turn of its own when there is
+ * none. Claude Code 2.1.310 sends its environment that way, and a Qwen chat template refuses
+ * any system message but the first. A body with none, or that is not JSON, is returned as it was.
+ */
+export function systemMessagesAsUser(body: Buffer): Buffer {
+  let parsed: { messages?: Message[] };
+  try {
+    parsed = JSON.parse(body.toString("utf8")) as { messages?: Message[] };
+  } catch {
+    return body;
+  }
+  if (!parsed.messages?.some((message) => message.role === "system")) return body;
+  const messages: Message[] = [];
+  let waiting: Block[] = [];
+  for (const message of parsed.messages) {
+    if (message.role === "system") {
+      const reminders = reminderBlocks(message);
+      const previous = messages.at(-1);
+      if (previous?.role === "user") messages[messages.length - 1] = withBlocks(previous, reminders);
+      else waiting = [...waiting, ...reminders];
+    } else if (waiting.length && message.role === "user") {
+      messages.push(withBlocks(message, waiting));
+      waiting = [];
+    } else {
+      if (waiting.length) messages.push({ role: "user", content: waiting });
+      waiting = [];
+      messages.push(message);
+    }
+  }
+  if (waiting.length) messages.push({ role: "user", content: waiting });
+  return Buffer.from(JSON.stringify({ ...parsed, messages }));
+}
+
+function reminderBlocks(message: Message): Block[] {
+  const texts = typeof message.content === "string" ? [message.content] : message.content.map((block) => block.text ?? "");
+  return texts.map((text) => ({ type: "text", text: `<system-reminder>\n${text}\n</system-reminder>` }));
+}
+
+/** `message` with `blocks` after its own content. */
+function withBlocks(message: Message, blocks: Block[]): Message {
+  const content = typeof message.content === "string" ? [{ type: "text", text: message.content }] : message.content;
+  return { ...message, content: [...content, ...blocks] };
+}
+
 interface Exchange {
   pathname: string;
   status: number;
@@ -64,15 +122,19 @@ function loggedCall(phase: Phase, exchange: Exchange): LoggedCall {
   return call;
 }
 
-/** Appends to `logFile`, so a probe's calls can follow its warm-up's in one log. */
-export async function startRecordingProxy(upstream: string, logFile: string, phase: Phase): Promise<RecordingProxy> {
+/**
+ * Appends to `logFile`, so a probe's calls can follow its warm-up's in one log. For a `local`
+ * model server each request goes through `systemMessagesAsUser`; the API gets it unchanged.
+ */
+export async function startRecordingProxy(upstream: string, logFile: string, phase: Phase, local = false): Promise<RecordingProxy> {
+  const rewrite = local ? systemMessagesAsUser : (body: Buffer) => body;
   const base = new URL(upstream);
   const send = base.protocol === "https:" ? httpsRequest : httpRequest;
   const log = (call: LoggedCall) => appendFileSync(logFile, JSON.stringify(call) + "\n");
 
   const server = createServer(async (req, res) => {
     const started = Date.now();
-    const body = await readAll(req);
+    const body = rewrite(await readAll(req));
     const target = new URL(base.pathname.replace(/\/$/, "") + (req.url ?? "/"), base);
     // Asking for an uncompressed response keeps the logged body readable as text.
     const headers = { ...withoutHopByHop(req.headers), "accept-encoding": "identity", "content-length": body.length };

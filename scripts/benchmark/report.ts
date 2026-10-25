@@ -11,7 +11,7 @@ interface Measure {
 }
 
 const sumTokens = (t: Usage) => t.input + t.cacheRead + t.cacheWrite + t.output;
-const whole = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 0 });
+export const whole = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 0 });
 const dollars = (n: number) => n.toFixed(3);
 const seconds = (n: number) => (n / 1000).toFixed(0);
 const percent = (n: number) => `${n >= 0 ? "+" : ""}${(n * 100).toFixed(1)}%`;
@@ -45,7 +45,7 @@ const MEASURES: Measure[] = [
 const BASELINE = "none";
 const TREATMENT = "comments";
 
-function groupBy<T>(items: T[], key: (item: T) => string): Map<string, T[]> {
+export function groupBy<T>(items: T[], key: (item: T) => string): Map<string, T[]> {
   const groups = new Map<string, T[]>();
   for (const item of items) {
     const name = key(item);
@@ -54,7 +54,7 @@ function groupBy<T>(items: T[], key: (item: T) => string): Map<string, T[]> {
   return groups;
 }
 
-function successCount(runs: RunResult[]): string {
+export function successCount(runs: RunResult[]): string {
   return `${runs.filter((r) => r.grade.passed).length}/${runs.length}`;
 }
 

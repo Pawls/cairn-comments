@@ -1,0 +1,165 @@
+diff --git a/portal.py b/portal.py
+index 6c16f67d..b57e8f92 100644
+--- a/portal.py
++++ b/portal.py
+@@ -386,6 +386,41 @@ def crossed_through(p: Portal, prev, cur, eps: float = 0.0, margin: float = 0.0)
+     return contains_point_on_plane(p, ix, iy, iz, eps)
+ 
+ 
++def _advance(point, step, frames: int):
++    return tuple(c + frames * d for c, d in zip(point, step, strict=True))
++
++
++def frames_to_cross(
++    p: Portal, eye, step, eps: float = 0.0, margin: float = 0.0, horizon: int = 600
++) -> int | None:
++    """How many frames until the walk-through trigger fires on ``p`` for an eye that starts at
++    ``eye`` and moves by ``step`` every frame: the first ``k >= 1`` for which
++    ``crossed_through(p, eye + (k - 1) * step, eye + k * step, eps, margin)`` holds, or None when
++    no frame up to ``horizon`` does.
++
++    Solved directly rather than stepped: the motion is a straight line, so it meets the trigger
++    plane at most once, and only the frame that straddles it can fire. A frame that ends exactly
++    on the plane fires (the trigger's straddle test is inclusive), so that frame is the answer."""
++    a = p.axis
++    speed = step[a]
++    if speed * p.sign <= 0:
++        return None  # not moving the through-way: no frame can fire
++    plane = p.plane - p.sign * margin
++    reach = (plane - eye[a]) / speed  # frames until the eye is on the trigger plane
++    if reach < 0:
++        return None  # already past the trigger plane
++    k = max(1, math.ceil(reach))
++    # Rounding can leave `k` one off the frame whose computed positions straddle the plane;
++    # settle it on the same arithmetic the trigger runs.
++    for frame in (k - 1, k, k + 1):
++        if frame < 1 or frame > horizon:
++            continue
++        prev, cur = _advance(eye, step, frame - 1), _advance(eye, step, frame)
++        if (prev[a] - plane) * (cur[a] - plane) <= 0:
++            return frame if crossed_through(p, prev, cur, eps, margin) else None
++    return None
++
++
+ # ---- virtual camera / link transform ---------------------------------------
+ 
+ 
+diff --git a/window_portal.py b/window_portal.py
+index 45af0e44..de25603f 100644
+--- a/window_portal.py
++++ b/window_portal.py
+@@ -146,6 +146,10 @@
+ # portal that may never actually be crossed.
+ PORTAL_PRELOAD_LIGHT_BUDGET = 2
+ PORTAL_PRELOAD_MESH_BUDGET = 2
++# While walking, the preload tier follows the frames until the eye would cross the portal at
++# its current pace: within SOON frames it preloads at 4x, within LATER at 2x, else the trickle.
++PORTAL_ARRIVAL_SOON = 60
++PORTAL_ARRIVAL_LATER = 240
+ 
+ 
+ class PortalMixin(modalslot.ModalHost, perfwatch.PerfWatchHost, windowstate.CacheHost):
+@@ -170,6 +174,7 @@ def _portal_init(self) -> None:
+         self._portal_fbos = []  # one (fbo, color, depth) per recursion level, index = view_depth-1
+         self._portal_fbos_size = (0, 0)
+         self._portal_prev_eye = None  # last frame's eye, for plane-crossing detection
++        self._portal_last_move = None  # the eye's move over the last walk frame, or None
+         self._portal_cooldown = 0  # frames to ignore crossings after a transfer (anti re-trigger)
+         self._walk_portals = []  # active-world targeted portals whose openings the player can phase
+         self._portal_preload_needed = (
+@@ -183,6 +188,7 @@ def _portal_reset(self):
+             return
+         self._portal_worlds.clear()
+         self._portal_prev_eye = None
++        self._portal_last_move = None
+         self._portal_cooldown = 0
+         self._walk_portals = []
+         self._portal_preload_needed = set()
+@@ -382,11 +388,19 @@ def _preload_portal_worlds(self) -> None:
+                 # chunks), so the landing area popped in AFTER the crossing. Scale the
+                 # budget with approach distance — a portal the player is about to reach
+                 # preloads hard, a distant one stays a cheap trickle.
+-                c = portal_mod.center(p)
+-                d2 = sum((cam_pos[i] - c[i]) ** 2 for i in range(3))
+-                if d2 < 16.0 * 16.0:
++                # While walking, time to arrival replaces distance: a portal walked past or
++                # away from is not about to be reached however near it is.
++                if getattr(self, "_portal_last_move", None) is not None:
++                    frames = self._portal_frames_to_arrival(p)
++                    soon = frames is not None and frames <= PORTAL_ARRIVAL_SOON
++                    later = frames is not None and frames <= PORTAL_ARRIVAL_LATER
++                else:
++                    c = portal_mod.center(p)
++                    d2 = sum((cam_pos[i] - c[i]) ** 2 for i in range(3))
++                    soon, later = d2 < 16.0 * 16.0, d2 < 32.0 * 32.0
++                if soon:
+                     light_budget = mesh_budget = 4 * PORTAL_PRELOAD_MESH_BUDGET
+-                elif d2 < 32.0 * 32.0:
++                elif later:
+                     light_budget = mesh_budget = 2 * PORTAL_PRELOAD_MESH_BUDGET
+                 else:
+                     light_budget = PORTAL_PRELOAD_LIGHT_BUDGET
+@@ -397,6 +411,30 @@ def _preload_portal_worlds(self) -> None:
+             debug_mod.gauge("portal_resident", len(self._portal_worlds))
+         self._portal_preload_needed = set(needed.keys())
+ 
++    def _portal_frames_to_arrival(self, p) -> int | None:
++        """Frames until the walk-through would fire on ``p`` if the eye keeps last frame's move
++        (``portal.frames_to_cross``, with the margin ``update_portals`` uses for ``p``). None when
++        no move is known or ``p`` can never transfer (a window, or a target-less opening)."""
++        move = getattr(self, "_portal_last_move", None)
++        if move is None or not portal_mod.walkable(p) or not portal_mod.has_target(p):
++            return None
++        eye = tuple(self.camera.position)
++        return portal_mod.frames_to_cross(p, eye, move, margin=self._portal_cross_margin(p))
++
++    @staticmethod
++    def _portal_cross_margin(p) -> float:
++        """How far in front of ``p``'s plane the walk-through trigger sits, measured on the eye.
++
++        A FLOOR opening (axis 1, fall-through) triggers on the FEET, not the eye: falling, the
++        eye trails the feet by EYE_HEIGHT, so an eye trigger at the plane would sink the whole
++        body through the carved slab (and out its far side) first. Expressed as an eye margin:
++        fire when the eye is EYE_HEIGHT - CROSS_MARGIN above the plane, i.e. the feet are
++        CROSS_MARGIN below it, just inside the one-cell carve. Ceiling-up (and walls) keep the
++        standard margin: there the eye leads the body."""
++        if p.axis == 1 and p.sign < 0:
++            return physics.EYE_HEIGHT - PORTAL_CROSS_MARGIN
++        return PORTAL_CROSS_MARGIN
++
+     def _dest_anchor(self, dest: World, spawn_name: str):
+         """The destination arrival eye position — where the virtual camera sits (and the player
+         lands) when stepping straight through the opening. Falls back to the map's default start.
+@@ -984,8 +1022,13 @@ def update_portals(self, dt: float) -> None:
+         eye = tuple(self.camera.position)
+         if not self.walk_mode:
+             self._portal_prev_eye = None
++            self._portal_last_move = None
+             self._walk_portals = []
+             return
++        last = self._portal_prev_eye
++        self._portal_last_move = (
++            None if last is None else tuple(e - q for e, q in zip(eye, last, strict=True))
++        )
+         # The reverse (back-out) trigger runs BEFORE the cooldown gate: the arrival cooldown is
+         # exactly when a fresh landing can be backstepped past the back margin, and it is
+         # state-based (depth, not segment crossing) so a plane crossed during gated frames still
+@@ -1004,17 +1047,8 @@ def update_portals(self, dt: float) -> None:
+         for p in portals:
+             if not portal_mod.walkable(p):
+                 continue  # a view-only window never transfers, however you approach it
+-            # A FLOOR opening (axis 1, fall-through) triggers on the FEET, not the eye: falling,
+-            # the eye trails the feet by EYE_HEIGHT, so an eye trigger at the plane would sink the
+-            # whole body through the carved slab (and out its far side) first. Expressed as an eye
+-            # margin: fire when the eye is EYE_HEIGHT - CROSS_MARGIN above the plane, i.e. the feet
+-            # are CROSS_MARGIN below it — just inside the one-cell carve. Ceiling-up (and walls)
+-            # keep the standard margin: there the eye leads the body.
+-            margin = PORTAL_CROSS_MARGIN
+-            if p.axis == 1 and p.sign < 0:
+-                margin = physics.EYE_HEIGHT - PORTAL_CROSS_MARGIN
+             if portal_mod.crossed_through(
+-                p, prev, eye, margin=margin
++                p, prev, eye, margin=self._portal_cross_margin(p)
+             ) and self._portal_walk_through(p, eye):
+                 return  # one transfer per frame
+ 
